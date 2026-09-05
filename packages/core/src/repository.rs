@@ -317,6 +317,7 @@ pub async fn preview_documents_csv(
     }
     let mut rows = Vec::new();
     let mut errors = Vec::new();
+    let mut ids = std::collections::HashSet::new();
     for (index, record) in records.iter().skip(1).enumerate() {
         if record.len() != expected.len() {
             errors.push(format!("row {}: wrong column count", index + 2));
@@ -326,6 +327,9 @@ pub async fn preview_documents_csv(
         if id.trim().is_empty() {
             errors.push(format!("row {}: id is required", index + 2));
             continue;
+        }
+        if !ids.insert(id.clone()) {
+            errors.push(format!("row {}: duplicate id", index + 2));
         }
         if id.starts_with(['=', '+', '-', '@']) {
             errors.push(format!("row {}: formula values are not allowed", index + 2));

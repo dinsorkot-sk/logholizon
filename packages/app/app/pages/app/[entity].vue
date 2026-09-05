@@ -157,25 +157,40 @@ async function exportCsv() {
 }
 
 async function previewImport(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0]
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
   if (!file) return
   importing.value = true
+  error.value = ''
   try {
     importCsv.value = await file.text()
     importPreview.value = await $fetch<{ rows: { id: string; payload: Record<string, unknown> }[]; errors: string[] }>(
       `/api/meta/entities/${encodeURIComponent(entityId.value)}/import-preview` as '/api/meta/entities/[id]/import-preview',
-      { method: 'POST', body: await file.text(), headers: { 'content-type': 'text/csv' } }
+      { method: 'POST', body: importCsv.value, headers: { 'content-type': 'text/csv' } }
     )
-  } finally { importing.value = false }
+  } catch (cause: any) {
+    importPreview.value = null
+    error.value = cause?.data?.message || cause?.statusMessage || 'Unable to preview CSV'
+  } finally {
+    input.value = ''
+    importing.value = false
+  }
 }
 
 async function confirmImport() {
   if (!importCsv.value || importPreview.value?.errors.length) return
   importing.value = true
+  error.value = ''
   try {
     await $fetch(`/api/meta/entities/${encodeURIComponent(entityId.value)}/import-confirm`, { method: 'POST', body: importCsv.value, headers: { 'content-type': 'text/csv' } })
-    importPreview.value = null; importCsv.value = ''; await refresh()
-  } finally { importing.value = false }
+    importPreview.value = null
+    importCsv.value = ''
+    await refresh()
+  } catch (cause: any) {
+    error.value = cause?.data?.message || cause?.statusMessage || 'Unable to import CSV'
+  } finally {
+    importing.value = false
+  }
 }
 </script>
 

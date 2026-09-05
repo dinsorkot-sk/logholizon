@@ -31,5 +31,12 @@ async fn backup_creates_valid_snapshot() {
     let snapshot = db::connect(&url).await.unwrap();
     assert!(db::integrity_check(&snapshot).await.unwrap());
     snapshot.close().await;
-    tokio::fs::remove_file(path).await.unwrap();
+    // ponytail: retry remove when Windows AV/indexer holds the temp file briefly.
+    for _ in 0..10 {
+        if tokio::fs::remove_file(&path).await.is_ok() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    tokio::fs::remove_file(&path).await.unwrap();
 }
