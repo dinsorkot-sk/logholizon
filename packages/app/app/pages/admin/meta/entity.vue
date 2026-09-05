@@ -7,7 +7,7 @@ const UBadge = resolveComponent('UBadge')
 
 type Entity = { id: string; name: string; label: string }
 type FieldOption = { id: string; value: string; label: string }
-type Field = { id: string; name: string; type: string; required: boolean; position: number; options: FieldOption[] }
+type Field = { id: string; name: string; type: string; required: boolean; is_status: boolean; position: number; options: FieldOption[] }
 type EntityDetail = Entity & { fields: Field[] }
 
 const toast = useToast()
@@ -151,7 +151,7 @@ async function removeEntity() {
 // --- Field editor ---
 const fieldOpen = ref(false)
 const editingField = ref<Field | null>(null)
-const fieldForm = reactive({ name: '', type: 'text', required: false })
+const fieldForm = reactive({ name: '', type: 'text', required: false, is_status: false })
 const fieldError = ref('')
 const savingField = ref(false)
 const newOption = reactive({ value: '', label: '' })
@@ -167,6 +167,7 @@ function openAddField() {
   fieldForm.name = ''
   fieldForm.type = 'text'
   fieldForm.required = false
+  fieldForm.is_status = false
   fieldError.value = ''
   optionError.value = ''
   newOption.value = ''
@@ -179,6 +180,7 @@ function openEditField(field: Field) {
   fieldForm.name = field.name
   fieldForm.type = field.type
   fieldForm.required = field.required
+  fieldForm.is_status = field.is_status
   fieldError.value = ''
   optionError.value = ''
   newOption.value = ''
@@ -202,7 +204,7 @@ async function saveField() {
     if (editingField.value) {
       await $fetch(`/api/meta/fields/${encodeURIComponent(editingField.value.id)}`, {
         method: 'PUT',
-        body: { name: fieldForm.name, type: fieldForm.type, required: fieldForm.required }
+        body: { name: fieldForm.name, type: fieldForm.type, required: fieldForm.required, is_status: fieldForm.is_status }
       })
       fieldOpen.value = false
       await refreshDetail()
@@ -210,7 +212,7 @@ async function saveField() {
     } else {
       const created = await $fetch<Field>(`/api/meta/entities/${encodeURIComponent(detail.value.id)}/fields`, {
         method: 'POST',
-        body: { name: fieldForm.name, type: fieldForm.type, required: fieldForm.required }
+        body: { name: fieldForm.name, type: fieldForm.type, required: fieldForm.required, is_status: fieldForm.is_status }
       })
       await refreshDetail()
       if (created.type === 'select') {
@@ -307,6 +309,13 @@ const fieldColumns: TableColumn<Field>[] = [
     accessorKey: 'required',
     header: 'Required',
     cell: ({ row }) => row.original.required ? 'Yes' : 'No'
+  },
+  {
+    accessorKey: 'is_status',
+    header: 'Status',
+    cell: ({ row }) => row.original.is_status
+      ? h(UBadge, { color: 'primary', variant: 'subtle' }, () => 'Status field')
+      : ''
   },
   {
     id: 'actions',
@@ -431,13 +440,13 @@ const fieldColumns: TableColumn<Field>[] = [
         <template #body>
           <UForm class="space-y-4" @submit="createEntity">
             <UFormField label="ID" hint="lowercase, no spaces (e.g. work_order)">
-              <UInput v-model="createForm.id" placeholder="work_order" />
+              <UInput v-model="createForm.id" placeholder="e.g. customer" />
             </UFormField>
             <UFormField label="Name">
-              <UInput v-model="createForm.name" placeholder="work_order" />
+              <UInput v-model="createForm.name" placeholder="e.g. customer" />
             </UFormField>
             <UFormField label="Label">
-              <UInput v-model="createForm.label" placeholder="Work Order" />
+              <UInput v-model="createForm.label" placeholder="e.g. Customer" />
             </UFormField>
             <UAlert v-if="createError" color="error" :title="createError" />
           </UForm>
@@ -498,6 +507,9 @@ const fieldColumns: TableColumn<Field>[] = [
             </UFormField>
             <UFormField label="Required">
               <USwitch v-model="fieldForm.required" />
+            </UFormField>
+            <UFormField v-if="fieldForm.type === 'select'" label="Status field" hint="Drives workflow transitions and status badges">
+              <USwitch v-model="fieldForm.is_status" />
             </UFormField>
 
             <div v-if="fieldForm.type === 'select'">

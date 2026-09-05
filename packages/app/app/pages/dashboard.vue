@@ -18,7 +18,7 @@ const { data: counts, status, error, refresh } = await useFetch<Count[]>(
           <UDashboardSidebarCollapse />
         </template>
         <template #right>
-          <UButton variant="ghost" :loading="status === 'pending'" @click="refresh()">Refresh</UButton>
+          <UButton variant="ghost" icon="i-lucide-refresh-cw" :loading="status === 'pending'" @click="refresh()">Refresh</UButton>
         </template>
       </UDashboardNavbar>
     </template>

@@ -185,9 +185,11 @@
 
 ---
 
-## Phase 4 — Form & Workflow UX
+## Phase 4 — Form & Workflow UX ✅ Done
 
 > เป้าหมาย: form ปลอดภัย (ไม่เสียข้อมูล) และ workflow เข้าใจง่าย
+> สถานะ: เสร็จสิ้น 2026-09-05 · gates ผ่าน (fmt, clippy, test, build, typecheck, browser verify)
+> เพิ่มเติม: 4.6 ทำเป็น metadata `is_status` บน `_meta_field` (migration `0005_status_field.sql`) + toggle ใน Field Editor; 4.1 เลือก dirty-state + Discard modal (ไม่ทำ autosave); แก้ bug ที่พบระหว่าง verify: status field required ถูกซ่อนจาก form → default เป็น state แรกของ workflow, `normalizePayload` omit ค่าว่างของ optional field, relative time parse UTC
 
 ### 4.1 Dirty-state protection
 
@@ -233,9 +235,11 @@
 
 ---
 
-## Phase 5 — Navigation & Polish
+## Phase 5 — Navigation & Polish ✅ Done
 
 > เป้าหมาย: ผู้ใช้รู้ว่าอยู่ที่ไหน ค้นหาเร็ว และ UI consistent
+> สถานะ: เสร็จสิ้น 2026-09-05 · gates ผ่าน (build, test, typecheck, browser verify)
+> เพิ่มเติม: `UCommandPalette` ต้องอยู่ใน `#content` slot ของ `UModal` (default slot คือ trigger content — ใส่ผิดทำให้ render inline)
 
 ### 5.1 Breadcrumb + Global Search (⌘K)
 

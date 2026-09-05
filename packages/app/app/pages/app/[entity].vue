@@ -7,7 +7,7 @@ const UCheckbox = resolveComponent('UCheckbox')
 const UBadge = resolveComponent('UBadge')
 
 type FieldOption = { id: string; value: string; label: string }
-type Field = { id: string; name: string; type: string; required: boolean; options: FieldOption[] }
+type Field = { id: string; name: string; type: string; required: boolean; is_status: boolean; options: FieldOption[] }
 type Entity = { id: string; name: string; label: string; fields: Field[] }
 type Document = { id: string; entity_id: string; payload: Record<string, unknown> }
 type DocumentList = { items: Document[]; total: number }
@@ -20,9 +20,11 @@ const entityId = computed(() => String(route.params.entity || ''))
 const panelOpen = ref(false)
 const selected = ref<Document | null>(null)
 const payload = reactive<Record<string, unknown>>({})
+const initialPayload = ref<Record<string, unknown>>({})
+const discardOpen = ref(false)
 const saving = ref(false)
 const deleting = ref(false)
-const transitioning = ref(false)
+const transitioningAction = ref<string | null>(null)
 const error = ref('')
 const fieldErrors = reactive<Record<string, string>>({})
 const exporting = ref(false)
@@ -32,6 +34,49 @@ const importCsv = ref('')
 const importInput = ref<HTMLInputElement | null>(null)
 const toast = useToast()
 const deleteOpen = ref(false)
+
+// --- Breadcrumb ---
+const breadcrumbItems = computed(() => [
+  { label: 'Entities', to: '/admin/meta/entity' },
+  { label: entity.value?.label || entityId.value }
+])
+
+// --- Keyboard shortcuts ---
+function onKeydown(event: KeyboardEvent) {
+  const target = event.target as HTMLElement | null
+  const isTyping = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+  if (event.key.toLowerCase() === 'n' && !isTyping && !panelOpen.value) {
+    event.preventDefault()
+    openCreate()
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', onKeydown))
+onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
+
+// --- Dirty-state protection ---
+const dirty = computed(() => JSON.stringify(payload) !== JSON.stringify(initialPayload.value))
+
+function requestClose() {
+  if (dirty.value) {
+    discardOpen.value = true
+  } else {
+    panelOpen.value = false
+  }
+}
+
+function handlePanelOpenChange(value: boolean) {
+  if (!value && dirty.value) {
+    discardOpen.value = true
+    return
+  }
+  panelOpen.value = value
+}
+
+function discardChanges() {
+  discardOpen.value = false
+  panelOpen.value = false
+}
 
 // --- List state (search / filter / sort / pagination / bulk / columns) ---
 const limit = ref(50)
@@ -66,7 +111,7 @@ const { data: documents, status: documentsStatus, error: documentsError, refresh
   documentsUrl,
   { watch: [documentsUrl] }
 )
-const { data: workflow } = await useFetch<{ states: { name: string; label: string }[]; transitions: { action: string; from_state: string; to_state: string }[] }>(
+const { data: workflow, status: workflowStatus, error: workflowError, refresh: refreshWorkflow } = await useFetch<{ states: { name: string; label: string }[]; transitions: { action: string; from_state: string; to_state: string }[] }>(
   () => `/api/meta/entities/${encodeURIComponent(entityId.value)}/workflow`,
   { watch: [entityId] }
 )
@@ -77,12 +122,16 @@ const { data: audit, status: auditStatus, refresh: refreshAudit } = await useFet
 )
 
 function emptyPayload() {
-  return Object.fromEntries((entity.value?.fields || []).map(field => [field.name, '']))
+  const fields = entity.value?.fields || []
+  const statusField = fields.find(f => f.is_status)
+  const defaultStatus = workflow.value?.states[0]?.name || statusField?.options[0]?.value || ''
+  return defaultPayload(fields, defaultStatus)
 }
 
 function openCreate() {
   selected.value = null
   Object.assign(payload, emptyPayload())
+  initialPayload.value = { ...payload }
   Object.keys(fieldErrors).forEach(key => delete fieldErrors[key])
   error.value = ''
   panelOpen.value = true
@@ -92,6 +141,7 @@ function openEdit(document: Document) {
   selected.value = document
   Object.keys(payload).forEach(key => delete payload[key])
   Object.assign(payload, emptyPayload(), document.payload)
+  initialPayload.value = { ...payload }
   Object.keys(fieldErrors).forEach(key => delete fieldErrors[key])
   error.value = ''
   panelOpen.value = true
@@ -126,6 +176,7 @@ async function save() {
         body: { id: crypto.randomUUID(), entity_id: entity.value.id, payload: nextPayload }
       })
     }
+    initialPayload.value = { ...nextPayload }
     panelOpen.value = false
     await refresh()
     toast.add({ title: isEdit ? 'Record updated' : 'Record created', color: 'success', icon: 'i-lucide-check' })
@@ -139,10 +190,11 @@ async function save() {
 
 async function transition(action: string) {
   if (!selected.value) return
-  transitioning.value = true
+  transitioningAction.value = action
   error.value = ''
   try {
-    await $fetch(`/api/documents/${encodeURIComponent(selected.value.id)}/transition`, { method: 'POST', body: { action } })
+    const updated = await $fetch<Document>(`/api/documents/${encodeURIComponent(selected.value.id)}/transition`, { method: 'POST', body: { action } })
+    selected.value = updated
     await refresh()
     await refreshAudit()
     toast.add({ title: 'Record transitioned', color: 'success', icon: 'i-lucide-check' })
@@ -150,12 +202,12 @@ async function transition(action: string) {
     error.value = cause?.data?.message || cause?.statusMessage || 'Unable to transition record'
     toast.add({ title: 'Unable to transition record', description: error.value, color: 'error', icon: 'i-lucide-alert-circle' })
   } finally {
-    transitioning.value = false
+    transitioningAction.value = null
   }
 }
 
 function availableActions() {
-  const status = selected.value?.payload.status
+  const status = selected.value?.payload[statusField.value?.name || '']
   return workflow.value?.transitions.filter(item => item.from_state === status) || []
 }
 
@@ -165,6 +217,7 @@ async function remove() {
   error.value = ''
   try {
     await $fetch(`/api/documents/${encodeURIComponent(selected.value.id)}`, { method: 'DELETE' })
+    initialPayload.value = { ...payload }
     panelOpen.value = false
     deleteOpen.value = false
     await refresh()
@@ -209,8 +262,15 @@ function transitionLabel(action: string) {
   return transitionLabels[action] || action
 }
 
+function parseDate(iso: string) {
+  // SQLite CURRENT_TIMESTAMP is UTC without a timezone suffix; treat it as UTC.
+  const normalized = iso.replace(' ', 'T')
+  const withTz = /Z$|[+-]\d{2}:?\d{2}$/.test(normalized) ? normalized : `${normalized}Z`
+  return new Date(withTz)
+}
+
 function relativeTime(iso: string) {
-  const date = new Date(iso)
+  const date = parseDate(iso)
   if (Number.isNaN(date.getTime())) return iso
   const diff = Date.now() - date.getTime()
   const minutes = Math.floor(diff / 60000)
@@ -269,11 +329,39 @@ const sortValue = computed({
 })
 
 // --- Status filter ---
-const statusField = computed(() => entity.value?.fields.find(f => f.name === 'status'))
+const statusField = computed(() => entity.value?.fields.find(f => f.is_status))
 const statusItems = computed(() => [
   { label: 'All statuses', value: 'all' },
   ...(statusField.value?.options || []).map(o => ({ label: o.label, value: o.value }))
 ])
+
+// --- Audit log helpers ---
+function statusLabel(value: unknown) {
+  if (value === undefined || value === null || value === '') return null
+  const option = statusField.value?.options.find(o => o.value === value)
+  return option?.label || String(value)
+}
+
+function absoluteTime(iso: string) {
+  const date = parseDate(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  return date.toLocaleString()
+}
+
+const auditItems = computed(() => {
+  const items = audit.value?.items || []
+  const statusName = statusField.value?.name
+  return items.map((entry, index) => {
+    const next = items[index + 1]
+    const to = statusName ? entry.payload[statusName] : undefined
+    const from = statusName ? next?.payload[statusName] : undefined
+    return {
+      ...entry,
+      fromLabel: statusLabel(from),
+      toLabel: statusLabel(to)
+    }
+  })
+})
 
 // --- Column visibility ---
 watch(entity, (e) => {
@@ -383,7 +471,7 @@ const tableColumns = computed<TableColumn<Document>[]>(() => {
       enableSorting: true,
       cell: ({ row }) => {
         const value = row.original.payload[field.name]
-        if (field.name === 'status') {
+        if (field.is_status) {
           return h(UBadge, { variant: 'subtle' }, () => fieldLabel(field, value))
         }
         return fieldLabel(field, value)
@@ -464,9 +552,12 @@ async function confirmImport() {
 <template>
   <UDashboardPanel :id="`entity-${entityId}`">
     <template #header>
-      <UDashboardNavbar :title="entity?.label || entityId">
+      <UDashboardNavbar>
         <template #leading>
           <UDashboardSidebarCollapse />
+        </template>
+        <template #title>
+          <UBreadcrumb :items="breadcrumbItems" />
         </template>
         <template #right>
           <UButton icon="i-lucide-plus" @click="openCreate">New record</UButton>
@@ -527,7 +618,13 @@ async function confirmImport() {
           <input ref="importInput" type="file" accept=".csv,text/csv" class="hidden" @change="previewImport">
           <UButton variant="outline" icon="i-lucide-upload" :loading="importing" @click="importInput?.click()">Import CSV</UButton>
       </div>
-        <UAlert v-if="importPreview" class="w-full" :color="importPreview.errors.length ? 'error' : 'success'" :title="`${importPreview.rows.length} rows previewed`" :description="importPreview.errors.join('; ') || 'Ready to import.'">
+        <UAlert v-if="importPreview" class="w-full" :color="importPreview.errors.length ? 'error' : 'success'" :title="`${importPreview.rows.length} rows previewed`">
+          <template #description>
+            <ul v-if="importPreview.errors.length" class="list-disc space-y-1 pl-4">
+              <li v-for="(message, index) in importPreview.errors" :key="index" class="text-sm">{{ message }}</li>
+            </ul>
+            <p v-else class="text-sm">Ready to import.</p>
+          </template>
           <template #actions><UButton :disabled="!!importPreview.errors.length" :loading="importing" size="sm" @click="confirmImport">Confirm import</UButton></template>
         </UAlert>
 
@@ -539,7 +636,13 @@ async function confirmImport() {
         class="mb-4"
       />
 
-      <UCard>
+      <div v-if="!entity.fields.length" class="flex flex-col items-center gap-3 py-16 text-center">
+        <UIcon name="i-lucide-table-properties" class="h-10 w-10 text-muted" />
+        <p class="text-sm text-muted">This entity has no fields yet.</p>
+        <UButton icon="i-lucide-settings-2" :to="'/admin/meta/entity'">Add fields in Entity Manager</UButton>
+      </div>
+
+      <UCard v-else>
         <div v-if="documentsStatus === 'pending'" class="space-y-3" aria-busy="true">
           <USkeleton v-for="index in 4" :key="index" class="h-10 w-full" />
         </div>
@@ -586,18 +689,18 @@ async function confirmImport() {
         </template>
       </UCard>
 
-      <USlideover v-model:open="panelOpen" :title="selected ? `Edit ${entity.label}` : `New ${entity.label}`">
+      <USlideover :open="panelOpen" :title="selected ? `Edit ${entity.label}` : `New ${entity.label}`" @update:open="handlePanelOpenChange">
         <template #body>
-          <UForm class="space-y-4" @submit="save">
+          <UForm id="record-form" class="space-y-4" @submit="save">
             <UFormField
-              v-for="field in entity.fields.filter(item => item.name !== 'status')"
+              v-for="field in entity.fields.filter(item => !item.is_status)"
               :key="field.id"
               :label="field.name"
               :required="field.required"
               :error="fieldErrors[field.name]"
             >
               <USelectMenu
-                v-if="field.type === 'select' && field.name !== 'status'"
+                v-if="field.type === 'select' && !field.is_status"
                 v-model="payload[field.name] as string"
                 :items="[{ label: 'Select…', value: '' }, ...field.options.map(o => ({ label: o.label, value: o.value }))]"
                 value-key="value"
@@ -608,28 +711,53 @@ async function confirmImport() {
             <UAlert v-if="error" color="error" :title="error" />
             <div v-if="selected" class="border-t pt-4">
               <h2 class="mb-2 text-sm font-semibold">History</h2>
-              <div v-if="auditStatus === 'pending'" class="py-4 text-sm text-gray-500">Loading history…</div>
+              <div v-if="auditStatus === 'pending'" class="py-4 text-sm text-muted">Loading history…</div>
               <UAlert v-else-if="auditStatus === 'error'" color="error" title="Cannot load history" />
               <ol v-else class="space-y-3">
-                <li v-for="entry in audit?.items || []" :key="entry.id" class="flex gap-3">
-                  <span class="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-gray-400" aria-hidden="true" />
+                <li v-for="entry in auditItems" :key="entry.id" class="flex gap-3">
+                  <span class="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-default" aria-hidden="true" />
                   <div class="min-w-0">
                     <p class="text-sm font-medium">{{ transitionLabel(entry.action) }}</p>
-                    <p class="text-xs text-gray-500">{{ relativeTime(entry.created_at) }}</p>
-                    <p v-if="entry.payload.status" class="text-xs text-gray-500">status: {{ display(entry.payload.status) }}</p>
+                    <UTooltip :text="absoluteTime(entry.created_at)">
+                      <p class="text-xs text-muted">{{ relativeTime(entry.created_at) }}</p>
+                    </UTooltip>
+                    <p v-if="entry.fromLabel || entry.toLabel" class="text-xs text-muted">
+                      {{ entry.fromLabel || '—' }} → {{ entry.toLabel || '—' }}
+                    </p>
                   </div>
                 </li>
-                <li v-if="!audit?.items.length" class="text-sm text-gray-500">No history yet.</li>
+                <li v-if="!auditItems.length" class="text-sm text-muted">No history yet.</li>
               </ol>
             </div>
-            <div class="flex justify-between gap-2 pt-2">
+          </UForm>
+        </template>
+        <template #footer>
+          <div class="space-y-3">
+            <UAlert
+              v-if="workflowStatus === 'error'"
+              color="error"
+              title="Cannot load workflow"
+              :description="workflowError?.message || 'Check the Rust core connection.'"
+            >
+              <template #actions>
+                <UButton size="sm" variant="outline" @click="refreshWorkflow()">Retry</UButton>
+              </template>
+            </UAlert>
+            <div class="flex justify-between gap-2">
               <div class="flex gap-2">
-                <UButton v-for="item in availableActions()" :key="item.action" :loading="transitioning" @click="transition(item.action)">{{ transitionLabel(item.action) }}</UButton>
+                <UButton
+                  v-for="item in availableActions()"
+                  :key="item.action"
+                  :loading="transitioningAction === item.action"
+                  :disabled="transitioningAction !== null && transitioningAction !== item.action"
+                  @click="transition(item.action)"
+                >{{ transitionLabel(item.action) }}</UButton>
+                <p v-if="selected && !availableActions().length && workflowStatus === 'success'" class="self-center text-xs text-muted">No actions available for this status.</p>
                 <UButton v-if="selected" color="error" variant="ghost" @click="deleteOpen = true">Delete</UButton>
               </div>
-              <div class="ml-auto flex gap-2"><UButton variant="ghost" @click="panelOpen = false">Cancel</UButton><UButton type="submit" :loading="saving">Save</UButton></div>
+              <div class="ml-auto flex gap-2"><UButton variant="ghost" @click="requestClose">Cancel</UButton><UButton type="submit" form="record-form" :loading="saving">Save</UButton></div>
             </div>
-          </UForm>
+          </div>
         </template>
       </USlideover>
 
@@ -657,6 +785,20 @@ async function confirmImport() {
           <div class="flex justify-end gap-2">
             <UButton variant="ghost" @click="bulkDeleteOpen = false">Cancel</UButton>
             <UButton color="error" :loading="bulkDeleting" @click="bulkDelete">Delete</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <UModal v-model:open="discardOpen" title="Discard changes?">
+        <template #body>
+          <p class="text-sm text-muted">
+            You have unsaved changes in this record. Discard them and close the panel?
+          </p>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="discardOpen = false">Keep editing</UButton>
+            <UButton color="error" @click="discardChanges">Discard</UButton>
           </div>
         </template>
       </UModal>

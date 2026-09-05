@@ -1,4 +1,8 @@
-export type Field = { name: string; type: string; required: boolean }
+export type Field = { name: string; type: string; required: boolean; is_status?: boolean }
+
+export function defaultPayload(fields: Field[], defaultStatus: string): Record<string, unknown> {
+  return Object.fromEntries(fields.map(field => [field.name, field.is_status ? defaultStatus : '']))
+}
 
 export function validatePayload(fields: Field[], payload: Record<string, unknown>): Record<string, string> {
   const errors: Record<string, string> = {}
@@ -13,12 +17,14 @@ export function validatePayload(fields: Field[], payload: Record<string, unknown
 
 export function normalizePayload(fields: Field[], payload: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
-    fields.map((field) => {
+    fields.flatMap((field) => {
       const raw = payload[field.name]
-      const value = field.type === 'number' && raw !== '' && raw !== null && raw !== undefined
-        ? Number(raw)
-        : raw
-      return [field.name, value]
+      const empty = raw === '' || raw === null || raw === undefined
+      // Omit empty values for optional fields so the core does not reject
+      // empty strings for select fields.
+      if (empty && !field.required) return []
+      const value = field.type === 'number' && !empty ? Number(raw) : raw
+      return [[field.name, value]]
     })
   )
 }

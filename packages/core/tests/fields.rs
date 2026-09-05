@@ -12,17 +12,19 @@ async fn setup() -> sqlx::SqlitePool {
 #[tokio::test]
 async fn field_crud_orders_by_position() {
     let pool = setup().await;
-    let title = repository::create_field(&pool, "work_order", "title", "text", true)
+    let title = repository::create_field(&pool, "work_order", "title", "text", true, false)
         .await
         .unwrap();
     assert_eq!(title.name, "title");
     assert!(title.required);
+    assert!(!title.is_status);
     assert_eq!(title.position, 0);
 
-    let status = repository::create_field(&pool, "work_order", "status", "select", true)
+    let status = repository::create_field(&pool, "work_order", "status", "select", true, true)
         .await
         .unwrap();
     assert_eq!(status.position, 1);
+    assert!(status.is_status);
 
     let fields = repository::list_fields(&pool, "work_order").await.unwrap();
     assert_eq!(fields.len(), 2);
@@ -30,7 +32,7 @@ async fn field_crud_orders_by_position() {
     assert_eq!(fields[1].name, "status");
 
     // update field
-    let updated = repository::update_field(&pool, &title.id, "title", "text", false)
+    let updated = repository::update_field(&pool, &title.id, "title", "text", false, false)
         .await
         .unwrap();
     assert!(!updated.required);
@@ -52,37 +54,73 @@ async fn field_validation_rejects_bad_input() {
     let pool = setup().await;
     // invalid type
     assert!(
-        repository::create_field(&pool, "work_order", "bad", "json", false)
+        repository::create_field(&pool, "work_order", "bad", "json", false, false)
             .await
             .is_err()
     );
     // invalid name (uppercase / spaces)
     assert!(
-        repository::create_field(&pool, "work_order", "Bad Name", "text", false)
+        repository::create_field(&pool, "work_order", "Bad Name", "text", false, false)
             .await
             .is_err()
     );
     // duplicate name
-    repository::create_field(&pool, "work_order", "title", "text", false)
+    repository::create_field(&pool, "work_order", "title", "text", false, false)
         .await
         .unwrap();
     assert!(
-        repository::create_field(&pool, "work_order", "title", "text", false)
+        repository::create_field(&pool, "work_order", "title", "text", false, false)
             .await
             .is_err()
     );
     // field on missing entity
     assert!(
-        repository::create_field(&pool, "missing", "title", "text", false)
+        repository::create_field(&pool, "missing", "title", "text", false, false)
             .await
             .is_err()
     );
 }
 
 #[tokio::test]
+async fn status_field_validation() {
+    let pool = setup().await;
+    // is_status requires type select
+    let err = repository::create_field(&pool, "work_order", "state", "text", false, true)
+        .await
+        .unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("status field must be of type select"));
+
+    // first status field is allowed
+    let status = repository::create_field(&pool, "work_order", "status", "select", true, true)
+        .await
+        .unwrap();
+    assert!(status.is_status);
+
+    // second status field in the same entity is rejected
+    let err = repository::create_field(&pool, "work_order", "state", "select", false, true)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("already has a status field"));
+
+    // updating the existing status field to is_status=false is allowed
+    let updated = repository::update_field(&pool, &status.id, "status", "select", true, false)
+        .await
+        .unwrap();
+    assert!(!updated.is_status);
+
+    // now a different field can become the status field
+    let state = repository::create_field(&pool, "work_order", "state", "select", false, true)
+        .await
+        .unwrap();
+    assert!(state.is_status);
+}
+
+#[tokio::test]
 async fn option_crud_and_last_option_guard() {
     let pool = setup().await;
-    let status = repository::create_field(&pool, "work_order", "status", "select", true)
+    let status = repository::create_field(&pool, "work_order", "status", "select", true, true)
         .await
         .unwrap();
     let open = repository::create_field_option(&pool, &status.id, "open", "Open")
@@ -130,7 +168,7 @@ async fn entity_update_and_delete_guards() {
 
     // delete entity with documents is rejected
     let pool = setup().await;
-    repository::create_field(&pool, "work_order", "title", "text", false)
+    repository::create_field(&pool, "work_order", "title", "text", false, false)
         .await
         .unwrap();
     repository::create_document(

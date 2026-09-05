@@ -89,3 +89,106 @@ async fn dashboard_counts_group_by_status() {
     assert_eq!(by_status.get("open"), Some(&1));
     assert_eq!(by_status.get("done"), Some(&1));
 }
+
+#[tokio::test]
+async fn status_field_name_is_metadata_driven() {
+    let pool = db::connect("sqlite::memory:").await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    repository::create_entity(&pool, "ticket", "ticket", "Ticket")
+        .await
+        .unwrap();
+    repository::create_field(&pool, "ticket", "title", "text", true, false)
+        .await
+        .unwrap();
+    let state = repository::create_field(&pool, "ticket", "state", "select", true, true)
+        .await
+        .unwrap();
+    assert!(state.is_status);
+    for (value, label) in [("new", "New"), ("open", "Open"), ("closed", "Closed")] {
+        repository::create_field_option(&pool, &state.id, value, label)
+            .await
+            .unwrap();
+    }
+    // workflow rows are seeded directly (no workflow CRUD yet)
+    sqlx::query("INSERT INTO _workflow_state (id, entity_id, name, label, position) VALUES (?, 'ticket', ?, ?, ?)")
+        .bind("ticket_new")
+        .bind("new")
+        .bind("New")
+        .bind(0)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO _workflow_transition (id, entity_id, from_state, to_state, action) VALUES (?, 'ticket', ?, ?, ?)")
+        .bind("ticket_open_transition")
+        .bind("new")
+        .bind("open")
+        .bind("open")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    repository::create_document(
+        &pool,
+        "t-1",
+        "ticket",
+        &json!({"title": "Login broken", "state": "new"}),
+    )
+    .await
+    .unwrap();
+
+    // transition uses the metadata-driven status field name
+    let opened = repository::transition_document(&pool, "t-1", "open")
+        .await
+        .unwrap();
+    assert_eq!(opened.payload["state"], "open");
+
+    // count groups by the metadata-driven status field
+    let counts = repository::count_documents_by_status(&pool, "ticket")
+        .await
+        .unwrap();
+    assert_eq!(counts.len(), 1);
+    assert_eq!(counts[0].status, "open");
+    assert_eq!(counts[0].count, 1);
+
+    // list filter uses the metadata-driven status field
+    let filter = repository::ListDocumentsFilter {
+        status: Some("open".to_string()),
+        ..Default::default()
+    };
+    let list = repository::list_documents(&pool, "ticket", 50, 0, &filter)
+        .await
+        .unwrap();
+    assert_eq!(list.total, 1);
+    let filter = repository::ListDocumentsFilter {
+        status: Some("new".to_string()),
+        ..Default::default()
+    };
+    let list = repository::list_documents(&pool, "ticket", 50, 0, &filter)
+        .await
+        .unwrap();
+    assert_eq!(list.total, 0);
+}
+
+#[tokio::test]
+async fn entity_without_status_field_rejects_transition() {
+    let pool = db::connect("sqlite::memory:").await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    repository::create_entity(&pool, "note", "note", "Note")
+        .await
+        .unwrap();
+    repository::create_field(&pool, "note", "body", "text", false, false)
+        .await
+        .unwrap();
+    repository::create_document(&pool, "n-1", "note", &json!({"body": "hello"}))
+        .await
+        .unwrap();
+    let err = repository::transition_document(&pool, "n-1", "submit")
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("no status field"));
+    // counts are empty, not an error
+    let counts = repository::count_documents_by_status(&pool, "note")
+        .await
+        .unwrap();
+    assert!(counts.is_empty());
+}

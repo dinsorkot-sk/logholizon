@@ -18,6 +18,7 @@ pub struct Field {
     pub name: String,
     pub r#type: String,
     pub required: bool,
+    pub is_status: bool,
     pub position: i64,
     pub options: Vec<FieldOption>,
 }
@@ -155,7 +156,7 @@ pub async fn get_entity_detail(pool: &SqlitePool, entity_id: &str) -> Result<Ent
 
 pub async fn list_fields(pool: &SqlitePool, entity_id: &str) -> Result<Vec<Field>> {
     let rows = sqlx::query(
-        "SELECT id, name, type, required, position FROM _meta_field WHERE entity_id = ? ORDER BY position, name",
+        "SELECT id, name, type, required, is_status, position FROM _meta_field WHERE entity_id = ? ORDER BY position, name",
     )
     .bind(entity_id)
     .fetch_all(pool)
@@ -170,6 +171,7 @@ pub async fn list_fields(pool: &SqlitePool, entity_id: &str) -> Result<Vec<Field
             name: row.try_get("name")?,
             r#type: row.try_get("type")?,
             required: row.try_get::<i64, _>("required")? != 0,
+            is_status: row.try_get::<i64, _>("is_status")? != 0,
             position: row.try_get("position")?,
             options,
         });
@@ -247,9 +249,11 @@ pub async fn create_field(
     name: &str,
     field_type: &str,
     required: bool,
+    is_status: bool,
 ) -> Result<Field> {
     validate_field_name(name)?;
     validate_field_type(field_type)?;
+    validate_status_field(pool, entity_id, None, field_type, is_status).await?;
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _meta_entity WHERE id = ?)")
         .bind(entity_id)
         .fetch_one(pool)
@@ -265,13 +269,14 @@ pub async fn create_field(
     .await?;
     let field_id = format!("{entity_id}_{name}");
     sqlx::query(
-        "INSERT INTO _meta_field (id, entity_id, name, type, required, position) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO _meta_field (id, entity_id, name, type, required, is_status, position) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&field_id)
     .bind(entity_id)
     .bind(name)
     .bind(field_type)
     .bind(required as i64)
+    .bind(is_status as i64)
     .bind(position)
     .execute(pool)
     .await?;
@@ -279,12 +284,13 @@ pub async fn create_field(
 }
 
 pub async fn get_field(pool: &SqlitePool, field_id: &str) -> Result<Field> {
-    let row =
-        sqlx::query("SELECT id, name, type, required, position FROM _meta_field WHERE id = ?")
-            .bind(field_id)
-            .fetch_optional(pool)
-            .await?
-            .ok_or_else(|| AppError::NotFound(format!("field not found: {field_id}")))?;
+    let row = sqlx::query(
+        "SELECT id, name, type, required, is_status, position FROM _meta_field WHERE id = ?",
+    )
+    .bind(field_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("field not found: {field_id}")))?;
     use sqlx::Row;
     let options = list_field_options(pool, field_id).await?;
     Ok(Field {
@@ -292,6 +298,7 @@ pub async fn get_field(pool: &SqlitePool, field_id: &str) -> Result<Field> {
         name: row.try_get("name")?,
         r#type: row.try_get("type")?,
         required: row.try_get::<i64, _>("required")? != 0,
+        is_status: row.try_get::<i64, _>("is_status")? != 0,
         position: row.try_get("position")?,
         options,
     })
@@ -303,17 +310,26 @@ pub async fn update_field(
     name: &str,
     field_type: &str,
     required: bool,
+    is_status: bool,
 ) -> Result<Field> {
     validate_field_name(name)?;
     validate_field_type(field_type)?;
-    let result =
-        sqlx::query("UPDATE _meta_field SET name = ?, type = ?, required = ? WHERE id = ?")
-            .bind(name)
-            .bind(field_type)
-            .bind(required as i64)
-            .bind(field_id)
-            .execute(pool)
-            .await?;
+    let entity_id: String = sqlx::query_scalar("SELECT entity_id FROM _meta_field WHERE id = ?")
+        .bind(field_id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("field not found: {field_id}")))?;
+    validate_status_field(pool, &entity_id, Some(field_id), field_type, is_status).await?;
+    let result = sqlx::query(
+        "UPDATE _meta_field SET name = ?, type = ?, required = ?, is_status = ? WHERE id = ?",
+    )
+    .bind(name)
+    .bind(field_type)
+    .bind(required as i64)
+    .bind(is_status as i64)
+    .bind(field_id)
+    .execute(pool)
+    .await?;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("field not found: {field_id}")).into());
     }
@@ -448,6 +464,44 @@ fn validate_field_name(name: &str) -> Result<()> {
 fn validate_field_type(field_type: &str) -> Result<()> {
     if !matches!(field_type, "text" | "number" | "date" | "select") {
         return Err(AppError::BadRequest(format!("invalid field type: {field_type}")).into());
+    }
+    Ok(())
+}
+
+async fn validate_status_field(
+    pool: &SqlitePool,
+    entity_id: &str,
+    exclude_field_id: Option<&str>,
+    field_type: &str,
+    is_status: bool,
+) -> Result<()> {
+    if !is_status {
+        return Ok(());
+    }
+    if field_type != "select" {
+        return Err(AppError::BadRequest("status field must be of type select".into()).into());
+    }
+    let existing: bool = match exclude_field_id {
+        Some(field_id) => {
+            sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM _meta_field WHERE entity_id = ? AND is_status = 1 AND id != ?)",
+            )
+            .bind(entity_id)
+            .bind(field_id)
+            .fetch_one(pool)
+            .await?
+        }
+        None => {
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _meta_field WHERE entity_id = ? AND is_status = 1)")
+                .bind(entity_id)
+                .fetch_one(pool)
+                .await?
+        }
+    };
+    if existing {
+        return Err(
+            AppError::Conflict(format!("entity already has a status field: {entity_id}")).into(),
+        );
     }
     Ok(())
 }
@@ -747,8 +801,13 @@ pub async fn list_documents(
     let mut params: Vec<String> = vec![entity_id.to_string()];
 
     if let Some(status) = filter.status.as_deref().filter(|s| !s.trim().is_empty()) {
-        where_sql.push_str(" AND json_extract(payload, '$.status') = ?");
-        params.push(status.to_string());
+        if let Some(status_field) = fields.iter().find(|f| f.is_status) {
+            where_sql.push_str(&format!(
+                " AND json_extract(payload, '$.{}') = ?",
+                status_field.name
+            ));
+            params.push(status.to_string());
+        }
     }
     if let Some(search) = filter.search.as_deref().filter(|s| !s.trim().is_empty()) {
         let like = format!("%{}%", search.trim());
@@ -826,9 +885,14 @@ pub async fn update_document(pool: &SqlitePool, id: &str, payload: &Value) -> Re
 
 pub async fn transition_document(pool: &SqlitePool, id: &str, action: &str) -> Result<Document> {
     let existing = get_document(pool, id).await?;
+    let fields = list_fields(pool, &existing.entity_id).await?;
+    let status_field = fields
+        .iter()
+        .find(|f| f.is_status)
+        .ok_or_else(|| AppError::BadRequest("entity has no status field".into()))?;
     let current = existing
         .payload
-        .get("status")
+        .get(&status_field.name)
         .and_then(Value::as_str)
         .ok_or_else(|| AppError::BadRequest("document has no status".into()))?;
     let target: Option<String> = sqlx::query_scalar(
@@ -843,7 +907,7 @@ pub async fn transition_document(pool: &SqlitePool, id: &str, action: &str) -> R
         AppError::BadRequest(format!("invalid transition: {current} cannot {action}"))
     })?;
     let mut next = existing.payload;
-    next["status"] = Value::String(target);
+    next[status_field.name.as_str()] = Value::String(target);
     validate_payload(pool, &existing.entity_id, &next).await?;
     let mut tx = pool.begin().await?;
     sqlx::query("UPDATE _doc SET payload = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
@@ -897,12 +961,18 @@ pub async fn count_documents_by_status(
     pool: &SqlitePool,
     entity_id: &str,
 ) -> Result<Vec<StatusCount>> {
-    let rows = sqlx::query_as::<_, (String, i64)>(
-        "SELECT json_extract(payload, '$.status'), COUNT(*) FROM _doc WHERE entity_id = ? GROUP BY json_extract(payload, '$.status') ORDER BY 1",
-    )
-    .bind(entity_id)
-    .fetch_all(pool)
-    .await?;
+    let fields = list_fields(pool, entity_id).await?;
+    let Some(status_field) = fields.iter().find(|f| f.is_status) else {
+        return Ok(Vec::new());
+    };
+    let query = format!(
+        "SELECT json_extract(payload, '$.{}'), COUNT(*) FROM _doc WHERE entity_id = ? GROUP BY json_extract(payload, '$.{}') ORDER BY 1",
+        status_field.name, status_field.name
+    );
+    let rows = sqlx::query_as::<_, (String, i64)>(&query)
+        .bind(entity_id)
+        .fetch_all(pool)
+        .await?;
     Ok(rows
         .into_iter()
         .map(|(status, count)| StatusCount { status, count })

@@ -168,6 +168,8 @@ pub struct CreateField {
     pub r#type: String,
     #[serde(default)]
     pub required: bool,
+    #[serde(default)]
+    pub is_status: bool,
 }
 
 async fn create_field(
@@ -175,10 +177,17 @@ async fn create_field(
     Path(id): Path<String>,
     Json(input): Json<CreateField>,
 ) -> Result<(StatusCode, Json<repository::Field>), AppError> {
-    repository::create_field(&state.pool, &id, &input.name, &input.r#type, input.required)
-        .await
-        .map(|field| (StatusCode::CREATED, Json(field)))
-        .map_err(map_db_error)
+    repository::create_field(
+        &state.pool,
+        &id,
+        &input.name,
+        &input.r#type,
+        input.required,
+        input.is_status,
+    )
+    .await
+    .map(|field| (StatusCode::CREATED, Json(field)))
+    .map_err(map_db_error)
 }
 
 #[derive(Debug, Deserialize)]
@@ -187,6 +196,8 @@ pub struct UpdateField {
     pub r#type: String,
     #[serde(default)]
     pub required: bool,
+    #[serde(default)]
+    pub is_status: bool,
 }
 
 async fn update_field(
@@ -194,10 +205,17 @@ async fn update_field(
     Path(id): Path<String>,
     Json(input): Json<UpdateField>,
 ) -> Result<Json<repository::Field>, AppError> {
-    repository::update_field(&state.pool, &id, &input.name, &input.r#type, input.required)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
+    repository::update_field(
+        &state.pool,
+        &id,
+        &input.name,
+        &input.r#type,
+        input.required,
+        input.is_status,
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
 }
 
 async fn delete_field(

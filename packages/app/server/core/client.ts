@@ -7,6 +7,7 @@ export type CoreField = {
   name: string
   type: string
   required: boolean
+  is_status: boolean
   position: number
   options: CoreFieldOption[]
 }
@@ -88,12 +89,12 @@ export function coreClient() {
       request<void>(`/v1/meta/entities/${encodeURIComponent(id)}`, {
         method: 'DELETE'
       }),
-    createField: (entityId: string, field: { name: string; type: string; required: boolean }): Promise<CoreField> =>
+    createField: (entityId: string, field: { name: string; type: string; required: boolean; is_status: boolean }): Promise<CoreField> =>
       request<CoreField>(`/v1/meta/entities/${encodeURIComponent(entityId)}/fields`, {
         method: 'POST',
         body: field
       }),
-    updateField: (id: string, field: { name: string; type: string; required: boolean }): Promise<CoreField> =>
+    updateField: (id: string, field: { name: string; type: string; required: boolean; is_status: boolean }): Promise<CoreField> =>
       request<CoreField>(`/v1/meta/fields/${encodeURIComponent(id)}`, {
         method: 'PUT',
         body: field

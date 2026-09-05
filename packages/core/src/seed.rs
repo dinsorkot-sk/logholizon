@@ -15,19 +15,41 @@ pub async fn seed(pool: &SqlitePool) -> Result<()> {
         .bind("PM Schedule")
         .execute(&mut *tx)
         .await?;
-    for (id, entity_id, name, field_type, required) in [
-        ("work_order_title", "work_order", "title", "text", 1),
-        ("work_order_status", "work_order", "status", "select", 1),
-        ("work_order_priority", "work_order", "priority", "select", 0),
-        ("work_order_assignee", "work_order", "assignee", "text", 0),
-        ("pm_schedule_due_date", "pm_schedule", "due_date", "date", 1),
+    for (id, entity_id, name, field_type, required, is_status) in [
+        ("work_order_title", "work_order", "title", "text", 1, 0),
+        ("work_order_status", "work_order", "status", "select", 1, 1),
+        (
+            "work_order_priority",
+            "work_order",
+            "priority",
+            "select",
+            0,
+            0,
+        ),
+        (
+            "work_order_assignee",
+            "work_order",
+            "assignee",
+            "text",
+            0,
+            0,
+        ),
+        (
+            "pm_schedule_due_date",
+            "pm_schedule",
+            "due_date",
+            "date",
+            1,
+            0,
+        ),
     ] {
-        sqlx::query("INSERT OR IGNORE INTO _meta_field (id, entity_id, name, type, required) VALUES (?, ?, ?, ?, ?)")
+        sqlx::query("INSERT OR IGNORE INTO _meta_field (id, entity_id, name, type, required, is_status) VALUES (?, ?, ?, ?, ?, ?)")
             .bind(id)
             .bind(entity_id)
             .bind(name)
             .bind(field_type)
             .bind(required)
+            .bind(is_status)
             .execute(&mut *tx)
             .await?;
     }

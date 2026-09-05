@@ -1,6 +1,6 @@
 import { coreClient } from '../../../core/client'
 
-type UpdateFieldBody = { name: string; type: string; required?: boolean }
+type UpdateFieldBody = { name: string; type: string; required?: boolean; is_status?: boolean }
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')
@@ -12,6 +12,7 @@ export default defineEventHandler(async (event) => {
   return coreClient().updateField(id, {
     name: body.name,
     type: body.type,
-    required: !!body.required
+    required: !!body.required,
+    is_status: !!body.is_status
   })
 })

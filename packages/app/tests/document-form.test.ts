@@ -1,11 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import { normalizePayload, validatePayload } from '../app/utils/document-form'
+import { defaultPayload, normalizePayload, validatePayload } from '../app/utils/document-form'
 
 const fields = [
   { name: 'title', type: 'text', required: true },
   { name: 'priority', type: 'number', required: false },
-  { name: 'status', type: 'select', required: true }
+  { name: 'status', type: 'select', required: true, is_status: true }
 ]
+
+describe('defaultPayload', () => {
+  it('defaults the status field to the first workflow state', () => {
+    const payload = defaultPayload(fields, 'draft')
+    expect(payload).toEqual({ title: '', priority: '', status: 'draft' })
+  })
+
+  it('leaves non-status fields empty', () => {
+    const payload = defaultPayload(fields, '')
+    expect(payload).toEqual({ title: '', priority: '', status: '' })
+  })
+})
 
 describe('validatePayload', () => {
   it('flags missing required fields', () => {
@@ -25,8 +37,13 @@ describe('normalizePayload', () => {
     expect(payload.priority).toBe(3)
   })
 
-  it('keeps empty number as empty string', () => {
+  it('omits empty optional fields', () => {
     const payload = normalizePayload(fields, { title: 'Fix pump', priority: '', status: 'open' })
-    expect(payload.priority).toBe('')
+    expect(payload).toEqual({ title: 'Fix pump', status: 'open' })
+  })
+
+  it('keeps empty required fields so validation can flag them', () => {
+    const payload = normalizePayload(fields, { title: '', priority: '', status: 'open' })
+    expect(payload.title).toBe('')
   })
 })
