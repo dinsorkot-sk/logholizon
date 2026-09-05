@@ -45,6 +45,11 @@ export type CreateDocumentInput = {
   payload: Record<string, unknown>
 }
 
+export type CoreWorkflowState = { name: string; label: string; position: number }
+export type CoreWorkflowTransition = { action: string; from_state: string; to_state: string }
+export type CoreWorkflowDefinition = { states: CoreWorkflowState[]; transitions: CoreWorkflowTransition[] }
+export type CoreStatusCount = { status: string; count: number }
+
 type CoreError = { code?: string; message?: string }
 
 export function coreClient() {
@@ -108,6 +113,15 @@ export function coreClient() {
     ): Promise<CoreAuditList> =>
       request<CoreAuditList>(`/v1/documents/${encodeURIComponent(id)}/audit`, {
         query: { limit, offset }
-      })
+      }),
+    getWorkflow: (entityId: string): Promise<CoreWorkflowDefinition> =>
+      request<CoreWorkflowDefinition>(`/v1/meta/entities/${encodeURIComponent(entityId)}/workflow`),
+    transitionDocument: (id: string, action: string): Promise<CoreDocument> =>
+      request<CoreDocument>(`/v1/documents/${encodeURIComponent(id)}/transition`, {
+        method: 'POST',
+        body: { action }
+      }),
+    getDashboardCounts: (entityId: string): Promise<CoreStatusCount[]> =>
+      request<CoreStatusCount[]>('/v1/dashboard/counts', { query: { entity_id: entityId } })
   }
 }

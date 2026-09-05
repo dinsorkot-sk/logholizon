@@ -13,6 +13,7 @@ const selected = ref<Document | null>(null)
 const payload = reactive<Record<string, unknown>>({})
 const saving = ref(false)
 const deleting = ref(false)
+const transitioning = ref(false)
 const error = ref('')
 const fieldErrors = reactive<Record<string, string>>({})
 
@@ -23,6 +24,10 @@ const { data: entity, status: entityStatus, error: entityError } = await useFetc
 )
 const { data: documents, status: documentsStatus, refresh } = await useFetch<DocumentList>(
   () => `/api/documents?entity_id=${encodeURIComponent(entityId.value)}`,
+  { watch: [entityId] }
+)
+const { data: workflow } = await useFetch<{ states: { name: string; label: string }[]; transitions: { action: string; from_state: string; to_state: string }[] }>(
+  () => `/api/meta/entities/${encodeURIComponent(entityId.value)}/workflow`,
   { watch: [entityId] }
 )
 
@@ -81,6 +86,26 @@ async function save() {
   } finally {
     saving.value = false
   }
+}
+
+async function transition(action: string) {
+  if (!selected.value) return
+  transitioning.value = true
+  error.value = ''
+  try {
+    await $fetch(`/api/documents/${encodeURIComponent(selected.value.id)}/transition`, { method: 'POST', body: { action } })
+    panelOpen.value = false
+    await refresh()
+  } catch (cause: any) {
+    error.value = cause?.data?.message || cause?.statusMessage || 'Unable to transition record'
+  } finally {
+    transitioning.value = false
+  }
+}
+
+function availableActions() {
+  const status = selected.value?.payload.status
+  return workflow.value?.transitions.filter(item => item.from_state === status) || []
 }
 
 async function remove() {
@@ -155,7 +180,10 @@ function display(value: unknown) {
             </thead>
             <tbody>
               <tr v-for="document in documents?.items || []" :key="document.id" class="border-b last:border-0 hover:bg-gray-50">
-                <td v-for="field in entity.fields" :key="field.id" class="px-3 py-2">{{ display(document.payload[field.name]) }}</td>
+                <td v-for="field in entity.fields" :key="field.id" class="px-3 py-2">
+                  <UBadge v-if="field.name === 'status'" variant="subtle">{{ display(document.payload[field.name]) }}</UBadge>
+                  <template v-else>{{ display(document.payload[field.name]) }}</template>
+                </td>
                 <td class="px-3 py-2 text-right"><UButton size="xs" variant="ghost" @click="openEdit(document)">Edit</UButton></td>
               </tr>
               <tr v-if="!documents?.items.length">
@@ -170,13 +198,13 @@ function display(value: unknown) {
         <template #body>
           <UForm class="space-y-4" @submit="save">
             <UFormField
-              v-for="field in entity.fields"
+              v-for="field in entity.fields.filter(item => item.name !== 'status')"
               :key="field.id"
               :label="field.name"
               :required="field.required"
               :error="fieldErrors[field.name]"
             >
-              <select v-if="field.type === 'select'" v-model="payload[field.name] as string" class="w-full rounded border px-3 py-2">
+              <select v-if="field.type === 'select' && field.name !== 'status'" v-model="payload[field.name] as string" class="w-full rounded border px-3 py-2">
                 <option value="">Select…</option>
                 <option v-for="option in field.options" :key="option.id" :value="option.value">{{ option.label }}</option>
               </select>
@@ -184,7 +212,10 @@ function display(value: unknown) {
             </UFormField>
             <UAlert v-if="error" color="error" :title="error" />
             <div class="flex justify-between gap-2 pt-2">
-              <UButton v-if="selected" color="error" variant="ghost" :loading="deleting" @click="remove">Delete</UButton>
+              <div class="flex gap-2">
+                <UButton v-for="item in availableActions()" :key="item.action" :loading="transitioning" @click="transition(item.action)">{{ item.action }}</UButton>
+                <UButton v-if="selected" color="error" variant="ghost" :loading="deleting" @click="remove">Delete</UButton>
+              </div>
               <div class="ml-auto flex gap-2"><UButton variant="ghost" @click="panelOpen = false">Cancel</UButton><UButton type="submit" :loading="saving">Save</UButton></div>
             </div>
           </UForm>
