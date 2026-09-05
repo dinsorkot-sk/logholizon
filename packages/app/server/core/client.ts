@@ -119,10 +119,11 @@ export function coreClient() {
     listDocuments: (
       entityId: string,
       limit = 50,
-      offset = 0
+      offset = 0,
+      options: { search?: string; status?: string; sortBy?: string; sortDir?: string } = {}
     ): Promise<CoreDocumentList> =>
       request<CoreDocumentList>('/v1/documents', {
-        query: { entity_id: entityId, limit, offset }
+        query: { entity_id: entityId, limit, offset, ...options }
       }),
     createDocument: (input: CreateDocumentInput): Promise<CoreDocument> =>
       request<CoreDocument>('/v1/documents', {

@@ -726,27 +726,71 @@ fn parse_csv(input: &str) -> Result<Vec<Vec<String>>> {
     Ok(records)
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct ListDocumentsFilter {
+    pub search: Option<String>,
+    pub status: Option<String>,
+    pub sort_by: Option<String>,
+    pub sort_dir: Option<String>,
+}
+
 pub async fn list_documents(
     pool: &SqlitePool,
     entity_id: &str,
     limit: i64,
     offset: i64,
+    filter: &ListDocumentsFilter,
 ) -> Result<DocumentList> {
-    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _doc WHERE entity_id = ?")
-        .bind(entity_id)
-        .fetch_one(pool)
-        .await?;
-    let rows = sqlx::query(
-        "SELECT id, entity_id, payload, created_at, updated_at FROM _doc WHERE entity_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
-    )
-    .bind(entity_id)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await?;
+    use sqlx::Row;
+    let fields = list_fields(pool, entity_id).await?;
+    let mut where_sql = String::from("entity_id = ?");
+    let mut params: Vec<String> = vec![entity_id.to_string()];
+
+    if let Some(status) = filter.status.as_deref().filter(|s| !s.trim().is_empty()) {
+        where_sql.push_str(" AND json_extract(payload, '$.status') = ?");
+        params.push(status.to_string());
+    }
+    if let Some(search) = filter.search.as_deref().filter(|s| !s.trim().is_empty()) {
+        let like = format!("%{}%", search.trim());
+        let mut clauses = vec!["id LIKE ?".to_string()];
+        params.push(like.clone());
+        for field in fields.iter().filter(|f| f.r#type == "text") {
+            clauses.push(format!("json_extract(payload, '$.{}') LIKE ?", field.name));
+            params.push(like.clone());
+        }
+        where_sql.push_str(&format!(" AND ({})", clauses.join(" OR ")));
+    }
+
+    let total: i64 = {
+        let query = format!("SELECT COUNT(*) FROM _doc WHERE {where_sql}");
+        let mut q = sqlx::query(&query);
+        for p in &params {
+            q = q.bind(p);
+        }
+        q.fetch_one(pool).await?.try_get(0)?
+    };
+
+    let sort_col = match filter.sort_by.as_deref() {
+        Some(name) if fields.iter().any(|f| f.name == name) => {
+            format!("json_extract(payload, '$.{name}')")
+        }
+        _ => "created_at".to_string(),
+    };
+    let dir = match filter.sort_dir.as_deref() {
+        Some(d) if d.eq_ignore_ascii_case("asc") => "ASC",
+        _ => "DESC",
+    };
+
+    let query = format!(
+        "SELECT id, entity_id, payload, created_at, updated_at FROM _doc WHERE {where_sql} ORDER BY {sort_col} {dir}, id DESC LIMIT ? OFFSET ?"
+    );
+    let mut q = sqlx::query(&query);
+    for p in &params {
+        q = q.bind(p);
+    }
+    let rows = q.bind(limit).bind(offset).fetch_all(pool).await?;
     let mut items = Vec::new();
     for row in rows {
-        use sqlx::Row;
         items.push(Document {
             id: row.try_get("id")?,
             entity_id: row.try_get("entity_id")?,

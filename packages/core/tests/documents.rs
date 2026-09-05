@@ -60,7 +60,7 @@ async fn document_crud_validates_payload() {
         .unwrap();
     assert_eq!(updated.payload["title"], "Fixed");
 
-    let list = repository::list_documents(&pool, "ticket", 10, 0)
+    let list = repository::list_documents(&pool, "ticket", 10, 0, &Default::default())
         .await
         .unwrap();
     assert_eq!(list.total, 1);
@@ -68,4 +68,108 @@ async fn document_crud_validates_payload() {
 
     repository::delete_document(&pool, "d1").await.unwrap();
     assert!(repository::get_document(&pool, "d1").await.is_err());
+}
+
+#[tokio::test]
+async fn list_documents_supports_search_filter_sort() {
+    let pool = seeded_pool().await;
+    repository::create_document(
+        &pool,
+        "d1",
+        "ticket",
+        &json!({"title": "Fix pump", "priority": 1}),
+    )
+    .await
+    .unwrap();
+    repository::create_document(
+        &pool,
+        "d2",
+        "ticket",
+        &json!({"title": "Replace belt", "priority": 2}),
+    )
+    .await
+    .unwrap();
+    repository::create_document(
+        &pool,
+        "d3",
+        "ticket",
+        &json!({"title": "Fix valve", "priority": 3}),
+    )
+    .await
+    .unwrap();
+
+    // search matches text fields and id
+    let list = repository::list_documents(
+        &pool,
+        "ticket",
+        10,
+        0,
+        &repository::ListDocumentsFilter {
+            search: Some("pump".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(list.total, 1);
+    assert_eq!(list.items[0].id, "d1");
+
+    let list = repository::list_documents(
+        &pool,
+        "ticket",
+        10,
+        0,
+        &repository::ListDocumentsFilter {
+            search: Some("d2".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(list.total, 1);
+    assert_eq!(list.items[0].id, "d2");
+
+    // sort by priority asc
+    let list = repository::list_documents(
+        &pool,
+        "ticket",
+        10,
+        0,
+        &repository::ListDocumentsFilter {
+            sort_by: Some("priority".into()),
+            sort_dir: Some("asc".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(list.items[0].id, "d1");
+    assert_eq!(list.items[2].id, "d3");
+
+    // sort by priority desc
+    let list = repository::list_documents(
+        &pool,
+        "ticket",
+        10,
+        0,
+        &repository::ListDocumentsFilter {
+            sort_by: Some("priority".into()),
+            sort_dir: Some("desc".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(list.items[0].id, "d3");
+
+    // pagination
+    let list = repository::list_documents(&pool, "ticket", 2, 0, &Default::default())
+        .await
+        .unwrap();
+    assert_eq!(list.total, 3);
+    assert_eq!(list.items.len(), 2);
+    let list = repository::list_documents(&pool, "ticket", 2, 2, &Default::default())
+        .await
+        .unwrap();
+    assert_eq!(list.items.len(), 1);
 }

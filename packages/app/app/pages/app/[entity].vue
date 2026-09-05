@@ -26,14 +26,38 @@ const importInput = ref<HTMLInputElement | null>(null)
 const toast = useToast()
 const deleteOpen = ref(false)
 
+// --- List state (search / filter / sort / pagination / bulk / columns) ---
+const limit = ref(50)
+const offset = ref(0)
+const search = ref('')
+const statusFilter = ref('all')
+const sortBy = ref('')
+const sortDir = ref('desc')
+const selectedRows = ref<Set<string>>(new Set())
+const visibleColumns = ref<Set<string>>(new Set())
+const bulkDeleteOpen = ref(false)
+const bulkDeleting = ref(false)
+
 const { data: entities } = await useFetch<{ id: string; label: string }[]>('/api/meta/entities')
 const { data: entity, status: entityStatus, error: entityError } = await useFetch<Entity>(
   () => `/api/meta/entities/${encodeURIComponent(entityId.value)}`,
   { watch: [entityId] }
 )
+const documentsUrl = computed(() => {
+  const params = new URLSearchParams({
+    entity_id: entityId.value,
+    limit: String(limit.value),
+    offset: String(offset.value)
+  })
+  if (search.value.trim()) params.set('search', search.value.trim())
+  if (statusFilter.value && statusFilter.value !== 'all') params.set('status', statusFilter.value)
+  if (sortBy.value) params.set('sort_by', sortBy.value)
+  if (sortDir.value) params.set('sort_dir', sortDir.value)
+  return `/api/documents?${params.toString()}`
+})
 const { data: documents, status: documentsStatus, error: documentsError, refresh } = await useFetch<DocumentList>(
-  () => `/api/documents?entity_id=${encodeURIComponent(entityId.value)}`,
-  { watch: [entityId] }
+  documentsUrl,
+  { watch: [documentsUrl] }
 )
 const { data: workflow } = await useFetch<{ states: { name: string; label: string }[]; transitions: { action: string; from_state: string; to_state: string }[] }>(
   () => `/api/meta/entities/${encodeURIComponent(entityId.value)}/workflow`,
@@ -151,6 +175,159 @@ function display(value: unknown) {
   return String(value)
 }
 
+// --- Label mapping ---
+function fieldLabel(field: Field, value: unknown) {
+  if (value === '' || value === null || value === undefined) return '—'
+  if (field.type === 'select') {
+    const option = field.options.find(o => o.value === value)
+    return option?.label || String(value)
+  }
+  return String(value)
+}
+
+const transitionLabels: Record<string, string> = {
+  submit: 'Submit',
+  approve: 'Approve',
+  reject: 'Reject',
+  done: 'Mark Done',
+  complete: 'Complete',
+  transition: 'Status changed',
+  create: 'Created',
+  update: 'Updated',
+  delete: 'Deleted',
+  import: 'Imported'
+}
+
+function transitionLabel(action: string) {
+  return transitionLabels[action] || action
+}
+
+function relativeTime(iso: string) {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  const diff = Date.now() - date.getTime()
+  const minutes = Math.floor(diff / 60000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes} min ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `${days} day${days > 1 ? 's' : ''} ago`
+  return date.toLocaleDateString()
+}
+
+// --- Pagination ---
+const total = computed(() => documents.value?.total || 0)
+const pageStart = computed(() => (total.value === 0 ? 0 : offset.value + 1))
+const pageEnd = computed(() => Math.min(offset.value + limit.value, total.value))
+const hasNext = computed(() => pageEnd.value < total.value)
+const hasPrev = computed(() => offset.value > 0)
+
+function nextPage() {
+  offset.value += limit.value
+}
+function prevPage() {
+  offset.value = Math.max(0, offset.value - limit.value)
+}
+function applyFilters() {
+  offset.value = 0
+  refresh()
+}
+
+// --- Sort ---
+const sortItems = computed(() => {
+  const items = [
+    { label: 'Created (newest)', value: 'created__desc' },
+    { label: 'Created (oldest)', value: 'created__asc' }
+  ]
+  for (const field of entity.value?.fields || []) {
+    items.push({ label: `${field.name} (A–Z)`, value: `${field.name}__asc` })
+    items.push({ label: `${field.name} (Z–A)`, value: `${field.name}__desc` })
+  }
+  return items
+})
+const sortValue = computed({
+  get: () => (sortBy.value ? `${sortBy.value}__${sortDir.value}` : 'created__desc'),
+  set: (value: string) => {
+    const idx = value.lastIndexOf('__')
+    if (idx === -1) {
+      sortBy.value = ''
+      sortDir.value = 'desc'
+    } else {
+      sortBy.value = value.slice(0, idx)
+      sortDir.value = value.slice(idx + 2)
+    }
+    applyFilters()
+  }
+})
+
+// --- Status filter ---
+const statusField = computed(() => entity.value?.fields.find(f => f.name === 'status'))
+const statusItems = computed(() => [
+  { label: 'All statuses', value: 'all' },
+  ...(statusField.value?.options || []).map(o => ({ label: o.label, value: o.value }))
+])
+
+// --- Column visibility ---
+watch(entity, (e) => {
+  if (e) {
+    visibleColumns.value = new Set(e.fields.map(f => f.name))
+  }
+}, { immediate: true })
+
+function toggleColumn(name: string) {
+  const next = new Set(visibleColumns.value)
+  if (next.has(name)) next.delete(name)
+  else next.add(name)
+  visibleColumns.value = next
+}
+
+// --- Bulk selection ---
+const allSelected = computed(() => {
+  const items = documents.value?.items || []
+  return items.length > 0 && items.every(d => selectedRows.value.has(d.id))
+})
+
+function toggleAll() {
+  const items = documents.value?.items || []
+  const next = new Set(selectedRows.value)
+  if (allSelected.value) {
+    items.forEach(d => next.delete(d.id))
+  } else {
+    items.forEach(d => next.add(d.id))
+  }
+  selectedRows.value = next
+}
+
+function toggleRow(id: string) {
+  const next = new Set(selectedRows.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selectedRows.value = next
+}
+
+async function bulkDelete() {
+  bulkDeleting.value = true
+  try {
+    for (const id of selectedRows.value) {
+      await $fetch(`/api/documents/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    }
+    selectedRows.value = new Set()
+    bulkDeleteOpen.value = false
+    await refresh()
+    toast.add({ title: 'Records deleted', color: 'success', icon: 'i-lucide-check' })
+  } catch (cause: any) {
+    toast.add({
+      title: 'Unable to delete records',
+      description: cause?.data?.message || cause?.statusMessage || 'Delete failed',
+      color: 'error',
+      icon: 'i-lucide-alert-circle'
+    })
+  } finally {
+    bulkDeleting.value = false
+  }
+}
+
 async function exportCsv() {
   exporting.value = true
   try {
@@ -240,6 +417,37 @@ async function confirmImport() {
           >
             <option v-for="item in entities || []" :key="item.id" :value="item.id">{{ item.label }}</option>
           </select>
+          <UInput
+            v-model="search"
+            icon="i-lucide-search"
+            placeholder="Search…"
+            class="w-56"
+            @keyup.enter="applyFilters"
+          >
+            <template v-if="search" #trailing>
+              <UButton size="xs" variant="link" color="neutral" icon="i-lucide-x" @click="search = ''; applyFilters()" />
+            </template>
+          </UInput>
+          <USelectMenu
+            v-if="statusField"
+            v-model="statusFilter"
+            :items="statusItems"
+            value-key="value"
+            class="w-40"
+            @update:model-value="applyFilters"
+          />
+          <USelectMenu v-model="sortValue" :items="sortItems" value-key="value" class="w-48" />
+          <UPopover>
+            <UButton variant="outline" icon="i-lucide-settings-2">Columns</UButton>
+            <template #content>
+              <div class="w-52 p-2">
+                <label v-for="field in entity.fields" :key="field.id" class="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-default">
+                  <UCheckbox :model-value="visibleColumns.has(field.name)" @update:model-value="toggleColumn(field.name)" />
+                  <span class="font-mono">{{ field.name }}</span>
+                </label>
+              </div>
+            </template>
+          </UPopover>
           <UButton variant="outline" icon="i-lucide-download" :loading="exporting" @click="exportCsv">Export CSV</UButton>
           <input ref="importInput" type="file" accept=".csv,text/csv" class="hidden" @change="previewImport">
           <UButton variant="outline" icon="i-lucide-upload" :loading="importing" @click="importInput?.click()">Import CSV</UButton>
@@ -272,27 +480,48 @@ async function confirmImport() {
           </template>
         </UAlert>
         <template v-else>
+          <div v-if="selectedRows.size" class="flex items-center gap-2 border-b px-3 py-2">
+            <p class="text-sm font-medium">{{ selectedRows.size }} selected</p>
+            <UButton size="xs" color="error" variant="ghost" @click="bulkDeleteOpen = true">Delete</UButton>
+            <UButton size="xs" variant="ghost" @click="selectedRows = new Set()">Clear</UButton>
+          </div>
           <table class="w-full text-sm">
             <caption class="sr-only">{{ entity.label }} records</caption>
             <thead>
               <tr class="border-b text-left text-gray-500">
-                <th v-for="field in entity.fields" :key="field.id" scope="col" class="px-3 py-2">{{ field.name }}</th>
+                <th scope="col" class="w-10 px-3 py-2">
+                  <UCheckbox :model-value="allSelected" @update:model-value="toggleAll" aria-label="Select all" />
+                </th>
+                <th v-for="field in entity.fields.filter(f => visibleColumns.has(f.name))" :key="field.id" scope="col" class="px-3 py-2">{{ field.name }}</th>
                 <th scope="col" class="px-3 py-2"><span class="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="document in documents?.items || []" :key="document.id" class="border-b last:border-0 hover:bg-gray-50">
-                <td v-for="field in entity.fields" :key="field.id" class="px-3 py-2">
-                  <UBadge v-if="field.name === 'status'" variant="subtle">{{ display(document.payload[field.name]) }}</UBadge>
-                  <template v-else>{{ display(document.payload[field.name]) }}</template>
+                <td class="px-3 py-2">
+                  <UCheckbox :model-value="selectedRows.has(document.id)" @update:model-value="toggleRow(document.id)" :aria-label="`Select ${document.id}`" />
+                </td>
+                <td v-for="field in entity.fields.filter(f => visibleColumns.has(f.name))" :key="field.id" class="px-3 py-2">
+                  <UBadge v-if="field.name === 'status'" variant="subtle">{{ fieldLabel(field, document.payload[field.name]) }}</UBadge>
+                  <template v-else>{{ fieldLabel(field, document.payload[field.name]) }}</template>
                 </td>
                 <td class="px-3 py-2 text-right"><UButton size="xs" variant="ghost" @click="openEdit(document)">Edit</UButton></td>
               </tr>
               <tr v-if="!documents?.items.length">
-                <td :colspan="entity.fields.length + 1" class="py-10 text-center text-gray-500">No records yet.</td>
+                <td :colspan="visibleColumns.size + 2" class="py-10 text-center">
+                  <p class="text-sm text-muted">No records yet for {{ entity.label }}.</p>
+                  <UButton size="sm" icon="i-lucide-plus" class="mt-2" @click="openCreate">Create first record</UButton>
+                </td>
               </tr>
             </tbody>
           </table>
+          <div v-if="total > limit" class="flex items-center justify-between border-t px-3 py-2">
+            <p class="text-sm text-muted">Showing {{ pageStart }}–{{ pageEnd }} of {{ total }}</p>
+            <div class="flex gap-2">
+              <UButton size="sm" variant="outline" :disabled="!hasPrev" @click="prevPage">Prev</UButton>
+              <UButton size="sm" variant="outline" :disabled="!hasNext" @click="nextPage">Next</UButton>
+            </div>
+          </div>
         </template>
       </UCard>
 
@@ -321,8 +550,8 @@ async function confirmImport() {
                 <li v-for="entry in audit?.items || []" :key="entry.id" class="flex gap-3">
                   <span class="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-gray-400" aria-hidden="true" />
                   <div class="min-w-0">
-                    <p class="text-sm font-medium">{{ entry.action }}</p>
-                    <p class="text-xs text-gray-500">{{ entry.created_at }}</p>
+                    <p class="text-sm font-medium">{{ transitionLabel(entry.action) }}</p>
+                    <p class="text-xs text-gray-500">{{ relativeTime(entry.created_at) }}</p>
                     <p v-if="entry.payload.status" class="text-xs text-gray-500">status: {{ display(entry.payload.status) }}</p>
                   </div>
                 </li>
@@ -331,7 +560,7 @@ async function confirmImport() {
             </div>
             <div class="flex justify-between gap-2 pt-2">
               <div class="flex gap-2">
-                <UButton v-for="item in availableActions()" :key="item.action" :loading="transitioning" @click="transition(item.action)">{{ item.action }}</UButton>
+                <UButton v-for="item in availableActions()" :key="item.action" :loading="transitioning" @click="transition(item.action)">{{ transitionLabel(item.action) }}</UButton>
                 <UButton v-if="selected" color="error" variant="ghost" @click="deleteOpen = true">Delete</UButton>
               </div>
               <div class="ml-auto flex gap-2"><UButton variant="ghost" @click="panelOpen = false">Cancel</UButton><UButton type="submit" :loading="saving">Save</UButton></div>
@@ -350,6 +579,20 @@ async function confirmImport() {
           <div class="flex justify-end gap-2">
             <UButton variant="ghost" @click="deleteOpen = false">Cancel</UButton>
             <UButton color="error" :loading="deleting" @click="remove">Delete</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <UModal v-model:open="bulkDeleteOpen" :title="`Delete ${selectedRows.size} records`">
+        <template #body>
+          <p class="text-sm text-muted">
+            This will permanently delete {{ selectedRows.size }} selected records. This action cannot be undone.
+          </p>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="bulkDeleteOpen = false">Cancel</UButton>
+            <UButton color="error" :loading="bulkDeleting" @click="bulkDelete">Delete</UButton>
           </div>
         </template>
       </UModal>

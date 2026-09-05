@@ -136,9 +136,10 @@
 
 ---
 
-## Phase 3 — Data-dense List UX (ERP Core)
+## Phase 3 — Data-dense List UX (ERP Core) ✅ Done
 
 > เป้าหมาย: ตารางรองรับข้อมูลจำนวนมาก — pagination, search, filter, sort
+> สถานะ: เสร็จสิ้น 2026-09-05 · gates ผ่าน (build, test, typecheck, browser verify)
 
 ### 3.1 Pagination
 

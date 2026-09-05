@@ -92,6 +92,14 @@ pub struct ListDocumentsQuery {
     pub limit: i64,
     #[serde(default)]
     pub offset: i64,
+    #[serde(default)]
+    pub search: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub sort_by: Option<String>,
+    #[serde(default)]
+    pub sort_dir: Option<String>,
 }
 
 fn default_limit() -> i64 {
@@ -335,10 +343,21 @@ async fn list_documents(
     if query.offset < 0 {
         return Err(AppError::BadRequest("offset must be >= 0".into()));
     }
-    repository::list_documents(&state.pool, &query.entity_id, query.limit, query.offset)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
+    repository::list_documents(
+        &state.pool,
+        &query.entity_id,
+        query.limit,
+        query.offset,
+        &repository::ListDocumentsFilter {
+            search: query.search,
+            status: query.status,
+            sort_by: query.sort_by,
+            sort_dir: query.sort_dir,
+        },
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
 }
 
 async fn create_document(
