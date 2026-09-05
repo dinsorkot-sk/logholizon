@@ -140,6 +140,7 @@
 
 > เป้าหมาย: ตารางรองรับข้อมูลจำนวนมาก — pagination, search, filter, sort
 > สถานะ: เสร็จสิ้น 2026-09-05 · gates ผ่าน (build, test, typecheck, browser verify)
+> เพิ่มเติม: เปลี่ยน raw HTML (`<table>`, `<select>`, `<button>`) เป็น Nuxt UI components (`UTable` + TanStack, `USelectMenu`, `UButton`) ทั้ง `[entity].vue` และ `admin/meta/entity.vue`
 
 ### 3.1 Pagination
 

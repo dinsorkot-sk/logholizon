@@ -1,4 +1,11 @@
 <script setup lang="ts">
+import { h, resolveComponent } from 'vue'
+import type { TableColumn } from '@nuxt/ui'
+
+const UButton = resolveComponent('UButton')
+const UCheckbox = resolveComponent('UCheckbox')
+const UBadge = resolveComponent('UBadge')
+
 type FieldOption = { id: string; value: string; label: string }
 type Field = { id: string; name: string; type: string; required: boolean; options: FieldOption[] }
 type Entity = { id: string; name: string; label: string; fields: Field[] }
@@ -328,6 +335,74 @@ async function bulkDelete() {
   }
 }
 
+// --- UTable (TanStack via Nuxt UI) ---
+const tableData = computed(() => documents.value?.items || [])
+
+const sorting = ref<{ id: string; desc: boolean }[]>([])
+watch(sorting, (value) => {
+  if (value[0]?.id) {
+    sortBy.value = value[0].id.replace('payload.', '')
+    sortDir.value = value[0].desc ? 'desc' : 'asc'
+    applyFilters()
+  }
+})
+
+const rowSelection = computed({
+  get: () => Object.fromEntries([...selectedRows.value].map(id => [id, true])),
+  set: (value: Record<string, boolean>) => {
+    selectedRows.value = new Set(Object.keys(value).filter(k => value[k]))
+  }
+})
+
+const columnVisibility = computed({
+  get: () => Object.fromEntries([...visibleColumns.value].map(c => [c, true])),
+  set: (value: Record<string, boolean>) => {
+    visibleColumns.value = new Set(Object.keys(value).filter(k => value[k]))
+  }
+})
+
+const tableColumns = computed<TableColumn<Document>[]>(() => {
+  const cols: TableColumn<Document>[] = [{
+    id: 'select',
+    header: () => h(UCheckbox, {
+      'model-value': allSelected.value,
+      'onUpdate:model-value': toggleAll,
+      'aria-label': 'Select all'
+    }),
+    cell: ({ row }) => h(UCheckbox, {
+      'model-value': selectedRows.value.has(row.original.id),
+      'onUpdate:model-value': () => toggleRow(row.original.id),
+      'aria-label': `Select ${row.original.id}`
+    }),
+    meta: { class: { th: 'w-10', td: 'w-10' } }
+  }]
+  for (const field of entity.value?.fields.filter(f => visibleColumns.value.has(f.name)) || []) {
+    cols.push({
+      accessorKey: `payload.${field.name}`,
+      header: field.name,
+      enableSorting: true,
+      cell: ({ row }) => {
+        const value = row.original.payload[field.name]
+        if (field.name === 'status') {
+          return h(UBadge, { variant: 'subtle' }, () => fieldLabel(field, value))
+        }
+        return fieldLabel(field, value)
+      }
+    })
+  }
+  cols.push({
+    id: 'actions',
+    header: () => h('span', { class: 'sr-only' }, 'Actions'),
+    cell: ({ row }) => h(UButton, {
+      size: 'xs',
+      variant: 'ghost',
+      onClick: () => openEdit(row.original)
+    }, () => 'Edit'),
+    meta: { class: { td: 'text-right' } }
+  })
+  return cols
+})
+
 async function exportCsv() {
   exporting.value = true
   try {
@@ -409,14 +484,14 @@ async function confirmImport() {
     <template v-else-if="entity">
       <p class="font-mono text-sm text-muted">{{ entity.name }}</p>
       <div class="mb-4 flex flex-wrap items-center gap-2">
-          <select
+          <USelectMenu
+            :model-value="entityId"
+            :items="(entities || []).map(e => ({ label: e.label, value: e.id }))"
+            value-key="value"
+            class="w-48"
             aria-label="Select entity"
-            class="rounded border px-3 py-2 text-sm"
-            :value="entityId"
-            @change="router.push(`/app/${encodeURIComponent(($event.target as HTMLSelectElement).value)}`)"
-          >
-            <option v-for="item in entities || []" :key="item.id" :value="item.id">{{ item.label }}</option>
-          </select>
+            @update:model-value="(value: string) => router.push(`/app/${encodeURIComponent(value)}`)"
+          />
           <UInput
             v-model="search"
             icon="i-lucide-search"
@@ -485,36 +560,22 @@ async function confirmImport() {
             <UButton size="xs" color="error" variant="ghost" @click="bulkDeleteOpen = true">Delete</UButton>
             <UButton size="xs" variant="ghost" @click="selectedRows = new Set()">Clear</UButton>
           </div>
-          <table class="w-full text-sm">
-            <caption class="sr-only">{{ entity.label }} records</caption>
-            <thead>
-              <tr class="border-b text-left text-gray-500">
-                <th scope="col" class="w-10 px-3 py-2">
-                  <UCheckbox :model-value="allSelected" @update:model-value="toggleAll" aria-label="Select all" />
-                </th>
-                <th v-for="field in entity.fields.filter(f => visibleColumns.has(f.name))" :key="field.id" scope="col" class="px-3 py-2">{{ field.name }}</th>
-                <th scope="col" class="px-3 py-2"><span class="sr-only">Actions</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="document in documents?.items || []" :key="document.id" class="border-b last:border-0 hover:bg-gray-50">
-                <td class="px-3 py-2">
-                  <UCheckbox :model-value="selectedRows.has(document.id)" @update:model-value="toggleRow(document.id)" :aria-label="`Select ${document.id}`" />
-                </td>
-                <td v-for="field in entity.fields.filter(f => visibleColumns.has(f.name))" :key="field.id" class="px-3 py-2">
-                  <UBadge v-if="field.name === 'status'" variant="subtle">{{ fieldLabel(field, document.payload[field.name]) }}</UBadge>
-                  <template v-else>{{ fieldLabel(field, document.payload[field.name]) }}</template>
-                </td>
-                <td class="px-3 py-2 text-right"><UButton size="xs" variant="ghost" @click="openEdit(document)">Edit</UButton></td>
-              </tr>
-              <tr v-if="!documents?.items.length">
-                <td :colspan="visibleColumns.size + 2" class="py-10 text-center">
-                  <p class="text-sm text-muted">No records yet for {{ entity.label }}.</p>
-                  <UButton size="sm" icon="i-lucide-plus" class="mt-2" @click="openCreate">Create first record</UButton>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <UTable
+            :data="tableData"
+            :columns="tableColumns"
+            v-model:sorting="sorting"
+            v-model:row-selection="rowSelection"
+            v-model:column-visibility="columnVisibility"
+            :get-row-id="(row: Document) => row.id"
+            class="w-full"
+          >
+            <template #empty>
+              <div class="py-10 text-center">
+                <p class="text-sm text-muted">No records yet for {{ entity.label }}.</p>
+                <UButton size="sm" icon="i-lucide-plus" class="mt-2" @click="openCreate">Create first record</UButton>
+              </div>
+            </template>
+          </UTable>
           <div v-if="total > limit" class="flex items-center justify-between border-t px-3 py-2">
             <p class="text-sm text-muted">Showing {{ pageStart }}–{{ pageEnd }} of {{ total }}</p>
             <div class="flex gap-2">
@@ -535,10 +596,13 @@ async function confirmImport() {
               :required="field.required"
               :error="fieldErrors[field.name]"
             >
-              <select v-if="field.type === 'select' && field.name !== 'status'" v-model="payload[field.name] as string" class="w-full rounded border px-3 py-2">
-                <option value="">Select…</option>
-                <option v-for="option in field.options" :key="option.id" :value="option.value">{{ option.label }}</option>
-              </select>
+              <USelectMenu
+                v-if="field.type === 'select' && field.name !== 'status'"
+                v-model="payload[field.name] as string"
+                :items="[{ label: 'Select…', value: '' }, ...field.options.map(o => ({ label: o.label, value: o.value }))]"
+                value-key="value"
+                class="w-full"
+              />
               <UInput v-else v-model="payload[field.name] as string" :type="field.type === 'date' ? 'date' : field.type === 'number' ? 'number' : 'text'" />
             </UFormField>
             <UAlert v-if="error" color="error" :title="error" />

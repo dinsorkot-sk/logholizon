@@ -1,4 +1,10 @@
 <script setup lang="ts">
+import { h, resolveComponent } from 'vue'
+import type { TableColumn } from '@nuxt/ui'
+
+const UButton = resolveComponent('UButton')
+const UBadge = resolveComponent('UBadge')
+
 type Entity = { id: string; name: string; label: string }
 type FieldOption = { id: string; value: string; label: string }
 type Field = { id: string; name: string; type: string; required: boolean; position: number; options: FieldOption[] }
@@ -284,6 +290,33 @@ async function removeField() {
     deletingField.value = false
   }
 }
+
+// --- Field table (UTable) ---
+const fieldColumns: TableColumn<Field>[] = [
+  {
+    accessorKey: 'name',
+    header: 'Name',
+    cell: ({ row }) => h('span', { class: 'font-mono' }, row.original.name)
+  },
+  {
+    accessorKey: 'type',
+    header: 'Type',
+    cell: ({ row }) => h(UBadge, { color: typeBadgeColor(row.original.type), variant: 'subtle' }, () => row.original.type)
+  },
+  {
+    accessorKey: 'required',
+    header: 'Required',
+    cell: ({ row }) => row.original.required ? 'Yes' : 'No'
+  },
+  {
+    id: 'actions',
+    header: () => h('span', { class: 'sr-only' }, 'Actions'),
+    cell: ({ row }) => h('div', { class: 'flex justify-end gap-1' }, [
+      h(UButton, { size: 'xs', variant: 'ghost', onClick: () => openEditField(row.original) }, () => 'Edit'),
+      h(UButton, { size: 'xs', variant: 'ghost', color: 'error', onClick: () => confirmDeleteField(row.original) }, () => 'Delete')
+    ])
+  }
+]
 </script>
 
 <template>
@@ -311,17 +344,17 @@ async function removeField() {
         <UCard class="h-fit lg:h-full">
           <UInput v-model="search" icon="i-lucide-search" placeholder="Search entities…" class="mb-3 w-full" />
           <div class="space-y-1">
-            <button
+            <UButton
               v-for="entity in filteredEntities"
               :key="entity.id"
-              type="button"
-              class="flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors"
-              :class="selectedId === entity.id ? 'bg-primary/10 text-primary' : 'hover:bg-default'"
+              variant="ghost"
+              class="w-full justify-between"
+              :class="selectedId === entity.id ? 'bg-primary/10 text-primary' : ''"
               @click="selectEntity(entity.id)"
             >
               <span class="truncate">{{ entity.label }}</span>
               <span class="shrink-0 font-mono text-xs text-muted">{{ entity.id }}</span>
-            </button>
+            </UButton>
             <p v-if="!filteredEntities.length" class="py-6 text-center text-sm text-muted">
               No entities found.
             </p>
@@ -375,34 +408,13 @@ async function removeField() {
                 <p class="text-sm text-muted">{{ detail.fields.length }} fields</p>
                 <UButton size="sm" icon="i-lucide-plus" @click="openAddField">Add field</UButton>
               </div>
-              <table class="w-full text-sm">
-                <thead>
-                  <tr class="border-b text-left text-muted">
-                    <th class="py-2 pr-4">Name</th>
-                    <th class="py-2 pr-4">Type</th>
-                    <th class="py-2 pr-4">Required</th>
-                    <th class="py-2 text-right"><span class="sr-only">Actions</span></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="field in detail.fields" :key="field.id" class="border-b last:border-0">
-                    <td class="py-2 pr-4 font-mono">{{ field.name }}</td>
-                    <td class="py-2 pr-4">
-                      <UBadge :color="typeBadgeColor(field.type)" variant="subtle">{{ field.type }}</UBadge>
-                    </td>
-                    <td class="py-2 pr-4">{{ field.required ? 'Yes' : 'No' }}</td>
-                    <td class="py-2 text-right">
-                      <UButton size="xs" variant="ghost" @click="openEditField(field)">Edit</UButton>
-                      <UButton size="xs" variant="ghost" color="error" @click="confirmDeleteField(field)">Delete</UButton>
-                    </td>
-                  </tr>
-                  <tr v-if="!detail.fields.length">
-                    <td colspan="4" class="py-10 text-center text-muted">
-                      No fields yet. Add your first field to start creating records.
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+              <UTable :data="detail.fields" :columns="fieldColumns" :get-row-id="(row: Field) => row.id" class="w-full">
+                <template #empty>
+                  <div class="py-10 text-center text-muted">
+                    No fields yet. Add your first field to start creating records.
+                  </div>
+                </template>
+              </UTable>
             </template>
             <template #permissions>
               <div class="py-10 text-center text-sm text-muted">Permissions are not available yet.</div>
