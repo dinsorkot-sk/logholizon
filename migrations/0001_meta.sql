@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS _meta_entity (
+  id TEXT PRIMARY KEY NOT NULL,
+  name TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS _meta_field (
+  id TEXT PRIMARY KEY NOT NULL,
+  entity_id TEXT NOT NULL REFERENCES _meta_entity(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL,
+  required INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(entity_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS _meta_field_option (
+  id TEXT PRIMARY KEY NOT NULL,
+  field_id TEXT NOT NULL REFERENCES _meta_field(id) ON DELETE CASCADE,
+  value TEXT NOT NULL,
+  label TEXT NOT NULL,
+  UNIQUE(field_id, value)
+);

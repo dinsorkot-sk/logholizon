@@ -1,0 +1,10 @@
+{
+  "name": "@logholizon/core",
+  "private": true,
+  "scripts": {
+    "build": "cargo build",
+    "dev": "cargo run",
+    "test": "cargo test",
+    "check": "cargo fmt --check && cargo clippy -- -D warnings"
+  }
+}
