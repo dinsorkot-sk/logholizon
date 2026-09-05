@@ -51,6 +51,22 @@ pub struct DocumentList {
     pub total: i64,
 }
 
+#[derive(Debug, Serialize)]
+pub struct AuditEntry {
+    pub id: String,
+    pub entity_id: String,
+    pub doc_id: String,
+    pub action: String,
+    pub payload: Value,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuditList {
+    pub items: Vec<AuditEntry>,
+    pub total: i64,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateDocument {
     pub payload: Value,
@@ -162,12 +178,23 @@ pub async fn create_document(
         bail!("id is required");
     }
     validate_payload(pool, entity_id, payload).await?;
+    let mut tx = pool.begin().await?;
     sqlx::query("INSERT INTO _doc (id, entity_id, payload) VALUES (?, ?, ?)")
         .bind(id)
         .bind(entity_id)
         .bind(payload.to_string())
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    sqlx::query(
+        "INSERT INTO _audit_log (id, entity_id, doc_id, action, payload) VALUES (?, ?, ?, 'create', ?)",
+    )
+    .bind(audit_id(id, "create"))
+    .bind(entity_id)
+    .bind(id)
+    .bind(payload.to_string())
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
     get_document(pool, id).await
 }
 
@@ -223,23 +250,94 @@ pub async fn list_documents(
 pub async fn update_document(pool: &SqlitePool, id: &str, payload: &Value) -> Result<Document> {
     let existing = get_document(pool, id).await?;
     validate_payload(pool, &existing.entity_id, payload).await?;
+    let mut tx = pool.begin().await?;
     sqlx::query("UPDATE _doc SET payload = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
         .bind(payload.to_string())
         .bind(id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    sqlx::query(
+        "INSERT INTO _audit_log (id, entity_id, doc_id, action, payload) VALUES (?, ?, ?, 'update', ?)",
+    )
+    .bind(audit_id(id, "update"))
+    .bind(&existing.entity_id)
+    .bind(id)
+    .bind(payload.to_string())
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
     get_document(pool, id).await
 }
 
 pub async fn delete_document(pool: &SqlitePool, id: &str) -> Result<()> {
-    let result = sqlx::query("DELETE FROM _doc WHERE id = ?")
+    let existing = get_document(pool, id).await?;
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM _doc WHERE id = ?")
         .bind(id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
-    if result.rows_affected() == 0 {
-        return Err(AppError::NotFound(format!("document not found: {id}")).into());
-    }
+    sqlx::query(
+        "INSERT INTO _audit_log (id, entity_id, doc_id, action, payload) VALUES (?, ?, ?, 'delete', ?)",
+    )
+    .bind(audit_id(id, "delete"))
+    .bind(&existing.entity_id)
+    .bind(id)
+    .bind(existing.payload.to_string())
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
     Ok(())
+}
+
+pub async fn list_document_audit(
+    pool: &SqlitePool,
+    doc_id: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<AuditList> {
+    if get_document(pool, doc_id).await.is_err() {
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _audit_log WHERE doc_id = ?")
+            .bind(doc_id)
+            .fetch_one(pool)
+            .await?;
+        if count == 0 {
+            return Err(AppError::NotFound(format!("document not found: {doc_id}")).into());
+        }
+    }
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _audit_log WHERE doc_id = ?")
+        .bind(doc_id)
+        .fetch_one(pool)
+        .await?;
+    let rows = sqlx::query(
+        "SELECT id, entity_id, doc_id, action, payload, created_at FROM _audit_log WHERE doc_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+    )
+    .bind(doc_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    let mut items = Vec::new();
+    for row in rows {
+        use sqlx::Row;
+        items.push(AuditEntry {
+            id: row.try_get("id")?,
+            entity_id: row.try_get("entity_id")?,
+            doc_id: row.try_get("doc_id")?,
+            action: row.try_get("action")?,
+            payload: serde_json::from_str(&row.try_get::<String, _>("payload")?)?,
+            created_at: row.try_get("created_at")?,
+        });
+    }
+    Ok(AuditList { items, total })
+}
+
+fn audit_id(doc_id: &str, action: &str) -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    // ponytail: use ulid/uuid when ordering/content-addressing needed.
+    format!("{doc_id}-{action}-{nanos}")
 }
 
 async fn validate_payload(pool: &SqlitePool, entity_id: &str, payload: &Value) -> Result<()> {

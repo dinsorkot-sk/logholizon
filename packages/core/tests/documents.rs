@@ -30,6 +30,15 @@ async fn document_crud_validates_payload() {
         .await
         .unwrap();
     assert_eq!(doc.payload["title"], "Fix pump");
+    repository::update_document(&pool, "d1", &json!({"title": "Fixed"}))
+        .await
+        .unwrap();
+    let audit = repository::list_document_audit(&pool, "d1", 10, 0)
+        .await
+        .unwrap();
+    assert_eq!(audit.total, 2);
+    assert_eq!(audit.items[0].action, "update");
+    assert_eq!(audit.items[1].action, "create");
 
     let err = repository::create_document(&pool, "d2", "ticket", &json!({"priority": 1}))
         .await

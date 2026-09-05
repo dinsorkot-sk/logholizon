@@ -32,6 +32,7 @@ pub fn router(_config: &Config, pool: SqlitePool) -> Router {
                 .put(update_document)
                 .delete(delete_document),
         )
+        .route("/v1/documents/{id}/audit", get(list_document_audit))
         .with_state(AppState { pool })
 }
 
@@ -153,6 +154,31 @@ async fn delete_document(
     repository::delete_document(&state.pool, &id)
         .await
         .map(|()| StatusCode::NO_CONTENT)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AuditQuery {
+    #[serde(default = "default_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
+}
+
+async fn list_document_audit(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<AuditQuery>,
+) -> Result<Json<repository::AuditList>, AppError> {
+    if query.limit < 1 || query.limit > 100 {
+        return Err(AppError::BadRequest("limit must be 1..=100".into()));
+    }
+    if query.offset < 0 {
+        return Err(AppError::BadRequest("offset must be >= 0".into()));
+    }
+    repository::list_document_audit(&state.pool, &id, query.limit, query.offset)
+        .await
+        .map(Json)
         .map_err(map_db_error)
 }
 
