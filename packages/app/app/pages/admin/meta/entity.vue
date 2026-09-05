@@ -6,6 +6,7 @@ const { data: entities, status, refresh } = await useFetch<Entity[]>('/api/meta/
 const form = reactive({ id: '', name: '', label: '' })
 const creating = ref(false)
 const error = ref('')
+const toast = useToast()
 
 async function createEntity() {
   error.value = ''
@@ -20,8 +21,10 @@ async function createEntity() {
     form.name = ''
     form.label = ''
     await refresh()
+    toast.add({ title: 'Entity created', color: 'success', icon: 'i-lucide-check' })
   } catch (e: any) {
     error.value = e?.data?.message || e?.statusMessage || 'Failed to create entity'
+    toast.add({ title: 'Unable to create entity', description: error.value, color: 'error', icon: 'i-lucide-alert-circle' })
   } finally {
     creating.value = false
   }
@@ -29,13 +32,13 @@ async function createEntity() {
 </script>
 
 <template>
-  <UContainer class="py-8">
-    <UCard>
-      <template #header>
-        <div class="flex items-center justify-between">
-          <h1 class="text-xl font-semibold">
-            Entity Manager
-          </h1>
+  <UDashboardPanel id="entity-manager">
+    <template #header>
+      <UDashboardNavbar title="Entity Manager">
+        <template #leading>
+          <UDashboardSidebarCollapse />
+        </template>
+        <template #right>
           <UButton
             icon="i-lucide-refresh-cw"
             variant="ghost"
@@ -44,8 +47,11 @@ async function createEntity() {
           >
             Refresh
           </UButton>
-        </div>
-      </template>
+        </template>
+      </UDashboardNavbar>
+    </template>
+    <template #body>
+    <UCard>
 
       <UAlert
         v-if="status === 'error'"
@@ -103,5 +109,6 @@ async function createEntity() {
         </UForm>
       </template>
     </UCard>
-  </UContainer>
+    </template>
+  </UDashboardPanel>
 </template>

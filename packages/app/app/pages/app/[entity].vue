@@ -23,13 +23,15 @@ const importing = ref(false)
 const importPreview = ref<{ rows: { id: string; payload: Record<string, unknown> }[]; errors: string[] } | null>(null)
 const importCsv = ref('')
 const importInput = ref<HTMLInputElement | null>(null)
+const toast = useToast()
+const deleteOpen = ref(false)
 
 const { data: entities } = await useFetch<{ id: string; label: string }[]>('/api/meta/entities')
 const { data: entity, status: entityStatus, error: entityError } = await useFetch<Entity>(
   () => `/api/meta/entities/${encodeURIComponent(entityId.value)}`,
   { watch: [entityId] }
 )
-const { data: documents, status: documentsStatus, refresh } = await useFetch<DocumentList>(
+const { data: documents, status: documentsStatus, error: documentsError, refresh } = await useFetch<DocumentList>(
   () => `/api/documents?entity_id=${encodeURIComponent(entityId.value)}`,
   { watch: [entityId] }
 )
@@ -79,9 +81,10 @@ async function save() {
   if (!validate() || !entity.value) return
   saving.value = true
   error.value = ''
+  const isEdit = !!selected.value
   try {
     const nextPayload = normalizedPayload()
-    if (selected.value) {
+    if (isEdit && selected.value) {
       await $fetch(`/api/documents/${encodeURIComponent(selected.value.id)}`, {
         method: 'PUT',
         body: { payload: nextPayload }
@@ -94,8 +97,10 @@ async function save() {
     }
     panelOpen.value = false
     await refresh()
+    toast.add({ title: isEdit ? 'Record updated' : 'Record created', color: 'success', icon: 'i-lucide-check' })
   } catch (cause: any) {
     error.value = cause?.data?.message || cause?.statusMessage || 'Unable to save record'
+    toast.add({ title: 'Unable to save record', description: error.value, color: 'error', icon: 'i-lucide-alert-circle' })
   } finally {
     saving.value = false
   }
@@ -109,8 +114,10 @@ async function transition(action: string) {
     await $fetch(`/api/documents/${encodeURIComponent(selected.value.id)}/transition`, { method: 'POST', body: { action } })
     await refresh()
     await refreshAudit()
+    toast.add({ title: 'Record transitioned', color: 'success', icon: 'i-lucide-check' })
   } catch (cause: any) {
     error.value = cause?.data?.message || cause?.statusMessage || 'Unable to transition record'
+    toast.add({ title: 'Unable to transition record', description: error.value, color: 'error', icon: 'i-lucide-alert-circle' })
   } finally {
     transitioning.value = false
   }
@@ -122,15 +129,18 @@ function availableActions() {
 }
 
 async function remove() {
-  if (!selected.value || !confirm('Delete this record permanently?')) return
+  if (!selected.value) return
   deleting.value = true
   error.value = ''
   try {
     await $fetch(`/api/documents/${encodeURIComponent(selected.value.id)}`, { method: 'DELETE' })
     panelOpen.value = false
+    deleteOpen.value = false
     await refresh()
+    toast.add({ title: 'Record deleted', color: 'success', icon: 'i-lucide-check' })
   } catch (cause: any) {
     error.value = cause?.data?.message || cause?.statusMessage || 'Unable to delete record'
+    toast.add({ title: 'Unable to delete record', description: error.value, color: 'error', icon: 'i-lucide-alert-circle' })
   } finally {
     deleting.value = false
   }
@@ -151,6 +161,9 @@ async function exportCsv() {
     link.download = `${entityId.value}.csv`
     link.click()
     URL.revokeObjectURL(url)
+    toast.add({ title: 'Export complete', description: `${entityId.value}.csv downloaded`, color: 'success', icon: 'i-lucide-download' })
+  } catch (cause: any) {
+    toast.add({ title: 'Unable to export', description: cause?.data?.message || cause?.statusMessage || 'Export failed', color: 'error', icon: 'i-lucide-alert-circle' })
   } finally {
     exporting.value = false
   }
@@ -182,12 +195,14 @@ async function confirmImport() {
   importing.value = true
   error.value = ''
   try {
-    await $fetch(`/api/meta/entities/${encodeURIComponent(entityId.value)}/import-confirm`, { method: 'POST', body: importCsv.value, headers: { 'content-type': 'text/csv' } })
+    const result = await $fetch<{ created: number; updated: number }>(`/api/meta/entities/${encodeURIComponent(entityId.value)}/import-confirm`, { method: 'POST', body: importCsv.value, headers: { 'content-type': 'text/csv' } })
     importPreview.value = null
     importCsv.value = ''
     await refresh()
+    toast.add({ title: 'Import complete', description: `${result.created} created, ${result.updated} updated`, color: 'success', icon: 'i-lucide-check' })
   } catch (cause: any) {
     error.value = cause?.data?.message || cause?.statusMessage || 'Unable to import CSV'
+    toast.add({ title: 'Unable to import CSV', description: error.value, color: 'error', icon: 'i-lucide-alert-circle' })
   } finally {
     importing.value = false
   }
@@ -195,7 +210,18 @@ async function confirmImport() {
 </script>
 
 <template>
-  <UContainer class="py-8">
+  <UDashboardPanel :id="`entity-${entityId}`">
+    <template #header>
+      <UDashboardNavbar :title="entity?.label || entityId">
+        <template #leading>
+          <UDashboardSidebarCollapse />
+        </template>
+        <template #right>
+          <UButton icon="i-lucide-plus" @click="openCreate">New record</UButton>
+        </template>
+      </UDashboardNavbar>
+    </template>
+    <template #body>
     <UAlert
       v-if="entityStatus === 'error'"
       color="error"
@@ -204,12 +230,8 @@ async function confirmImport() {
     />
 
     <template v-else-if="entity">
-      <div class="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 class="text-xl font-semibold">{{ entity.label }}</h1>
-          <p class="font-mono text-sm text-gray-500">{{ entity.name }}</p>
-        </div>
-        <div class="flex gap-2">
+      <p class="font-mono text-sm text-muted">{{ entity.name }}</p>
+      <div class="mb-4 flex flex-wrap items-center gap-2">
           <select
             aria-label="Select entity"
             class="rounded border px-3 py-2 text-sm"
@@ -221,12 +243,10 @@ async function confirmImport() {
           <UButton variant="outline" icon="i-lucide-download" :loading="exporting" @click="exportCsv">Export CSV</UButton>
           <input ref="importInput" type="file" accept=".csv,text/csv" class="hidden" @change="previewImport">
           <UButton variant="outline" icon="i-lucide-upload" :loading="importing" @click="importInput?.click()">Import CSV</UButton>
-          <UButton icon="i-lucide-plus" @click="openCreate">New record</UButton>
-        </div>
+      </div>
         <UAlert v-if="importPreview" class="w-full" :color="importPreview.errors.length ? 'error' : 'success'" :title="`${importPreview.rows.length} rows previewed`" :description="importPreview.errors.join('; ') || 'Ready to import.'">
           <template #actions><UButton :disabled="!!importPreview.errors.length" :loading="importing" size="sm" @click="confirmImport">Confirm import</UButton></template>
         </UAlert>
-      </div>
 
       <UAlert
         v-if="!entity.fields.length"
@@ -240,6 +260,17 @@ async function confirmImport() {
         <div v-if="documentsStatus === 'pending'" class="space-y-3" aria-busy="true">
           <USkeleton v-for="index in 4" :key="index" class="h-10 w-full" />
         </div>
+        <UAlert
+          v-else-if="documentsStatus === 'error'"
+          color="error"
+          title="Cannot load records"
+          :description="documentsError?.message || 'Check the Rust core connection.'"
+          class="m-4"
+        >
+          <template #actions>
+            <UButton size="sm" variant="outline" @click="refresh()">Retry</UButton>
+          </template>
+        </UAlert>
         <template v-else>
           <table class="w-full text-sm">
             <caption class="sr-only">{{ entity.label }} records</caption>
@@ -301,13 +332,28 @@ async function confirmImport() {
             <div class="flex justify-between gap-2 pt-2">
               <div class="flex gap-2">
                 <UButton v-for="item in availableActions()" :key="item.action" :loading="transitioning" @click="transition(item.action)">{{ item.action }}</UButton>
-                <UButton v-if="selected" color="error" variant="ghost" :loading="deleting" @click="remove">Delete</UButton>
+                <UButton v-if="selected" color="error" variant="ghost" @click="deleteOpen = true">Delete</UButton>
               </div>
               <div class="ml-auto flex gap-2"><UButton variant="ghost" @click="panelOpen = false">Cancel</UButton><UButton type="submit" :loading="saving">Save</UButton></div>
             </div>
           </UForm>
         </template>
       </USlideover>
+
+      <UModal v-model:open="deleteOpen" :title="`Delete ${entity?.label || 'record'}`">
+        <template #body>
+          <p class="text-sm text-muted">
+            This will permanently delete this record. This action cannot be undone.
+          </p>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="deleteOpen = false">Cancel</UButton>
+            <UButton color="error" :loading="deleting" @click="remove">Delete</UButton>
+          </div>
+        </template>
+      </UModal>
     </template>
-  </UContainer>
+    </template>
+  </UDashboardPanel>
 </template>

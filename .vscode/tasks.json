@@ -26,18 +26,6 @@
 				"$rustc"
 			],
 			"group": "build"
-		},
-		{
-			"label": "dev: all",
-			"type": "shell",
-			"command": "pnpm",
-			"args": [
-				"run",
-				"dev"
-			],
-			"isBackground": true,
-			"problemMatcher": [],
-			"group": "build"
 		}
 	]
 }
