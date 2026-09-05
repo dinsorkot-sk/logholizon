@@ -241,6 +241,55 @@ pub async fn get_document(pool: &SqlitePool, id: &str) -> Result<Document> {
     })
 }
 
+pub async fn export_documents_csv(pool: &SqlitePool, entity_id: &str) -> Result<String> {
+    let fields = list_fields(pool, entity_id).await?;
+    if fields.is_empty() {
+        return Err(AppError::BadRequest("entity has no fields".into()).into());
+    }
+    let rows = sqlx::query("SELECT id, payload FROM _doc WHERE entity_id = ? ORDER BY created_at DESC, id DESC LIMIT 1001")
+        .bind(entity_id)
+        .fetch_all(pool)
+        .await?;
+    if rows.len() > 1000 {
+        return Err(AppError::BadRequest("export exceeds 1000 rows".into()).into());
+    }
+    let mut csv = String::from("id");
+    for field in &fields {
+        csv.push(',');
+        csv.push_str(&csv_cell(&field.name));
+    }
+    csv.push('\n');
+    for row in rows {
+        use sqlx::Row;
+        csv.push_str(&csv_cell(&row.try_get::<String, _>("id")?));
+        let payload: Value = serde_json::from_str(&row.try_get::<String, _>("payload")?)?;
+        for field in &fields {
+            csv.push(',');
+            csv.push_str(&csv_cell(&csv_value(payload.get(&field.name))));
+        }
+        csv.push('\n');
+    }
+    Ok(csv)
+}
+
+fn csv_value(value: Option<&Value>) -> String {
+    match value {
+        None | Some(Value::Null) => String::new(),
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Number(number)) => number.to_string(),
+        Some(Value::Bool(flag)) => flag.to_string(),
+        Some(other) => other.to_string(),
+    }
+}
+
+fn csv_cell(value: &str) -> String {
+    if value.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
+}
+
 pub async fn list_documents(
     pool: &SqlitePool,
     entity_id: &str,

@@ -18,6 +18,7 @@ const deleting = ref(false)
 const transitioning = ref(false)
 const error = ref('')
 const fieldErrors = reactive<Record<string, string>>({})
+const exporting = ref(false)
 
 const { data: entities } = await useFetch<{ id: string; label: string }[]>('/api/meta/entities')
 const { data: entity, status: entityStatus, error: entityError } = await useFetch<Entity>(
@@ -135,6 +136,21 @@ function display(value: unknown) {
   if (value === '' || value === null || value === undefined) return '—'
   return String(value)
 }
+
+async function exportCsv() {
+  exporting.value = true
+  try {
+    const csv = await $fetch<string>(`/api/meta/entities/${encodeURIComponent(entityId.value)}/export`)
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${entityId.value}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
+  } finally {
+    exporting.value = false
+  }
+}
 </script>
 
 <template>
@@ -161,6 +177,7 @@ function display(value: unknown) {
           >
             <option v-for="item in entities || []" :key="item.id" :value="item.id">{{ item.label }}</option>
           </select>
+          <UButton variant="outline" icon="i-lucide-download" :loading="exporting" @click="exportCsv">Export CSV</UButton>
           <UButton icon="i-lucide-plus" @click="openCreate">New record</UButton>
         </div>
       </div>

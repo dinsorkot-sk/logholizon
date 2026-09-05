@@ -1,6 +1,7 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
+    response::IntoResponse,
     routing::get,
     Json, Router,
 };
@@ -26,6 +27,7 @@ pub fn router(_config: &Config, pool: SqlitePool) -> Router {
         .route("/v1/meta/entities", get(list_entities).post(create_entity))
         .route("/v1/meta/entities/{id}", get(get_entity))
         .route("/v1/meta/entities/{id}/workflow", get(get_workflow))
+        .route("/v1/meta/entities/{id}/export", get(export_documents))
         .route("/v1/documents", get(list_documents).post(create_document))
         .route(
             "/v1/documents/{id}",
@@ -106,6 +108,16 @@ async fn get_workflow(
         .await
         .map(Json)
         .map_err(map_db_error)
+}
+
+async fn export_documents(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::response::Response, AppError> {
+    let csv = repository::export_documents_csv(&state.pool, &id)
+        .await
+        .map_err(map_db_error)?;
+    Ok(([("content-type", "text/csv; charset=utf-8")], csv).into_response())
 }
 
 #[derive(Debug, Deserialize)]

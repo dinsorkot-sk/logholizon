@@ -116,6 +116,8 @@ export function coreClient() {
       }),
     getWorkflow: (entityId: string): Promise<CoreWorkflowDefinition> =>
       request<CoreWorkflowDefinition>(`/v1/meta/entities/${encodeURIComponent(entityId)}/workflow`),
+    exportDocuments: (entityId: string): Promise<string> =>
+      request<string>(`/v1/meta/entities/${encodeURIComponent(entityId)}/export`),
     transitionDocument: (id: string, action: string): Promise<CoreDocument> =>
       request<CoreDocument>(`/v1/documents/${encodeURIComponent(id)}/transition`, {
         method: 'POST',
