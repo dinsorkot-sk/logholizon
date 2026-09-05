@@ -18,6 +18,7 @@ pub struct Field {
     pub name: String,
     pub r#type: String,
     pub required: bool,
+    pub position: i64,
     pub options: Vec<FieldOption>,
 }
 
@@ -154,7 +155,7 @@ pub async fn get_entity_detail(pool: &SqlitePool, entity_id: &str) -> Result<Ent
 
 pub async fn list_fields(pool: &SqlitePool, entity_id: &str) -> Result<Vec<Field>> {
     let rows = sqlx::query(
-        "SELECT id, name, type, required FROM _meta_field WHERE entity_id = ? ORDER BY name",
+        "SELECT id, name, type, required, position FROM _meta_field WHERE entity_id = ? ORDER BY position, name",
     )
     .bind(entity_id)
     .fetch_all(pool)
@@ -169,6 +170,7 @@ pub async fn list_fields(pool: &SqlitePool, entity_id: &str) -> Result<Vec<Field
             name: row.try_get("name")?,
             r#type: row.try_get("type")?,
             required: row.try_get::<i64, _>("required")? != 0,
+            position: row.try_get("position")?,
             options,
         });
     }
@@ -192,6 +194,262 @@ pub async fn list_field_options(pool: &SqlitePool, field_id: &str) -> Result<Vec
         });
     }
     Ok(options)
+}
+
+pub async fn update_entity(pool: &SqlitePool, id: &str, name: &str, label: &str) -> Result<Entity> {
+    if name.trim().is_empty() || label.trim().is_empty() {
+        bail!("name and label are required");
+    }
+    let result = sqlx::query("UPDATE _meta_entity SET name = ?, label = ? WHERE id = ?")
+        .bind(name)
+        .bind(label)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("entity not found: {id}")).into());
+    }
+    Ok(Entity {
+        id: id.to_string(),
+        name: name.to_string(),
+        label: label.to_string(),
+    })
+}
+
+pub async fn delete_entity(pool: &SqlitePool, id: &str) -> Result<()> {
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _meta_entity WHERE id = ?)")
+        .bind(id)
+        .fetch_one(pool)
+        .await?;
+    if !exists {
+        return Err(AppError::NotFound(format!("entity not found: {id}")).into());
+    }
+    let doc_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _doc WHERE entity_id = ?")
+        .bind(id)
+        .fetch_one(pool)
+        .await?;
+    if doc_count > 0 {
+        return Err(AppError::Conflict(format!(
+            "entity has {doc_count} records; delete them first"
+        ))
+        .into());
+    }
+    sqlx::query("DELETE FROM _meta_entity WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn create_field(
+    pool: &SqlitePool,
+    entity_id: &str,
+    name: &str,
+    field_type: &str,
+    required: bool,
+) -> Result<Field> {
+    validate_field_name(name)?;
+    validate_field_type(field_type)?;
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _meta_entity WHERE id = ?)")
+        .bind(entity_id)
+        .fetch_one(pool)
+        .await?;
+    if !exists {
+        return Err(AppError::NotFound(format!("entity not found: {entity_id}")).into());
+    }
+    let position: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(position), -1) + 1 FROM _meta_field WHERE entity_id = ?",
+    )
+    .bind(entity_id)
+    .fetch_one(pool)
+    .await?;
+    let field_id = format!("{entity_id}_{name}");
+    sqlx::query(
+        "INSERT INTO _meta_field (id, entity_id, name, type, required, position) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&field_id)
+    .bind(entity_id)
+    .bind(name)
+    .bind(field_type)
+    .bind(required as i64)
+    .bind(position)
+    .execute(pool)
+    .await?;
+    get_field(pool, &field_id).await
+}
+
+pub async fn get_field(pool: &SqlitePool, field_id: &str) -> Result<Field> {
+    let row =
+        sqlx::query("SELECT id, name, type, required, position FROM _meta_field WHERE id = ?")
+            .bind(field_id)
+            .fetch_optional(pool)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("field not found: {field_id}")))?;
+    use sqlx::Row;
+    let options = list_field_options(pool, field_id).await?;
+    Ok(Field {
+        id: row.try_get("id")?,
+        name: row.try_get("name")?,
+        r#type: row.try_get("type")?,
+        required: row.try_get::<i64, _>("required")? != 0,
+        position: row.try_get("position")?,
+        options,
+    })
+}
+
+pub async fn update_field(
+    pool: &SqlitePool,
+    field_id: &str,
+    name: &str,
+    field_type: &str,
+    required: bool,
+) -> Result<Field> {
+    validate_field_name(name)?;
+    validate_field_type(field_type)?;
+    let result =
+        sqlx::query("UPDATE _meta_field SET name = ?, type = ?, required = ? WHERE id = ?")
+            .bind(name)
+            .bind(field_type)
+            .bind(required as i64)
+            .bind(field_id)
+            .execute(pool)
+            .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("field not found: {field_id}")).into());
+    }
+    get_field(pool, field_id).await
+}
+
+pub async fn delete_field(pool: &SqlitePool, field_id: &str) -> Result<()> {
+    let result = sqlx::query("DELETE FROM _meta_field WHERE id = ?")
+        .bind(field_id)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("field not found: {field_id}")).into());
+    }
+    Ok(())
+}
+
+pub async fn create_field_option(
+    pool: &SqlitePool,
+    field_id: &str,
+    value: &str,
+    label: &str,
+) -> Result<FieldOption> {
+    if value.trim().is_empty() || label.trim().is_empty() {
+        bail!("value and label are required");
+    }
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _meta_field WHERE id = ?)")
+        .bind(field_id)
+        .fetch_one(pool)
+        .await?;
+    if !exists {
+        return Err(AppError::NotFound(format!("field not found: {field_id}")).into());
+    }
+    let option_id = format!("{field_id}_{value}");
+    sqlx::query("INSERT INTO _meta_field_option (id, field_id, value, label) VALUES (?, ?, ?, ?)")
+        .bind(&option_id)
+        .bind(field_id)
+        .bind(value)
+        .bind(label)
+        .execute(pool)
+        .await?;
+    get_field_option(pool, &option_id).await
+}
+
+pub async fn get_field_option(pool: &SqlitePool, option_id: &str) -> Result<FieldOption> {
+    let row = sqlx::query("SELECT id, value, label FROM _meta_field_option WHERE id = ?")
+        .bind(option_id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("option not found: {option_id}")))?;
+    use sqlx::Row;
+    Ok(FieldOption {
+        id: row.try_get("id")?,
+        value: row.try_get("value")?,
+        label: row.try_get("label")?,
+    })
+}
+
+pub async fn update_field_option(
+    pool: &SqlitePool,
+    option_id: &str,
+    value: &str,
+    label: &str,
+) -> Result<FieldOption> {
+    if value.trim().is_empty() || label.trim().is_empty() {
+        bail!("value and label are required");
+    }
+    let result = sqlx::query("UPDATE _meta_field_option SET value = ?, label = ? WHERE id = ?")
+        .bind(value)
+        .bind(label)
+        .bind(option_id)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("option not found: {option_id}")).into());
+    }
+    get_field_option(pool, option_id).await
+}
+
+pub async fn delete_field_option(pool: &SqlitePool, option_id: &str) -> Result<()> {
+    let field_id: Option<String> =
+        sqlx::query_scalar("SELECT field_id FROM _meta_field_option WHERE id = ?")
+            .bind(option_id)
+            .fetch_optional(pool)
+            .await?;
+    let Some(field_id) = field_id else {
+        return Err(AppError::NotFound(format!("option not found: {option_id}")).into());
+    };
+    let field_type: String = sqlx::query_scalar("SELECT type FROM _meta_field WHERE id = ?")
+        .bind(&field_id)
+        .fetch_one(pool)
+        .await?;
+    if field_type == "select" {
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM _meta_field_option WHERE field_id = ?")
+                .bind(&field_id)
+                .fetch_one(pool)
+                .await?;
+        if count <= 1 {
+            return Err(
+                AppError::BadRequest("select field must have at least one option".into()).into(),
+            );
+        }
+    }
+    sqlx::query("DELETE FROM _meta_field_option WHERE id = ?")
+        .bind(option_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+fn validate_field_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        bail!("field name is required");
+    }
+    let valid = name.chars().enumerate().all(|(index, c)| {
+        if index == 0 {
+            c.is_ascii_lowercase()
+        } else {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'
+        }
+    });
+    if !valid {
+        return Err(AppError::BadRequest(
+            "field name must be lowercase snake_case (e.g. work_order)".into(),
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn validate_field_type(field_type: &str) -> Result<()> {
+    if !matches!(field_type, "text" | "number" | "date" | "select") {
+        return Err(AppError::BadRequest(format!("invalid field type: {field_type}")).into());
+    }
+    Ok(())
 }
 
 pub async fn create_document(

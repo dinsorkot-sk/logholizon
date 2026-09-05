@@ -25,7 +25,10 @@ pub fn router(_config: &Config, pool: SqlitePool) -> Router {
         .route("/health", get(health))
         .route("/v1/version", get(version))
         .route("/v1/meta/entities", get(list_entities).post(create_entity))
-        .route("/v1/meta/entities/{id}", get(get_entity))
+        .route(
+            "/v1/meta/entities/{id}",
+            get(get_entity).put(update_entity).delete(delete_entity),
+        )
         .route("/v1/meta/entities/{id}/workflow", get(get_workflow))
         .route("/v1/meta/entities/{id}/export", get(export_documents))
         .route(
@@ -35,6 +38,22 @@ pub fn router(_config: &Config, pool: SqlitePool) -> Router {
         .route(
             "/v1/meta/entities/{id}/import/confirm",
             axum::routing::post(confirm_import),
+        )
+        .route(
+            "/v1/meta/entities/{id}/fields",
+            axum::routing::post(create_field),
+        )
+        .route(
+            "/v1/meta/fields/{id}",
+            axum::routing::put(update_field).delete(delete_field),
+        )
+        .route(
+            "/v1/meta/fields/{id}/options",
+            axum::routing::post(create_field_option),
+        )
+        .route(
+            "/v1/meta/options/{id}",
+            axum::routing::put(update_field_option).delete(delete_field_option),
         )
         .route("/v1/documents", get(list_documents).post(create_document))
         .route(
@@ -105,6 +124,125 @@ async fn get_entity(
     repository::get_entity_detail(&state.pool, &id)
         .await
         .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateEntity {
+    pub name: String,
+    pub label: String,
+}
+
+async fn update_entity(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<UpdateEntity>,
+) -> Result<Json<repository::Entity>, AppError> {
+    repository::update_entity(&state.pool, &id, &input.name, &input.label)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn delete_entity(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    repository::delete_entity(&state.pool, &id)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateField {
+    pub name: String,
+    pub r#type: String,
+    #[serde(default)]
+    pub required: bool,
+}
+
+async fn create_field(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CreateField>,
+) -> Result<(StatusCode, Json<repository::Field>), AppError> {
+    repository::create_field(&state.pool, &id, &input.name, &input.r#type, input.required)
+        .await
+        .map(|field| (StatusCode::CREATED, Json(field)))
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateField {
+    pub name: String,
+    pub r#type: String,
+    #[serde(default)]
+    pub required: bool,
+}
+
+async fn update_field(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<UpdateField>,
+) -> Result<Json<repository::Field>, AppError> {
+    repository::update_field(&state.pool, &id, &input.name, &input.r#type, input.required)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn delete_field(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    repository::delete_field(&state.pool, &id)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateFieldOption {
+    pub value: String,
+    pub label: String,
+}
+
+async fn create_field_option(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CreateFieldOption>,
+) -> Result<(StatusCode, Json<repository::FieldOption>), AppError> {
+    repository::create_field_option(&state.pool, &id, &input.value, &input.label)
+        .await
+        .map(|option| (StatusCode::CREATED, Json(option)))
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateFieldOption {
+    pub value: String,
+    pub label: String,
+}
+
+async fn update_field_option(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<UpdateFieldOption>,
+) -> Result<Json<repository::FieldOption>, AppError> {
+    repository::update_field_option(&state.pool, &id, &input.value, &input.label)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn delete_field_option(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    repository::delete_field_option(&state.pool, &id)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
         .map_err(map_db_error)
 }
 

@@ -76,9 +76,10 @@
 
 ---
 
-## Phase 2 — Field Editor (Core Low-code Workflow)
+## Phase 2 — Field Editor (Core Low-code Workflow) ✅ Done
 
 > เป้าหมาย: ผู้ใช้สร้าง entity + field + option ผ่าน UI ได้ครบวงจร — นี่คือหัวใจของ low-code platform
+> สถานะ: เสร็จสิ้น 2026-09-05 · gates ผ่าน (build, test, typecheck, browser verify)
 
 ### 2.1 Rust core: Field CRUD endpoints
 

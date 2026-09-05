@@ -7,6 +7,7 @@ export type CoreField = {
   name: string
   type: string
   required: boolean
+  position: number
   options: CoreFieldOption[]
 }
 
@@ -77,6 +78,43 @@ export function coreClient() {
       request<CoreEntity>('/v1/meta/entities', {
         method: 'POST',
         body: entity
+      }),
+    updateEntity: (id: string, entity: { name: string; label: string }): Promise<CoreEntity> =>
+      request<CoreEntity>(`/v1/meta/entities/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: entity
+      }),
+    deleteEntity: (id: string): Promise<void> =>
+      request<void>(`/v1/meta/entities/${encodeURIComponent(id)}`, {
+        method: 'DELETE'
+      }),
+    createField: (entityId: string, field: { name: string; type: string; required: boolean }): Promise<CoreField> =>
+      request<CoreField>(`/v1/meta/entities/${encodeURIComponent(entityId)}/fields`, {
+        method: 'POST',
+        body: field
+      }),
+    updateField: (id: string, field: { name: string; type: string; required: boolean }): Promise<CoreField> =>
+      request<CoreField>(`/v1/meta/fields/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: field
+      }),
+    deleteField: (id: string): Promise<void> =>
+      request<void>(`/v1/meta/fields/${encodeURIComponent(id)}`, {
+        method: 'DELETE'
+      }),
+    createFieldOption: (fieldId: string, option: { value: string; label: string }): Promise<CoreFieldOption> =>
+      request<CoreFieldOption>(`/v1/meta/fields/${encodeURIComponent(fieldId)}/options`, {
+        method: 'POST',
+        body: option
+      }),
+    updateFieldOption: (id: string, option: { value: string; label: string }): Promise<CoreFieldOption> =>
+      request<CoreFieldOption>(`/v1/meta/options/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: option
+      }),
+    deleteFieldOption: (id: string): Promise<void> =>
+      request<void>(`/v1/meta/options/${encodeURIComponent(id)}`, {
+        method: 'DELETE'
       }),
     listDocuments: (
       entityId: string,
