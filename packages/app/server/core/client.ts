@@ -47,8 +47,8 @@ export type CreateDocumentInput = {
   payload: Record<string, unknown>
 }
 
-export type CoreWorkflowState = { name: string; label: string; position: number }
-export type CoreWorkflowTransition = { action: string; from_state: string; to_state: string }
+export type CoreWorkflowState = { id: string; name: string; label: string; position: number }
+export type CoreWorkflowTransition = { id: string; action: string; from_state: string; to_state: string }
 export type CoreWorkflowDefinition = { states: CoreWorkflowState[]; transitions: CoreWorkflowTransition[] }
 export type CoreStatusCount = { status: string; count: number }
 
@@ -156,6 +156,29 @@ export function coreClient() {
       }),
     getWorkflow: (entityId: string): Promise<CoreWorkflowDefinition> =>
       request<CoreWorkflowDefinition>(`/v1/meta/entities/${encodeURIComponent(entityId)}/workflow`),
+    createWorkflowState: (entityId: string, state: { name: string; label: string }): Promise<CoreWorkflowState> =>
+      request<CoreWorkflowState>(`/v1/meta/entities/${encodeURIComponent(entityId)}/workflow/states`, {
+        method: 'POST',
+        body: state
+      }),
+    updateWorkflowState: (id: string, state: { label: string }): Promise<CoreWorkflowState> =>
+      request<CoreWorkflowState>(`/v1/meta/workflow/states/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: state
+      }),
+    deleteWorkflowState: (id: string): Promise<void> =>
+      request<void>(`/v1/meta/workflow/states/${encodeURIComponent(id)}`, {
+        method: 'DELETE'
+      }),
+    createWorkflowTransition: (entityId: string, transition: { from_state: string; to_state: string; action: string }): Promise<CoreWorkflowTransition> =>
+      request<CoreWorkflowTransition>(`/v1/meta/entities/${encodeURIComponent(entityId)}/workflow/transitions`, {
+        method: 'POST',
+        body: transition
+      }),
+    deleteWorkflowTransition: (id: string): Promise<void> =>
+      request<void>(`/v1/meta/workflow/transitions/${encodeURIComponent(id)}`, {
+        method: 'DELETE'
+      }),
     exportDocuments: (entityId: string): Promise<string> =>
       request<string>(`/v1/meta/entities/${encodeURIComponent(entityId)}/export`),
     previewImport: (entityId: string, csv: string) =>

@@ -30,6 +30,22 @@ pub fn router(_config: &Config, pool: SqlitePool) -> Router {
             get(get_entity).put(update_entity).delete(delete_entity),
         )
         .route("/v1/meta/entities/{id}/workflow", get(get_workflow))
+        .route(
+            "/v1/meta/entities/{id}/workflow/states",
+            axum::routing::post(create_workflow_state),
+        )
+        .route(
+            "/v1/meta/workflow/states/{id}",
+            axum::routing::put(update_workflow_state).delete(delete_workflow_state),
+        )
+        .route(
+            "/v1/meta/entities/{id}/workflow/transitions",
+            axum::routing::post(create_workflow_transition),
+        )
+        .route(
+            "/v1/meta/workflow/transitions/{id}",
+            axum::routing::delete(delete_workflow_transition),
+        )
         .route("/v1/meta/entities/{id}/export", get(export_documents))
         .route(
             "/v1/meta/entities/{id}/import/preview",
@@ -279,6 +295,83 @@ async fn get_workflow(
     repository::get_workflow(&state.pool, &id)
         .await
         .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateWorkflowState {
+    pub name: String,
+    pub label: String,
+}
+
+async fn create_workflow_state(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CreateWorkflowState>,
+) -> Result<(StatusCode, Json<repository::WorkflowState>), AppError> {
+    repository::create_workflow_state(&state.pool, &id, &input.name, &input.label)
+        .await
+        .map(|row| (StatusCode::CREATED, Json(row)))
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateWorkflowState {
+    pub label: String,
+}
+
+async fn update_workflow_state(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<UpdateWorkflowState>,
+) -> Result<Json<repository::WorkflowState>, AppError> {
+    repository::update_workflow_state(&state.pool, &id, &input.label)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn delete_workflow_state(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    repository::delete_workflow_state(&state.pool, &id)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateWorkflowTransition {
+    pub from_state: String,
+    pub to_state: String,
+    pub action: String,
+}
+
+async fn create_workflow_transition(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CreateWorkflowTransition>,
+) -> Result<(StatusCode, Json<repository::WorkflowTransition>), AppError> {
+    repository::create_workflow_transition(
+        &state.pool,
+        &id,
+        &input.from_state,
+        &input.to_state,
+        &input.action,
+    )
+    .await
+    .map(|row| (StatusCode::CREATED, Json(row)))
+    .map_err(map_db_error)
+}
+
+async fn delete_workflow_transition(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    repository::delete_workflow_transition(&state.pool, &id)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
         .map_err(map_db_error)
 }
 

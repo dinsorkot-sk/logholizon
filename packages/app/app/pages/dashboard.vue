@@ -4,10 +4,17 @@ type Entity = { id: string; label: string }
 
 const { data: entities } = await useFetch<Entity[]>('/api/meta/entities')
 const entityId = ref('work_order')
+watch(entities, (list) => {
+  const first = list?.[0]
+  if (list?.length && first && !list.some(e => e.id === entityId.value)) {
+    entityId.value = first.id
+  }
+}, { immediate: true })
 const { data: counts, status, error, refresh } = await useFetch<Count[]>(
   () => `/api/dashboard/counts?entity_id=${encodeURIComponent(entityId.value)}`,
   { watch: [entityId] }
 )
+const selectedEntity = computed(() => (entities.value || []).find(e => e.id === entityId.value))
 </script>
 
 <template>
@@ -45,7 +52,7 @@ const { data: counts, status, error, refresh } = await useFetch<Count[]>(
 
       <div v-else-if="!counts?.length" class="flex flex-col items-center gap-3 py-16 text-center">
         <UIcon name="i-lucide-inbox" class="h-10 w-10 text-muted" />
-        <p class="text-sm text-muted">No records yet for this entity.</p>
+        <p class="text-sm text-muted">No records yet for {{ selectedEntity?.label || entityId }}.</p>
         <UButton icon="i-lucide-plus" :to="`/app/${encodeURIComponent(entityId)}`">Create first record</UButton>
       </div>
 

@@ -109,21 +109,14 @@ async fn status_field_name_is_metadata_driven() {
             .await
             .unwrap();
     }
-    // workflow rows are seeded directly (no workflow CRUD yet)
-    sqlx::query("INSERT INTO _workflow_state (id, entity_id, name, label, position) VALUES (?, 'ticket', ?, ?, ?)")
-        .bind("ticket_new")
-        .bind("new")
-        .bind("New")
-        .bind(0)
-        .execute(&pool)
+    // workflow rows go through the CRUD API
+    repository::create_workflow_state(&pool, "ticket", "new", "New")
         .await
         .unwrap();
-    sqlx::query("INSERT INTO _workflow_transition (id, entity_id, from_state, to_state, action) VALUES (?, 'ticket', ?, ?, ?)")
-        .bind("ticket_open_transition")
-        .bind("new")
-        .bind("open")
-        .bind("open")
-        .execute(&pool)
+    repository::create_workflow_state(&pool, "ticket", "open", "Open")
+        .await
+        .unwrap();
+    repository::create_workflow_transition(&pool, "ticket", "new", "open", "open")
         .await
         .unwrap();
 
@@ -167,6 +160,112 @@ async fn status_field_name_is_metadata_driven() {
         .await
         .unwrap();
     assert_eq!(list.total, 0);
+}
+
+#[tokio::test]
+async fn workflow_crud_validates_and_guards_deletes() {
+    let pool = db::connect("sqlite::memory:").await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    repository::create_entity(&pool, "ticket", "ticket", "Ticket")
+        .await
+        .unwrap();
+
+    let new_state = repository::create_workflow_state(&pool, "ticket", "new", "New")
+        .await
+        .unwrap();
+    assert_eq!(new_state.name, "new");
+    assert_eq!(new_state.position, 0);
+    let open_state = repository::create_workflow_state(&pool, "ticket", "open", "Open")
+        .await
+        .unwrap();
+    assert_eq!(open_state.position, 1);
+
+    // duplicate state name conflicts
+    assert!(
+        repository::create_workflow_state(&pool, "ticket", "new", "New again")
+            .await
+            .is_err()
+    );
+    // bad state name rejected
+    assert!(
+        repository::create_workflow_state(&pool, "ticket", "Bad Name", "Bad")
+            .await
+            .is_err()
+    );
+    // missing entity rejected
+    assert!(
+        repository::create_workflow_state(&pool, "missing", "new", "New")
+            .await
+            .is_err()
+    );
+
+    let transition = repository::create_workflow_transition(&pool, "ticket", "new", "open", "open")
+        .await
+        .unwrap();
+    assert_eq!(transition.action, "open");
+
+    // unknown state rejected
+    assert!(
+        repository::create_workflow_transition(&pool, "ticket", "new", "closed", "close")
+            .await
+            .is_err()
+    );
+    // same from/to rejected
+    assert!(
+        repository::create_workflow_transition(&pool, "ticket", "new", "new", "noop")
+            .await
+            .is_err()
+    );
+
+    // state used by a transition cannot be deleted
+    let err = repository::delete_workflow_state(&pool, &new_state.id)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("used by transitions"));
+
+    repository::delete_workflow_transition(&pool, &transition.id)
+        .await
+        .unwrap();
+    repository::delete_workflow_state(&pool, &new_state.id)
+        .await
+        .unwrap();
+    let workflow = repository::get_workflow(&pool, "ticket").await.unwrap();
+    assert_eq!(workflow.states.len(), 1);
+    assert!(workflow.transitions.is_empty());
+
+    // label update works
+    let updated = repository::update_workflow_state(&pool, &open_state.id, "Opened")
+        .await
+        .unwrap();
+    assert_eq!(updated.label, "Opened");
+}
+
+#[tokio::test]
+async fn seed_provides_pm_schedule_workflow() {
+    let pool = db::connect("sqlite::memory:").await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    seed::seed(&pool).await.unwrap();
+    let workflow = repository::get_workflow(&pool, "pm_schedule")
+        .await
+        .unwrap();
+    assert_eq!(workflow.states.len(), 3);
+    assert_eq!(workflow.transitions.len(), 2);
+    repository::create_document(
+        &pool,
+        "pm-1",
+        "pm_schedule",
+        &json!({"title": "Check pump", "due_date": "2026-09-06", "status": "draft"}),
+    )
+    .await
+    .unwrap();
+    let scheduled = repository::transition_document(&pool, "pm-1", "schedule")
+        .await
+        .unwrap();
+    assert_eq!(scheduled.payload["status"], "scheduled");
+    let done = repository::transition_document(&pool, "pm-1", "complete")
+        .await
+        .unwrap();
+    assert_eq!(done.payload["status"], "done");
 }
 
 #[tokio::test]

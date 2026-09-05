@@ -71,6 +71,7 @@ pub struct AuditList {
 
 #[derive(Debug, Serialize)]
 pub struct WorkflowState {
+    pub id: String,
     pub name: String,
     pub label: String,
     pub position: i64,
@@ -78,6 +79,7 @@ pub struct WorkflowState {
 
 #[derive(Debug, Serialize)]
 pub struct WorkflowTransition {
+    pub id: String,
     pub action: String,
     pub from_state: String,
     pub to_state: String,
@@ -936,32 +938,222 @@ pub async fn transition_document(pool: &SqlitePool, id: &str, action: &str) -> R
 }
 
 pub async fn get_workflow(pool: &SqlitePool, entity_id: &str) -> Result<WorkflowDefinition> {
-    let states = sqlx::query_as::<_, (String, String, i64)>(
-        "SELECT name, label, position FROM _workflow_state WHERE entity_id = ? ORDER BY position",
+    let states = sqlx::query_as::<_, (String, String, String, i64)>(
+        "SELECT id, name, label, position FROM _workflow_state WHERE entity_id = ? ORDER BY position",
     )
     .bind(entity_id)
     .fetch_all(pool)
     .await?
     .into_iter()
-    .map(|(name, label, position)| WorkflowState {
+    .map(|(id, name, label, position)| WorkflowState {
+        id,
         name,
         label,
         position,
     })
     .collect();
-    let transitions = sqlx::query_as::<_, (String, String, String)>(
-        "SELECT action, from_state, to_state FROM _workflow_transition WHERE entity_id = ? ORDER BY from_state, action",
+    let transitions = sqlx::query_as::<_, (String, String, String, String)>(
+        "SELECT id, action, from_state, to_state FROM _workflow_transition WHERE entity_id = ? ORDER BY from_state, action",
     )
     .bind(entity_id)
     .fetch_all(pool)
     .await?
     .into_iter()
-    .map(|(action, from_state, to_state)| WorkflowTransition { action, from_state, to_state })
+    .map(|(id, action, from_state, to_state)| WorkflowTransition {
+        id,
+        action,
+        from_state,
+        to_state,
+    })
     .collect();
     Ok(WorkflowDefinition {
         states,
         transitions,
     })
+}
+
+fn validate_state_name(name: &str) -> Result<()> {
+    validate_field_name(name).map_err(|_| {
+        AppError::BadRequest("state name must be lowercase snake_case (e.g. open)".into()).into()
+    })
+}
+
+fn validate_action_name(action: &str) -> Result<()> {
+    validate_field_name(action).map_err(|_| {
+        AppError::BadRequest("action must be lowercase snake_case (e.g. submit)".into()).into()
+    })
+}
+
+async fn require_entity(pool: &SqlitePool, entity_id: &str) -> Result<()> {
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _meta_entity WHERE id = ?)")
+        .bind(entity_id)
+        .fetch_one(pool)
+        .await?;
+    if !exists {
+        return Err(AppError::NotFound(format!("entity not found: {entity_id}")).into());
+    }
+    Ok(())
+}
+
+pub async fn create_workflow_state(
+    pool: &SqlitePool,
+    entity_id: &str,
+    name: &str,
+    label: &str,
+) -> Result<WorkflowState> {
+    validate_state_name(name)?;
+    if label.trim().is_empty() {
+        anyhow::bail!("label is required");
+    }
+    require_entity(pool, entity_id).await?;
+    let position: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(position), -1) + 1 FROM _workflow_state WHERE entity_id = ?",
+    )
+    .bind(entity_id)
+    .fetch_one(pool)
+    .await?;
+    let id = format!("{entity_id}_{name}");
+    sqlx::query(
+        "INSERT INTO _workflow_state (id, entity_id, name, label, position) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(entity_id)
+    .bind(name)
+    .bind(label.trim())
+    .bind(position)
+    .execute(pool)
+    .await?;
+    get_workflow_state(pool, &id).await
+}
+
+pub async fn get_workflow_state(pool: &SqlitePool, id: &str) -> Result<WorkflowState> {
+    let row = sqlx::query("SELECT id, name, label, position FROM _workflow_state WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("workflow state not found: {id}")))?;
+    use sqlx::Row;
+    Ok(WorkflowState {
+        id: row.try_get("id")?,
+        name: row.try_get("name")?,
+        label: row.try_get("label")?,
+        position: row.try_get("position")?,
+    })
+}
+
+pub async fn update_workflow_state(
+    pool: &SqlitePool,
+    id: &str,
+    label: &str,
+) -> Result<WorkflowState> {
+    if label.trim().is_empty() {
+        anyhow::bail!("label is required");
+    }
+    let result = sqlx::query("UPDATE _workflow_state SET label = ? WHERE id = ?")
+        .bind(label.trim())
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("workflow state not found: {id}")).into());
+    }
+    get_workflow_state(pool, id).await
+}
+
+pub async fn delete_workflow_state(pool: &SqlitePool, id: &str) -> Result<()> {
+    let row: Option<(String, String)> =
+        sqlx::query_as("SELECT entity_id, name FROM _workflow_state WHERE id = ?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+    let Some((entity_id, name)) = row else {
+        return Err(AppError::NotFound(format!("workflow state not found: {id}")).into());
+    };
+    let in_use: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM _workflow_transition WHERE entity_id = ? AND (from_state = ? OR to_state = ?))",
+    )
+    .bind(&entity_id)
+    .bind(&name)
+    .bind(&name)
+    .fetch_one(pool)
+    .await?;
+    if in_use {
+        return Err(AppError::Conflict(format!("state is used by transitions: {name}")).into());
+    }
+    let result = sqlx::query("DELETE FROM _workflow_state WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("workflow state not found: {id}")).into());
+    }
+    Ok(())
+}
+
+pub async fn create_workflow_transition(
+    pool: &SqlitePool,
+    entity_id: &str,
+    from_state: &str,
+    to_state: &str,
+    action: &str,
+) -> Result<WorkflowTransition> {
+    validate_action_name(action)?;
+    require_entity(pool, entity_id).await?;
+    for state in [from_state, to_state] {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM _workflow_state WHERE entity_id = ? AND name = ?)",
+        )
+        .bind(entity_id)
+        .bind(state)
+        .fetch_one(pool)
+        .await?;
+        if !exists {
+            return Err(AppError::BadRequest(format!("unknown state: {state}")).into());
+        }
+    }
+    if from_state == to_state {
+        return Err(AppError::BadRequest("from_state and to_state must differ".into()).into());
+    }
+    let id = format!("{entity_id}_{from_state}_{action}");
+    sqlx::query(
+        "INSERT INTO _workflow_transition (id, entity_id, from_state, to_state, action) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(entity_id)
+    .bind(from_state)
+    .bind(to_state)
+    .bind(action)
+    .execute(pool)
+    .await?;
+    get_workflow_transition(pool, &id).await
+}
+
+pub async fn get_workflow_transition(pool: &SqlitePool, id: &str) -> Result<WorkflowTransition> {
+    let row = sqlx::query(
+        "SELECT id, action, from_state, to_state FROM _workflow_transition WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("workflow transition not found: {id}")))?;
+    use sqlx::Row;
+    Ok(WorkflowTransition {
+        id: row.try_get("id")?,
+        action: row.try_get("action")?,
+        from_state: row.try_get("from_state")?,
+        to_state: row.try_get("to_state")?,
+    })
+}
+
+pub async fn delete_workflow_transition(pool: &SqlitePool, id: &str) -> Result<()> {
+    let result = sqlx::query("DELETE FROM _workflow_transition WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("workflow transition not found: {id}")).into());
+    }
+    Ok(())
 }
 
 pub async fn count_documents_by_status(

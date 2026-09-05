@@ -111,7 +111,7 @@ const { data: documents, status: documentsStatus, error: documentsError, refresh
   documentsUrl,
   { watch: [documentsUrl] }
 )
-const { data: workflow, status: workflowStatus, error: workflowError, refresh: refreshWorkflow } = await useFetch<{ states: { name: string; label: string }[]; transitions: { action: string; from_state: string; to_state: string }[] }>(
+const { data: workflow, status: workflowStatus, error: workflowError, refresh: refreshWorkflow } = await useFetch<{ states: { id: string; name: string; label: string }[]; transitions: { id: string; action: string; from_state: string; to_state: string }[] }>(
   () => `/api/meta/entities/${encodeURIComponent(entityId.value)}/workflow`,
   { watch: [entityId] }
 )
