@@ -702,8 +702,9 @@ async function confirmImport() {
               <USelectMenu
                 v-if="field.type === 'select' && !field.is_status"
                 v-model="payload[field.name] as string"
-                :items="[{ label: 'Select…', value: '' }, ...field.options.map(o => ({ label: o.label, value: o.value }))]"
+                :items="field.options.map(o => ({ label: o.label, value: o.value }))"
                 value-key="value"
+                placeholder="Select…"
                 class="w-full"
               />
               <UInput v-else v-model="payload[field.name] as string" :type="field.type === 'date' ? 'date' : field.type === 'number' ? 'number' : 'text'" />
