@@ -19,6 +19,10 @@ const transitioning = ref(false)
 const error = ref('')
 const fieldErrors = reactive<Record<string, string>>({})
 const exporting = ref(false)
+const importing = ref(false)
+const importPreview = ref<{ rows: { id: string; payload: Record<string, unknown> }[]; errors: string[] } | null>(null)
+const importCsv = ref('')
+const importInput = ref<HTMLInputElement | null>(null)
 
 const { data: entities } = await useFetch<{ id: string; label: string }[]>('/api/meta/entities')
 const { data: entity, status: entityStatus, error: entityError } = await useFetch<Entity>(
@@ -151,6 +155,28 @@ async function exportCsv() {
     exporting.value = false
   }
 }
+
+async function previewImport(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  importing.value = true
+  try {
+    importCsv.value = await file.text()
+    importPreview.value = await $fetch<{ rows: { id: string; payload: Record<string, unknown> }[]; errors: string[] }>(
+      `/api/meta/entities/${encodeURIComponent(entityId.value)}/import-preview` as '/api/meta/entities/[id]/import-preview',
+      { method: 'POST', body: await file.text(), headers: { 'content-type': 'text/csv' } }
+    )
+  } finally { importing.value = false }
+}
+
+async function confirmImport() {
+  if (!importCsv.value || importPreview.value?.errors.length) return
+  importing.value = true
+  try {
+    await $fetch(`/api/meta/entities/${encodeURIComponent(entityId.value)}/import-confirm`, { method: 'POST', body: importCsv.value, headers: { 'content-type': 'text/csv' } })
+    importPreview.value = null; importCsv.value = ''; await refresh()
+  } finally { importing.value = false }
+}
 </script>
 
 <template>
@@ -178,8 +204,13 @@ async function exportCsv() {
             <option v-for="item in entities || []" :key="item.id" :value="item.id">{{ item.label }}</option>
           </select>
           <UButton variant="outline" icon="i-lucide-download" :loading="exporting" @click="exportCsv">Export CSV</UButton>
+          <input ref="importInput" type="file" accept=".csv,text/csv" class="hidden" @change="previewImport">
+          <UButton variant="outline" icon="i-lucide-upload" :loading="importing" @click="importInput?.click()">Import CSV</UButton>
           <UButton icon="i-lucide-plus" @click="openCreate">New record</UButton>
         </div>
+        <UAlert v-if="importPreview" class="w-full" :color="importPreview.errors.length ? 'error' : 'success'" :title="`${importPreview.rows.length} rows previewed`" :description="importPreview.errors.join('; ') || 'Ready to import.'">
+          <template #actions><UButton :disabled="!!importPreview.errors.length" :loading="importing" size="sm" @click="confirmImport">Confirm import</UButton></template>
+        </UAlert>
       </div>
 
       <UAlert

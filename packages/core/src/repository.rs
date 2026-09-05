@@ -290,6 +290,180 @@ fn csv_cell(value: &str) -> String {
     }
 }
 
+#[derive(Debug, Serialize)]
+pub struct ImportPreview {
+    pub rows: Vec<Value>,
+    pub errors: Vec<String>,
+}
+
+pub async fn preview_documents_csv(
+    pool: &SqlitePool,
+    entity_id: &str,
+    input: &str,
+) -> Result<ImportPreview> {
+    let fields = list_fields(pool, entity_id).await?;
+    let records = parse_csv(input)?;
+    if records.is_empty() {
+        return Err(AppError::BadRequest("CSV is empty".into()).into());
+    }
+    let expected: Vec<String> = std::iter::once("id".to_string())
+        .chain(fields.iter().map(|f| f.name.clone()))
+        .collect();
+    if records[0] != expected {
+        return Err(AppError::BadRequest("CSV header does not match entity fields".into()).into());
+    }
+    if records.len() > 1001 {
+        return Err(AppError::BadRequest("import exceeds 1000 rows".into()).into());
+    }
+    let mut rows = Vec::new();
+    let mut errors = Vec::new();
+    for (index, record) in records.iter().skip(1).enumerate() {
+        if record.len() != expected.len() {
+            errors.push(format!("row {}: wrong column count", index + 2));
+            continue;
+        }
+        let id = &record[0];
+        if id.trim().is_empty() {
+            errors.push(format!("row {}: id is required", index + 2));
+            continue;
+        }
+        if id.starts_with(['=', '+', '-', '@']) {
+            errors.push(format!("row {}: formula values are not allowed", index + 2));
+            continue;
+        }
+        let mut payload = serde_json::Map::new();
+        for (field, value) in fields.iter().zip(record.iter().skip(1)) {
+            if value.starts_with(['=', '+', '-', '@']) {
+                errors.push(format!("row {}: formula values are not allowed", index + 2));
+            }
+            let parsed = match field.r#type.as_str() {
+                "number" => value
+                    .parse::<f64>()
+                    .ok()
+                    .and_then(|n| serde_json::Number::from_f64(n).map(Value::Number)),
+                "boolean" => match value.to_ascii_lowercase().as_str() {
+                    "true" => Some(Value::Bool(true)),
+                    "false" => Some(Value::Bool(false)),
+                    _ => None,
+                },
+                _ => Some(Value::String(value.clone())),
+            };
+            if let Some(value) = parsed {
+                payload.insert(field.name.clone(), value);
+            }
+        }
+        let value = Value::Object(payload);
+        if let Err(error) = validate_payload(pool, entity_id, &value).await {
+            errors.push(format!("row {}: {error}", index + 2));
+        }
+        rows.push(serde_json::json!({ "id": id, "payload": value }));
+    }
+    Ok(ImportPreview { rows, errors })
+}
+
+#[derive(Debug, Serialize)]
+pub struct ImportResult {
+    pub created: usize,
+    pub updated: usize,
+}
+
+pub async fn confirm_documents_csv(
+    pool: &SqlitePool,
+    entity_id: &str,
+    input: &str,
+) -> Result<ImportResult> {
+    let preview = preview_documents_csv(pool, entity_id, input).await?;
+    if !preview.errors.is_empty() {
+        return Err(AppError::BadRequest(preview.errors.join("; ")).into());
+    }
+    let mut transaction = pool.begin().await?;
+    let mut created = 0;
+    let mut updated = 0;
+    for row in preview.rows {
+        let id = row["id"].as_str().unwrap();
+        let payload = &row["payload"];
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _doc WHERE id = ?)")
+            .bind(id)
+            .fetch_one(&mut *transaction)
+            .await?;
+        if exists {
+            let owner: String = sqlx::query_scalar("SELECT entity_id FROM _doc WHERE id = ?")
+                .bind(id)
+                .fetch_one(&mut *transaction)
+                .await?;
+            if owner != entity_id {
+                return Err(
+                    AppError::Conflict(format!("id belongs to another entity: {id}")).into(),
+                );
+            }
+            sqlx::query("UPDATE _doc SET payload = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+                .bind(payload.to_string())
+                .bind(id)
+                .execute(&mut *transaction)
+                .await?;
+            updated += 1;
+        } else {
+            sqlx::query("INSERT INTO _doc (id, entity_id, payload) VALUES (?, ?, ?)")
+                .bind(id)
+                .bind(entity_id)
+                .bind(payload.to_string())
+                .execute(&mut *transaction)
+                .await?;
+            created += 1;
+        }
+        sqlx::query(
+            "INSERT INTO _audit_log (id, entity_id, doc_id, action, payload) VALUES (?, ?, ?, 'import', ?)",
+        )
+        .bind(audit_id(id, "import"))
+        .bind(entity_id)
+        .bind(id)
+        .bind(payload.to_string())
+        .execute(&mut *transaction)
+        .await?;
+    }
+    transaction.commit().await?;
+    Ok(ImportResult { created, updated })
+}
+
+fn parse_csv(input: &str) -> Result<Vec<Vec<String>>> {
+    let mut records = Vec::new();
+    let mut record = Vec::new();
+    let mut cell = String::new();
+    let mut quoted = false;
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match (ch, quoted) {
+            ('"', true) if chars.peek() == Some(&'"') => {
+                cell.push('"');
+                chars.next();
+            }
+            ('"', _) => quoted = !quoted,
+            (',', false) => {
+                record.push(std::mem::take(&mut cell));
+            }
+            ('\n', false) => {
+                record.push(std::mem::take(&mut cell));
+                records.push(std::mem::take(&mut record));
+            }
+            ('\r', false) => {
+                if chars.peek() != Some(&'\n') {
+                    record.push(std::mem::take(&mut cell));
+                    records.push(std::mem::take(&mut record));
+                }
+            }
+            _ => cell.push(ch),
+        }
+    }
+    if quoted {
+        return Err(AppError::BadRequest("malformed CSV quote".into()).into());
+    }
+    if !cell.is_empty() || !record.is_empty() {
+        record.push(cell);
+        records.push(record);
+    }
+    Ok(records)
+}
+
 pub async fn list_documents(
     pool: &SqlitePool,
     entity_id: &str,

@@ -28,6 +28,14 @@ pub fn router(_config: &Config, pool: SqlitePool) -> Router {
         .route("/v1/meta/entities/{id}", get(get_entity))
         .route("/v1/meta/entities/{id}/workflow", get(get_workflow))
         .route("/v1/meta/entities/{id}/export", get(export_documents))
+        .route(
+            "/v1/meta/entities/{id}/import/preview",
+            axum::routing::post(preview_import),
+        )
+        .route(
+            "/v1/meta/entities/{id}/import/confirm",
+            axum::routing::post(confirm_import),
+        )
         .route("/v1/documents", get(list_documents).post(create_document))
         .route(
             "/v1/documents/{id}",
@@ -105,6 +113,28 @@ async fn get_workflow(
     Path(id): Path<String>,
 ) -> Result<Json<repository::WorkflowDefinition>, AppError> {
     repository::get_workflow(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn preview_import(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: String,
+) -> Result<Json<repository::ImportPreview>, AppError> {
+    repository::preview_documents_csv(&state.pool, &id, &body)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn confirm_import(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: String,
+) -> Result<Json<repository::ImportResult>, AppError> {
+    repository::confirm_documents_csv(&state.pool, &id, &body)
         .await
         .map(Json)
         .map_err(map_db_error)

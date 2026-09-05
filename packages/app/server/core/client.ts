@@ -118,6 +118,10 @@ export function coreClient() {
       request<CoreWorkflowDefinition>(`/v1/meta/entities/${encodeURIComponent(entityId)}/workflow`),
     exportDocuments: (entityId: string): Promise<string> =>
       request<string>(`/v1/meta/entities/${encodeURIComponent(entityId)}/export`),
+    previewImport: (entityId: string, csv: string) =>
+      request(`/v1/meta/entities/${encodeURIComponent(entityId)}/import/preview`, { method: 'POST', body: csv, headers: { 'content-type': 'text/csv' } }),
+    confirmImport: (entityId: string, csv: string) =>
+      request(`/v1/meta/entities/${encodeURIComponent(entityId)}/import/confirm`, { method: 'POST', body: csv, headers: { 'content-type': 'text/csv' } }),
     transitionDocument: (id: string, action: string): Promise<CoreDocument> =>
       request<CoreDocument>(`/v1/documents/${encodeURIComponent(id)}/transition`, {
         method: 'POST',
