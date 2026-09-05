@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS _doc (
+  id TEXT PRIMARY KEY NOT NULL,
+  entity_id TEXT NOT NULL REFERENCES _meta_entity(id) ON DELETE RESTRICT,
+  payload TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_doc_entity_id ON _doc(entity_id);
+CREATE INDEX IF NOT EXISTS idx_doc_created_at ON _doc(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS _audit_log (
+  id TEXT PRIMARY KEY NOT NULL,
+  entity_id TEXT NOT NULL REFERENCES _meta_entity(id) ON DELETE RESTRICT,
+  doc_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_doc_id ON _audit_log(doc_id);
