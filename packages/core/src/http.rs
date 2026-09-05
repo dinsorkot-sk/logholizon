@@ -25,6 +25,7 @@ pub fn router(_config: &Config, pool: SqlitePool) -> Router {
         .route("/v1/version", get(version))
         .route("/v1/meta/entities", get(list_entities).post(create_entity))
         .route("/v1/meta/entities/{id}", get(get_entity))
+        .route("/v1/meta/entities/{id}/workflow", get(get_workflow))
         .route("/v1/documents", get(list_documents).post(create_document))
         .route(
             "/v1/documents/{id}",
@@ -33,6 +34,11 @@ pub fn router(_config: &Config, pool: SqlitePool) -> Router {
                 .delete(delete_document),
         )
         .route("/v1/documents/{id}/audit", get(list_document_audit))
+        .route(
+            "/v1/documents/{id}/transition",
+            axum::routing::post(transition_document),
+        )
+        .route("/v1/dashboard/counts", get(dashboard_counts))
         .with_state(AppState { pool })
 }
 
@@ -87,6 +93,53 @@ async fn get_entity(
     Path(id): Path<String>,
 ) -> Result<Json<repository::EntityDetail>, AppError> {
     repository::get_entity_detail(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn get_workflow(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::WorkflowDefinition>, AppError> {
+    repository::get_workflow(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TransitionRequest {
+    pub action: String,
+}
+
+async fn transition_document(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<TransitionRequest>,
+) -> Result<Json<repository::Document>, AppError> {
+    if input.action.trim().is_empty() {
+        return Err(AppError::BadRequest("action is required".into()));
+    }
+    repository::transition_document(&state.pool, &id, &input.action)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DashboardQuery {
+    pub entity_id: String,
+}
+
+async fn dashboard_counts(
+    State(state): State<AppState>,
+    Query(query): Query<DashboardQuery>,
+) -> Result<Json<Vec<repository::StatusCount>>, AppError> {
+    if query.entity_id.trim().is_empty() {
+        return Err(AppError::BadRequest("entity_id is required".into()));
+    }
+    repository::count_documents_by_status(&state.pool, &query.entity_id)
         .await
         .map(Json)
         .map_err(map_db_error)

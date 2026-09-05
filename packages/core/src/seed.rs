@@ -77,6 +77,21 @@ pub async fn seed(pool: &SqlitePool) -> Result<()> {
             .execute(&mut *tx)
             .await?;
     }
+    for (id, name, label, position) in [
+        ("work_order_draft", "draft", "Draft", 0),
+        ("work_order_open", "open", "Open", 1),
+        ("work_order_done", "done", "Done", 2),
+    ] {
+        sqlx::query("INSERT OR IGNORE INTO _workflow_state (id, entity_id, name, label, position) VALUES (?, 'work_order', ?, ?, ?)")
+            .bind(id).bind(name).bind(label).bind(position).execute(&mut *tx).await?;
+    }
+    for (id, from_state, to_state, action) in [
+        ("work_order_submit", "draft", "open", "submit"),
+        ("work_order_done_transition", "open", "done", "done"),
+    ] {
+        sqlx::query("INSERT OR IGNORE INTO _workflow_transition (id, entity_id, from_state, to_state, action) VALUES (?, 'work_order', ?, ?, ?)")
+            .bind(id).bind(from_state).bind(to_state).bind(action).execute(&mut *tx).await?;
+    }
     tx.commit().await?;
     Ok(())
 }

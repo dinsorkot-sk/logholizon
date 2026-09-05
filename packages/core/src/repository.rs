@@ -67,6 +67,32 @@ pub struct AuditList {
     pub total: i64,
 }
 
+#[derive(Debug, Serialize)]
+pub struct WorkflowState {
+    pub name: String,
+    pub label: String,
+    pub position: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkflowTransition {
+    pub action: String,
+    pub from_state: String,
+    pub to_state: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkflowDefinition {
+    pub states: Vec<WorkflowState>,
+    pub transitions: Vec<WorkflowTransition>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StatusCount {
+    pub status: String,
+    pub count: i64,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateDocument {
     pub payload: Value,
@@ -267,6 +293,91 @@ pub async fn update_document(pool: &SqlitePool, id: &str, payload: &Value) -> Re
     .await?;
     tx.commit().await?;
     get_document(pool, id).await
+}
+
+pub async fn transition_document(pool: &SqlitePool, id: &str, action: &str) -> Result<Document> {
+    let existing = get_document(pool, id).await?;
+    let current = existing
+        .payload
+        .get("status")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::BadRequest("document has no status".into()))?;
+    let target: Option<String> = sqlx::query_scalar(
+        "SELECT to_state FROM _workflow_transition WHERE entity_id = ? AND from_state = ? AND action = ?",
+    )
+    .bind(&existing.entity_id)
+    .bind(current)
+    .bind(action)
+    .fetch_optional(pool)
+    .await?;
+    let target = target.ok_or_else(|| {
+        AppError::BadRequest(format!("invalid transition: {current} cannot {action}"))
+    })?;
+    let mut next = existing.payload;
+    next["status"] = Value::String(target);
+    validate_payload(pool, &existing.entity_id, &next).await?;
+    let mut tx = pool.begin().await?;
+    sqlx::query("UPDATE _doc SET payload = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(next.to_string())
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "INSERT INTO _audit_log (id, entity_id, doc_id, action, payload) VALUES (?, ?, ?, 'transition', ?)",
+    )
+    .bind(audit_id(id, "transition"))
+    .bind(&existing.entity_id)
+    .bind(id)
+    .bind(next.to_string())
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    get_document(pool, id).await
+}
+
+pub async fn get_workflow(pool: &SqlitePool, entity_id: &str) -> Result<WorkflowDefinition> {
+    let states = sqlx::query_as::<_, (String, String, i64)>(
+        "SELECT name, label, position FROM _workflow_state WHERE entity_id = ? ORDER BY position",
+    )
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|(name, label, position)| WorkflowState {
+        name,
+        label,
+        position,
+    })
+    .collect();
+    let transitions = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT action, from_state, to_state FROM _workflow_transition WHERE entity_id = ? ORDER BY from_state, action",
+    )
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|(action, from_state, to_state)| WorkflowTransition { action, from_state, to_state })
+    .collect();
+    Ok(WorkflowDefinition {
+        states,
+        transitions,
+    })
+}
+
+pub async fn count_documents_by_status(
+    pool: &SqlitePool,
+    entity_id: &str,
+) -> Result<Vec<StatusCount>> {
+    let rows = sqlx::query_as::<_, (String, i64)>(
+        "SELECT json_extract(payload, '$.status'), COUNT(*) FROM _doc WHERE entity_id = ? GROUP BY json_extract(payload, '$.status') ORDER BY 1",
+    )
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(status, count)| StatusCount { status, count })
+        .collect())
 }
 
 pub async fn delete_document(pool: &SqlitePool, id: &str) -> Result<()> {
