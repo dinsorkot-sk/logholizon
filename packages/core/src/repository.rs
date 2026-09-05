@@ -649,7 +649,14 @@ pub async fn preview_documents_csv(
         }
         let mut payload = serde_json::Map::new();
         for (field, value) in fields.iter().zip(record.iter().skip(1)) {
-            if value.starts_with(['=', '+', '-', '@']) {
+            let is_formula = match field.r#type.as_str() {
+                // Valid numbers (including negative/positive like -5 or +5) are not formulas.
+                "number" => {
+                    value.parse::<f64>().is_err() && value.starts_with(['=', '+', '-', '@'])
+                }
+                _ => value.starts_with(['=', '+', '-', '@']),
+            };
+            if is_formula {
                 errors.push(format!("row {}: formula values are not allowed", index + 2));
             }
             let parsed = match field.r#type.as_str() {
