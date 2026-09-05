@@ -4,6 +4,8 @@ type Field = { id: string; name: string; type: string; required: boolean; option
 type Entity = { id: string; name: string; label: string; fields: Field[] }
 type Document = { id: string; entity_id: string; payload: Record<string, unknown> }
 type DocumentList = { items: Document[]; total: number }
+type AuditEntry = { id: string; action: string; payload: Record<string, unknown>; created_at: string }
+type AuditList = { items: AuditEntry[]; total: number }
 
 const route = useRoute()
 const router = useRouter()
@@ -30,6 +32,11 @@ const { data: workflow } = await useFetch<{ states: { name: string; label: strin
   () => `/api/meta/entities/${encodeURIComponent(entityId.value)}/workflow`,
   { watch: [entityId] }
 )
+const auditId = computed(() => selected.value?.id || '')
+const { data: audit, status: auditStatus, refresh: refreshAudit } = await useFetch<AuditList>(
+  () => `/api/documents/${encodeURIComponent(auditId.value)}/audit`,
+  { watch: [auditId], immediate: false }
+)
 
 function emptyPayload() {
   return Object.fromEntries((entity.value?.fields || []).map(field => [field.name, '']))
@@ -50,6 +57,7 @@ function openEdit(document: Document) {
   Object.keys(fieldErrors).forEach(key => delete fieldErrors[key])
   error.value = ''
   panelOpen.value = true
+  refreshAudit()
 }
 
 function validate() {
@@ -94,8 +102,8 @@ async function transition(action: string) {
   error.value = ''
   try {
     await $fetch(`/api/documents/${encodeURIComponent(selected.value.id)}/transition`, { method: 'POST', body: { action } })
-    panelOpen.value = false
     await refresh()
+    await refreshAudit()
   } catch (cause: any) {
     error.value = cause?.data?.message || cause?.statusMessage || 'Unable to transition record'
   } finally {
@@ -211,6 +219,22 @@ function display(value: unknown) {
               <UInput v-else v-model="payload[field.name] as string" :type="field.type === 'date' ? 'date' : field.type === 'number' ? 'number' : 'text'" />
             </UFormField>
             <UAlert v-if="error" color="error" :title="error" />
+            <div v-if="selected" class="border-t pt-4">
+              <h2 class="mb-2 text-sm font-semibold">History</h2>
+              <div v-if="auditStatus === 'pending'" class="py-4 text-sm text-gray-500">Loading history…</div>
+              <UAlert v-else-if="auditStatus === 'error'" color="error" title="Cannot load history" />
+              <ol v-else class="space-y-3">
+                <li v-for="entry in audit?.items || []" :key="entry.id" class="flex gap-3">
+                  <span class="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-gray-400" aria-hidden="true" />
+                  <div class="min-w-0">
+                    <p class="text-sm font-medium">{{ entry.action }}</p>
+                    <p class="text-xs text-gray-500">{{ entry.created_at }}</p>
+                    <p v-if="entry.payload.status" class="text-xs text-gray-500">status: {{ display(entry.payload.status) }}</p>
+                  </div>
+                </li>
+                <li v-if="!audit?.items.length" class="text-sm text-gray-500">No history yet.</li>
+              </ol>
+            </div>
             <div class="flex justify-between gap-2 pt-2">
               <div class="flex gap-2">
                 <UButton v-for="item in availableActions()" :key="item.action" :loading="transitioning" @click="transition(item.action)">{{ item.action }}</UButton>
