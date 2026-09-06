@@ -1,5 +1,8 @@
 use anyhow::Result;
+use serde_json::json;
 use sqlx::SqlitePool;
+
+use crate::{auth, repository};
 
 pub async fn seed(pool: &SqlitePool) -> Result<()> {
     let mut tx = pool.begin().await?;
@@ -168,5 +171,96 @@ pub async fn seed(pool: &SqlitePool) -> Result<()> {
             .bind(id).bind(from_state).bind(to_state).bind(action).execute(&mut *tx).await?;
     }
     tx.commit().await?;
+    Ok(())
+}
+
+/// Demo data for trying out the product: users + sample documents.
+/// Idempotent: existing users/documents are left untouched.
+pub async fn seed_demo(pool: &SqlitePool) -> Result<()> {
+    seed(pool).await?;
+
+    for (username, password, role) in [("admin", "admin123", "admin"), ("demo", "demo1234", "user")]
+    {
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _user WHERE username = ?)")
+                .bind(username)
+                .fetch_one(pool)
+                .await?;
+        if !exists {
+            auth::create_user(pool, username, password, role).await?;
+        }
+    }
+
+    let work_orders: &[(&str, &str, &str, &str)] = &[
+        ("demo-wo-1", "Fix water pump", "open", "high"),
+        ("demo-wo-2", "Replace conveyor belt", "draft", "critical"),
+        ("demo-wo-3", "Inspect fire alarm", "done", "low"),
+        ("demo-wo-4", "Repair loading dock door", "open", "high"),
+        ("demo-wo-5", "Calibrate scale", "draft", "low"),
+        ("demo-wo-6", "Service forklift", "open", "critical"),
+        ("demo-wo-7", "Clean ventilation ducts", "done", "low"),
+        ("demo-wo-8", "Replace office lights", "draft", "low"),
+        ("demo-wo-9", "Fix leaking pipe", "open", "high"),
+        ("demo-wo-10", "Test backup generator", "done", "critical"),
+    ];
+    for (id, title, status, priority) in work_orders {
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _doc WHERE id = ?)")
+            .bind(id)
+            .fetch_one(pool)
+            .await?;
+        if !exists {
+            repository::create_document(
+                pool,
+                id,
+                "work_order",
+                &json!({"title": title, "status": status, "priority": priority}),
+            )
+            .await?;
+        }
+    }
+
+    let pm_schedules: &[(&str, &str, &str, &str)] = &[
+        (
+            "demo-pm-1",
+            "Monthly pump inspection",
+            "2026-09-10",
+            "scheduled",
+        ),
+        ("demo-pm-2", "Quarterly fire drill", "2026-09-15", "draft"),
+        (
+            "demo-pm-3",
+            "Annual generator service",
+            "2026-08-01",
+            "done",
+        ),
+        (
+            "demo-pm-4",
+            "Weekly forklift check",
+            "2026-09-08",
+            "scheduled",
+        ),
+        (
+            "demo-pm-5",
+            "Monthly filter replacement",
+            "2026-09-20",
+            "draft",
+        ),
+    ];
+    for (id, title, due_date, status) in pm_schedules {
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _doc WHERE id = ?)")
+            .bind(id)
+            .fetch_one(pool)
+            .await?;
+        if !exists {
+            repository::create_document(
+                pool,
+                id,
+                "pm_schedule",
+                &json!({"title": title, "due_date": due_date, "status": status}),
+            )
+            .await?;
+        }
+    }
+
     Ok(())
 }

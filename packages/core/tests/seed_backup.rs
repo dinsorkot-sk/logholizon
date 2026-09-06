@@ -23,6 +23,36 @@ async fn remove_retry(path: &std::path::Path) {
 }
 
 #[tokio::test]
+async fn seed_demo_is_idempotent() {
+    let pool = db::connect("sqlite::memory:").await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    seed::seed_demo(&pool).await.unwrap();
+    seed::seed_demo(&pool).await.unwrap();
+
+    let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _user")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(users, 2);
+
+    let docs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _doc WHERE id LIKE 'demo-%'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(docs, 15);
+
+    // Demo users can log in.
+    let session = logholizon_core::auth::login(&pool, "demo", "demo1234")
+        .await
+        .unwrap();
+    assert_eq!(session.user.role, "user");
+    let admin = logholizon_core::auth::login(&pool, "admin", "admin123")
+        .await
+        .unwrap();
+    assert_eq!(admin.user.role, "admin");
+}
+
+#[tokio::test]
 async fn seed_is_idempotent() {
     let pool = db::connect("sqlite::memory:").await.unwrap();
     db::migrate(&pool).await.unwrap();

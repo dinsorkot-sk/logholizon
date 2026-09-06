@@ -13,7 +13,10 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Migrate,
-    Seed,
+    Seed {
+        #[arg(long)]
+        demo: bool,
+    },
     Backup {
         path: PathBuf,
     },
@@ -35,10 +38,15 @@ async fn main() -> Result<()> {
             db::migrate(&pool).await?;
             println!("migrations applied");
         }
-        Command::Seed => {
+        Command::Seed { demo } => {
             db::migrate(&pool).await?;
             seed::seed(&pool).await?;
-            println!("seed applied");
+            if demo {
+                seed::seed_demo(&pool).await?;
+                println!("seed applied (with demo data)");
+            } else {
+                println!("seed applied");
+            }
         }
         Command::Backup { path } => {
             db::migrate(&pool).await?;
