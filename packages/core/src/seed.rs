@@ -15,6 +15,17 @@ pub async fn seed(pool: &SqlitePool) -> Result<()> {
         .bind("PM Schedule")
         .execute(&mut *tx)
         .await?;
+    for entity_id in ["work_order", "pm_schedule"] {
+        for role in ["admin", "user"] {
+            sqlx::query(
+                "INSERT OR IGNORE INTO _entity_permission (entity_id, role, can_view, can_edit) VALUES (?, ?, 1, 1)",
+            )
+            .bind(entity_id)
+            .bind(role)
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
     for (id, entity_id, name, field_type, required, is_status) in [
         ("work_order_title", "work_order", "title", "text", 1, 0),
         ("work_order_status", "work_order", "status", "select", 1, 1),

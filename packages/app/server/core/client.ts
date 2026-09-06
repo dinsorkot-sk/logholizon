@@ -60,6 +60,15 @@ export type CoreGlobalAuditList = {
   total: number
 }
 
+export type CoreEntityPermission = { role: string; can_view: boolean; can_edit: boolean }
+export type CoreEntityView = {
+  id: string
+  entity_id: string
+  name: string
+  config: Record<string, unknown>
+  created_at: string
+}
+
 export type CreateDocumentInput = {
   id: string
   entity_id: string
@@ -245,6 +254,28 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
         method: 'POST',
         body: transition
       }),
+    getEntityPermissions: (entityId: string): Promise<CoreEntityPermission[]> =>
+      request<CoreEntityPermission[]>(`/v1/meta/entities/${encodeURIComponent(entityId)}/permissions`),
+    updateEntityPermissions: (
+      entityId: string,
+      permissions: { role: string; can_view: boolean; can_edit: boolean }[]
+    ): Promise<CoreEntityPermission[]> =>
+      request<CoreEntityPermission[]>(`/v1/meta/entities/${encodeURIComponent(entityId)}/permissions`, {
+        method: 'PUT',
+        body: { permissions }
+      }),
+    listEntityViews: (entityId: string): Promise<CoreEntityView[]> =>
+      request<CoreEntityView[]>(`/v1/meta/entities/${encodeURIComponent(entityId)}/views`),
+    createEntityView: (
+      entityId: string,
+      view: { name: string; config: Record<string, unknown> }
+    ): Promise<CoreEntityView> =>
+      request<CoreEntityView>(`/v1/meta/entities/${encodeURIComponent(entityId)}/views`, {
+        method: 'POST',
+        body: view
+      }),
+    deleteEntityView: (id: string): Promise<void> =>
+      request<void>(`/v1/meta/views/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     deleteWorkflowTransition: (id: string): Promise<void> =>
       request<void>(`/v1/meta/workflow/transitions/${encodeURIComponent(id)}`, {
         method: 'DELETE'

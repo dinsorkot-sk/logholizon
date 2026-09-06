@@ -116,6 +116,22 @@ pub struct WorkflowDefinition {
 }
 
 #[derive(Debug, Serialize)]
+pub struct EntityPermission {
+    pub role: String,
+    pub can_view: bool,
+    pub can_edit: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EntityView {
+    pub id: String,
+    pub entity_id: String,
+    pub name: String,
+    pub config: Value,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct StatusCount {
     pub status: String,
     pub count: i64,
@@ -165,6 +181,16 @@ pub async fn create_entity(pool: &SqlitePool, id: &str, name: &str, label: &str)
         .bind(label)
         .execute(pool)
         .await?;
+    // Default permissions: both roles can view and edit.
+    for role in ["admin", "user"] {
+        sqlx::query(
+            "INSERT OR IGNORE INTO _entity_permission (entity_id, role, can_view, can_edit) VALUES (?, ?, 1, 1)",
+        )
+        .bind(id)
+        .bind(role)
+        .execute(pool)
+        .await?;
+    }
     Ok(Entity {
         id: id.to_string(),
         name: name.to_string(),
@@ -211,6 +237,153 @@ pub async fn list_fields(pool: &SqlitePool, entity_id: &str) -> Result<Vec<Field
         });
     }
     Ok(fields)
+}
+
+pub async fn get_entity_permissions(
+    pool: &SqlitePool,
+    entity_id: &str,
+) -> Result<Vec<EntityPermission>> {
+    require_entity(pool, entity_id).await?;
+    let rows = sqlx::query_as::<_, (String, i64, i64)>(
+        "SELECT role, can_view, can_edit FROM _entity_permission WHERE entity_id = ? ORDER BY role",
+    )
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(role, can_view, can_edit)| EntityPermission {
+            role,
+            can_view: can_view != 0,
+            can_edit: can_edit != 0,
+        })
+        .collect())
+}
+
+pub async fn update_entity_permissions(
+    pool: &SqlitePool,
+    entity_id: &str,
+    permissions: &[(String, bool, bool)],
+) -> Result<Vec<EntityPermission>> {
+    require_entity(pool, entity_id).await?;
+    for (role, _, _) in permissions {
+        if !matches!(role.as_str(), "admin" | "user") {
+            return Err(AppError::BadRequest(format!("invalid role: {role}")).into());
+        }
+    }
+    let mut tx = pool.begin().await?;
+    for (role, can_view, can_edit) in permissions {
+        sqlx::query(
+            "INSERT INTO _entity_permission (entity_id, role, can_view, can_edit) VALUES (?, ?, ?, ?) \
+             ON CONFLICT(entity_id, role) DO UPDATE SET can_view = excluded.can_view, can_edit = excluded.can_edit",
+        )
+        .bind(entity_id)
+        .bind(role)
+        .bind(*can_view as i64)
+        .bind(*can_edit as i64)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    get_entity_permissions(pool, entity_id).await
+}
+
+pub async fn check_permission(
+    pool: &SqlitePool,
+    entity_id: &str,
+    role: &str,
+    need_edit: bool,
+) -> Result<()> {
+    let row: Option<(i64, i64)> = sqlx::query_as(
+        "SELECT can_view, can_edit FROM _entity_permission WHERE entity_id = ? AND role = ?",
+    )
+    .bind(entity_id)
+    .bind(role)
+    .fetch_optional(pool)
+    .await?;
+    // Missing row = default allow (entities created before the migration).
+    let (can_view, can_edit) = row.unwrap_or((1, 1));
+    if can_view == 0 {
+        return Err(AppError::Forbidden(format!("no view access to entity: {entity_id}")).into());
+    }
+    if need_edit && can_edit == 0 {
+        return Err(AppError::Forbidden(format!("no edit access to entity: {entity_id}")).into());
+    }
+    Ok(())
+}
+
+pub async fn list_entity_views(pool: &SqlitePool, entity_id: &str) -> Result<Vec<EntityView>> {
+    require_entity(pool, entity_id).await?;
+    let rows = sqlx::query_as::<_, (String, String, String, String, String)>(
+        "SELECT id, entity_id, name, config, created_at FROM _entity_view WHERE entity_id = ? ORDER BY name",
+    )
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await?;
+    let mut views = Vec::new();
+    for (id, entity_id, name, config, created_at) in rows {
+        views.push(EntityView {
+            id,
+            entity_id,
+            name,
+            config: serde_json::from_str(&config)?,
+            created_at,
+        });
+    }
+    Ok(views)
+}
+
+pub async fn create_entity_view(
+    pool: &SqlitePool,
+    entity_id: &str,
+    name: &str,
+    config: &Value,
+) -> Result<EntityView> {
+    require_entity(pool, entity_id).await?;
+    if name.trim().is_empty() {
+        anyhow::bail!("view name is required");
+    }
+    let id = format!(
+        "{entity_id}_{}",
+        name.trim().to_lowercase().replace(' ', "_")
+    );
+    sqlx::query("INSERT INTO _entity_view (id, entity_id, name, config) VALUES (?, ?, ?, ?)")
+        .bind(&id)
+        .bind(entity_id)
+        .bind(name.trim())
+        .bind(config.to_string())
+        .execute(pool)
+        .await?;
+    get_entity_view(pool, &id).await
+}
+
+pub async fn get_entity_view(pool: &SqlitePool, id: &str) -> Result<EntityView> {
+    let row = sqlx::query(
+        "SELECT id, entity_id, name, config, created_at FROM _entity_view WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("view not found: {id}")))?;
+    use sqlx::Row;
+    Ok(EntityView {
+        id: row.try_get("id")?,
+        entity_id: row.try_get("entity_id")?,
+        name: row.try_get("name")?,
+        config: serde_json::from_str(&row.try_get::<String, _>("config")?)?,
+        created_at: row.try_get("created_at")?,
+    })
+}
+
+pub async fn delete_entity_view(pool: &SqlitePool, id: &str) -> Result<()> {
+    let result = sqlx::query("DELETE FROM _entity_view WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("view not found: {id}")).into());
+    }
+    Ok(())
 }
 
 pub async fn list_field_options(pool: &SqlitePool, field_id: &str) -> Result<Vec<FieldOption>> {

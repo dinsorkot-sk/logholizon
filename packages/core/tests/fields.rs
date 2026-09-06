@@ -50,6 +50,114 @@ async fn field_crud_orders_by_position() {
 }
 
 #[tokio::test]
+async fn permissions_crud_and_check() {
+    let pool = setup().await;
+
+    // Default: both roles allowed.
+    let perms = repository::get_entity_permissions(&pool, "work_order")
+        .await
+        .unwrap();
+    assert_eq!(perms.len(), 2);
+    repository::check_permission(&pool, "work_order", "user", false)
+        .await
+        .unwrap();
+    repository::check_permission(&pool, "work_order", "user", true)
+        .await
+        .unwrap();
+
+    // Revoke user edit.
+    repository::update_entity_permissions(
+        &pool,
+        "work_order",
+        &[
+            ("admin".to_string(), true, true),
+            ("user".to_string(), true, false),
+        ],
+    )
+    .await
+    .unwrap();
+    repository::check_permission(&pool, "work_order", "user", false)
+        .await
+        .unwrap();
+    let err = repository::check_permission(&pool, "work_order", "user", true)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("no edit access"));
+
+    // Revoke user view entirely.
+    repository::update_entity_permissions(
+        &pool,
+        "work_order",
+        &[
+            ("admin".to_string(), true, true),
+            ("user".to_string(), false, false),
+        ],
+    )
+    .await
+    .unwrap();
+    let err = repository::check_permission(&pool, "work_order", "user", false)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("no view access"));
+
+    // Invalid role rejected.
+    assert!(repository::update_entity_permissions(
+        &pool,
+        "work_order",
+        &[("superuser".to_string(), true, true)],
+    )
+    .await
+    .is_err());
+
+    // Missing entity rejected.
+    assert!(repository::get_entity_permissions(&pool, "missing")
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn views_crud() {
+    let pool = setup().await;
+
+    let view = repository::create_entity_view(
+        &pool,
+        "work_order",
+        "Open only",
+        &serde_json::json!({"status": "open"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(view.name, "Open only");
+    assert_eq!(view.config["status"], "open");
+
+    // Duplicate name rejected.
+    assert!(repository::create_entity_view(
+        &pool,
+        "work_order",
+        "Open only",
+        &serde_json::json!({}),
+    )
+    .await
+    .is_err());
+
+    let views = repository::list_entity_views(&pool, "work_order")
+        .await
+        .unwrap();
+    assert_eq!(views.len(), 1);
+
+    repository::delete_entity_view(&pool, &view.id)
+        .await
+        .unwrap();
+    assert!(repository::delete_entity_view(&pool, &view.id)
+        .await
+        .is_err());
+    let views = repository::list_entity_views(&pool, "work_order")
+        .await
+        .unwrap();
+    assert!(views.is_empty());
+}
+
+#[tokio::test]
 async fn field_validation_rejects_bad_input() {
     let pool = setup().await;
     // invalid type

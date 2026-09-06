@@ -98,6 +98,18 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
         )
         .route("/v1/meta/entities/{id}/workflow", get(get_workflow))
         .route(
+            "/v1/meta/entities/{id}/permissions",
+            get(get_entity_permissions).put(update_entity_permissions),
+        )
+        .route(
+            "/v1/meta/entities/{id}/views",
+            get(list_entity_views).post(create_entity_view),
+        )
+        .route(
+            "/v1/meta/views/{id}",
+            axum::routing::delete(delete_entity_view),
+        )
+        .route(
             "/v1/meta/entities/{id}/workflow/states",
             axum::routing::post(create_workflow_state),
         )
@@ -377,6 +389,88 @@ async fn get_workflow(
         .map_err(map_db_error)
 }
 
+async fn get_entity_permissions(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<repository::EntityPermission>>, AppError> {
+    repository::get_entity_permissions(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdatePermissionsRequest {
+    pub permissions: Vec<PermissionEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PermissionEntry {
+    pub role: String,
+    #[serde(default = "default_true")]
+    pub can_view: bool,
+    #[serde(default)]
+    pub can_edit: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+async fn update_entity_permissions(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<UpdatePermissionsRequest>,
+) -> Result<Json<Vec<repository::EntityPermission>>, AppError> {
+    let entries: Vec<(String, bool, bool)> = input
+        .permissions
+        .into_iter()
+        .map(|p| (p.role, p.can_view, p.can_edit))
+        .collect();
+    repository::update_entity_permissions(&state.pool, &id, &entries)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn list_entity_views(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<repository::EntityView>>, AppError> {
+    repository::list_entity_views(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateViewRequest {
+    pub name: String,
+    #[serde(default)]
+    pub config: serde_json::Value,
+}
+
+async fn create_entity_view(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CreateViewRequest>,
+) -> Result<(StatusCode, Json<repository::EntityView>), AppError> {
+    repository::create_entity_view(&state.pool, &id, &input.name, &input.config)
+        .await
+        .map(|view| (StatusCode::CREATED, Json(view)))
+        .map_err(map_db_error)
+}
+
+async fn delete_entity_view(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    repository::delete_entity_view(&state.pool, &id)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(map_db_error)
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateWorkflowState {
     pub name: String,
@@ -493,12 +587,19 @@ pub struct TransitionRequest {
 
 async fn transition_document(
     State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
     Path(id): Path<String>,
     Json(input): Json<TransitionRequest>,
 ) -> Result<Json<repository::Document>, AppError> {
     if input.action.trim().is_empty() {
         return Err(AppError::BadRequest("action is required".into()));
     }
+    let existing = repository::get_document(&state.pool, &id)
+        .await
+        .map_err(map_db_error)?;
+    repository::check_permission(&state.pool, &existing.entity_id, &current_role(user), true)
+        .await
+        .map_err(map_db_error)?;
     repository::transition_document(&state.pool, &id, &input.action)
         .await
         .map(Json)
@@ -536,8 +637,14 @@ async fn dashboard_pm(
         .map_err(map_db_error)
 }
 
+fn current_role(user: Option<axum::extract::Extension<auth::User>>) -> String {
+    user.map(|u| u.role.clone())
+        .unwrap_or_else(|| "user".to_string())
+}
+
 async fn list_documents(
     State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
     Query(query): Query<ListDocumentsQuery>,
 ) -> Result<Json<repository::DocumentList>, AppError> {
     if query.limit < 1 || query.limit > 100 {
@@ -546,6 +653,9 @@ async fn list_documents(
     if query.offset < 0 {
         return Err(AppError::BadRequest("offset must be >= 0".into()));
     }
+    repository::check_permission(&state.pool, &query.entity_id, &current_role(user), false)
+        .await
+        .map_err(map_db_error)?;
     repository::list_documents(
         &state.pool,
         &query.entity_id,
@@ -565,8 +675,12 @@ async fn list_documents(
 
 async fn create_document(
     State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
     Json(input): Json<CreateDocumentRequest>,
 ) -> Result<(StatusCode, Json<repository::Document>), AppError> {
+    repository::check_permission(&state.pool, &input.entity_id, &current_role(user), true)
+        .await
+        .map_err(map_db_error)?;
     repository::create_document(
         &state.pool,
         &input.id,
@@ -583,19 +697,30 @@ async fn create_document(
 
 async fn get_document(
     State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
     Path(id): Path<String>,
 ) -> Result<Json<repository::Document>, AppError> {
-    repository::get_document(&state.pool, &id)
+    let doc = repository::get_document(&state.pool, &id)
         .await
-        .map(Json)
-        .map_err(map_db_error)
+        .map_err(map_db_error)?;
+    repository::check_permission(&state.pool, &doc.entity_id, &current_role(user), false)
+        .await
+        .map_err(map_db_error)?;
+    Ok(Json(doc))
 }
 
 async fn update_document(
     State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
     Path(id): Path<String>,
     Json(input): Json<UpdateDocument>,
 ) -> Result<Json<repository::Document>, AppError> {
+    let existing = repository::get_document(&state.pool, &id)
+        .await
+        .map_err(map_db_error)?;
+    repository::check_permission(&state.pool, &existing.entity_id, &current_role(user), true)
+        .await
+        .map_err(map_db_error)?;
     repository::update_document(&state.pool, &id, &input.payload)
         .await
         .map(Json)
@@ -604,8 +729,15 @@ async fn update_document(
 
 async fn delete_document(
     State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
+    let existing = repository::get_document(&state.pool, &id)
+        .await
+        .map_err(map_db_error)?;
+    repository::check_permission(&state.pool, &existing.entity_id, &current_role(user), true)
+        .await
+        .map_err(map_db_error)?;
     repository::delete_document(&state.pool, &id)
         .await
         .map(|()| StatusCode::NO_CONTENT)

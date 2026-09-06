@@ -14,6 +14,8 @@ type EntityDetail = Entity & { fields: Field[] }
 type WorkflowState = { id: string; name: string; label: string; position: number }
 type WorkflowTransition = { id: string; action: string; from_state: string; to_state: string }
 type WorkflowDefinition = { states: WorkflowState[]; transitions: WorkflowTransition[] }
+type EntityPermission = { role: string; can_view: boolean; can_edit: boolean }
+type EntityView = { id: string; entity_id: string; name: string; config: Record<string, unknown>; created_at: string }
 
 const toast = useToast()
 const { data: entities, status, refresh } = await useFetch<Entity[]>('/api/meta/entities')
@@ -24,6 +26,10 @@ const detailUrl = computed(() => selectedId.value ? `/api/meta/entities/${encode
 const { data: detail, status: detailStatus, error: detailError, refresh: refreshDetail } = await useFetch<EntityDetail>(detailUrl, { immediate: false })
 const workflowUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/workflow` : '')
 const { data: workflow, status: workflowStatus, error: workflowError, refresh: refreshWorkflow } = await useFetch<WorkflowDefinition>(workflowUrl, { immediate: false })
+const permissionsUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/permissions` : '')
+const { data: permissions, status: permissionsStatus, error: permissionsError, refresh: refreshPermissions } = await useFetch<EntityPermission[]>(permissionsUrl, { immediate: false })
+const viewsUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/views` : '')
+const { data: views, status: viewsStatus, error: viewsError, refresh: refreshViews } = await useFetch<EntityView[]>(viewsUrl, { immediate: false })
 
 const filteredEntities = computed(() => {
   const q = search.value.trim().toLowerCase()
@@ -60,6 +66,100 @@ function selectEntity(id: string) {
   selectedId.value = id
   refreshDetail()
   refreshWorkflow()
+  refreshPermissions()
+  refreshViews()
+}
+
+// --- Permissions ---
+const savingPermissions = ref(false)
+
+async function togglePermission(permission: EntityPermission, key: 'can_view' | 'can_edit') {
+  if (!selectedId.value || !permissions.value) return
+  const next = permissions.value.map(p =>
+    p.role === permission.role ? { ...p, [key]: !p[key] } : { ...p }
+  )
+  savingPermissions.value = true
+  try {
+    await $fetch(`/api/meta/entities/${encodeURIComponent(selectedId.value)}/permissions`, {
+      method: 'PUT',
+      body: { permissions: next }
+    })
+    await refreshPermissions()
+    toast.add({ title: 'Permissions updated', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    toast.add({
+      title: 'Unable to update permissions',
+      description: e?.data?.message || e?.statusMessage || 'Update failed',
+      color: 'error',
+      icon: 'i-lucide-alert-circle'
+    })
+  } finally {
+    savingPermissions.value = false
+  }
+}
+
+// --- Views ---
+const viewOpen = ref(false)
+const viewForm = reactive({ name: '' })
+const viewError = ref('')
+const savingView = ref(false)
+const deleteViewOpen = ref(false)
+const viewToDelete = ref<EntityView | null>(null)
+const deletingView = ref(false)
+
+function openAddView() {
+  viewForm.name = ''
+  viewError.value = ''
+  viewOpen.value = true
+}
+
+async function saveView() {
+  if (!selectedId.value) return
+  viewError.value = ''
+  if (!viewForm.name.trim()) {
+    viewError.value = 'name is required'
+    return
+  }
+  savingView.value = true
+  try {
+    await $fetch(`/api/meta/entities/${encodeURIComponent(selectedId.value)}/views`, {
+      method: 'POST',
+      body: { name: viewForm.name, config: {} }
+    })
+    viewOpen.value = false
+    await refreshViews()
+    toast.add({ title: 'View created', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    viewError.value = e?.data?.message || e?.statusMessage || 'Failed to create view'
+  } finally {
+    savingView.value = false
+  }
+}
+
+function confirmDeleteView(view: EntityView) {
+  viewToDelete.value = view
+  deleteViewOpen.value = true
+}
+
+async function removeView() {
+  if (!viewToDelete.value) return
+  deletingView.value = true
+  try {
+    await $fetch(`/api/meta/views/${encodeURIComponent(viewToDelete.value.id)}`, { method: 'DELETE' })
+    deleteViewOpen.value = false
+    viewToDelete.value = null
+    await refreshViews()
+    toast.add({ title: 'View deleted', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    toast.add({
+      title: 'Unable to delete view',
+      description: e?.data?.message || e?.statusMessage || 'Delete failed',
+      color: 'error',
+      icon: 'i-lucide-alert-circle'
+    })
+  } finally {
+    deletingView.value = false
+  }
 }
 
 // --- Create entity ---
@@ -677,10 +777,71 @@ const fieldColumns: TableColumn<Field>[] = [
               </div>
             </template>
             <template #permissions>
-              <div class="py-10 text-center text-sm text-muted">Permissions are not available yet.</div>
+              <div v-if="permissionsStatus === 'pending'" class="py-6">
+                <USkeleton v-for="index in 2" :key="index" class="mb-3 h-8 w-full" />
+              </div>
+              <UAlert
+                v-else-if="permissionsStatus === 'error'"
+                color="error"
+                title="Cannot load permissions"
+                :description="permissionsError?.message || 'Check the Rust core connection.'"
+              >
+                <template #actions>
+                  <UButton size="sm" variant="outline" @click="refreshPermissions()">Retry</UButton>
+                </template>
+              </UAlert>
+              <div v-else class="space-y-2 py-3">
+                <div v-for="permission in permissions || []" :key="permission.role" class="flex items-center justify-between gap-4 rounded-lg border border-default px-4 py-3">
+                  <div>
+                    <p class="font-mono text-sm font-medium">{{ permission.role }}</p>
+                    <p class="text-xs text-muted">{{ permission.role === 'admin' ? 'Full access' : 'Limited by toggles' }}</p>
+                  </div>
+                  <div class="flex items-center gap-4">
+                    <UFormField label="View" :ui="{ label: 'text-xs' }">
+                      <USwitch :model-value="permission.can_view" :disabled="savingPermissions" @update:model-value="togglePermission(permission, 'can_view')" />
+                    </UFormField>
+                    <UFormField label="Edit" :ui="{ label: 'text-xs' }">
+                      <USwitch :model-value="permission.can_edit" :disabled="savingPermissions || !permission.can_view" @update:model-value="togglePermission(permission, 'can_edit')" />
+                    </UFormField>
+                  </div>
+                </div>
+              </div>
             </template>
             <template #views>
-              <div class="py-10 text-center text-sm text-muted">Views are not available yet.</div>
+              <div v-if="viewsStatus === 'pending'" class="py-6">
+                <USkeleton v-for="index in 2" :key="index" class="mb-3 h-8 w-full" />
+              </div>
+              <UAlert
+                v-else-if="viewsStatus === 'error'"
+                color="error"
+                title="Cannot load views"
+                :description="viewsError?.message || 'Check the Rust core connection.'"
+              >
+                <template #actions>
+                  <UButton size="sm" variant="outline" @click="refreshViews()">Retry</UButton>
+                </template>
+              </UAlert>
+              <div v-else class="py-3">
+                <div class="flex items-center justify-between pb-2">
+                  <p class="text-sm text-muted">{{ (views || []).length }} views</p>
+                  <UButton size="sm" icon="i-lucide-plus" @click="openAddView">Add view</UButton>
+                </div>
+                <div v-if="!(views || []).length" class="py-8 text-center text-sm text-muted">
+                  No views yet. Save the current list filter as a view.
+                </div>
+                <div v-else class="space-y-2">
+                  <div v-for="view in views || []" :key="view.id" class="flex items-center justify-between gap-4 rounded-lg border border-default px-4 py-3">
+                    <div>
+                      <p class="text-sm font-medium">{{ view.name }}</p>
+                      <p class="font-mono text-xs text-muted">{{ view.id }}</p>
+                    </div>
+                    <div class="flex items-center gap-1">
+                      <UButton size="xs" variant="ghost" :to="`/app/${encodeURIComponent(selectedId)}`">Open</UButton>
+                      <UButton size="xs" variant="ghost" color="error" @click="confirmDeleteView(view)">Delete</UButton>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </template>
           </UTabs>
         </UCard>
@@ -900,6 +1061,40 @@ const fieldColumns: TableColumn<Field>[] = [
           <div class="flex justify-end gap-2">
             <UButton variant="ghost" @click="deleteTransitionOpen = false">Cancel</UButton>
             <UButton color="error" :loading="deletingTransition" @click="removeTransition">Delete</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <!-- Add view modal -->
+      <UModal v-model:open="viewOpen" title="Add view">
+        <template #body>
+          <UForm class="space-y-4" @submit="saveView">
+            <UFormField label="Name" hint="e.g. Open only">
+              <UInput v-model="viewForm.name" placeholder="Open only" />
+            </UFormField>
+            <UAlert v-if="viewError" color="error" :title="viewError" />
+          </UForm>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="viewOpen = false">Cancel</UButton>
+            <UButton :loading="savingView" @click="saveView">Create view</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <!-- Delete view modal -->
+      <UModal v-model:open="deleteViewOpen" title="Delete view">
+        <template #body>
+          <p class="text-sm text-muted">
+            This will permanently delete the view
+            <span class="font-mono">{{ viewToDelete?.name }}</span>. This action cannot be undone.
+          </p>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="deleteViewOpen = false">Cancel</UButton>
+            <UButton color="error" :loading="deletingView" @click="removeView">Delete</UButton>
           </div>
         </template>
       </UModal>
