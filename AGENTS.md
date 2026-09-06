@@ -6,7 +6,7 @@
 - `packages/cli`: Rust CLI. Calls core in-process for `migrate`, `seed`, `backup`, `restore`, `check`.
 - `packages/app`: Nuxt 4 + Nuxt UI. UI and thin Nitro gateway only; calls Rust over HTTP.
 - Root `Cargo.toml`: Rust workspace. Root `package.json` + `turbo.json`: JS task orchestration.
-- Roadmap: [`docs/plans/2026-09-05-rust-core-erp.md`](docs/plans/2026-09-05-rust-core-erp.md).
+- Roadmap: [`docs/plans/2026-09-06-next-roadmap.md`](docs/plans/2026-09-06-next-roadmap.md) (active). Completed: [`2026-09-05-rust-core-erp.md`](docs/plans/2026-09-05-rust-core-erp.md), [`2026-09-05-ux-ui-fixes.md`](docs/plans/2026-09-05-ux-ui-fixes.md), [`2026-09-05-product-hardening.md`](docs/plans/2026-09-05-product-hardening.md).
 
 ## Commands
 
@@ -33,7 +33,7 @@ cargo run -p logholizon-cli -- check
 - Backup SQLite with `VACUUM INTO`; never copy a live database file.
 - Restore is destructive: require explicit `--force`, validate integrity, preserve rollback path.
 - Keep entities metadata-driven; do not hardcode ERP modules in reusable UI.
-- Keep workflow linear; no auth, D1, branching, canvas, or multi-sheet Excel without explicit scope change.
+- Keep workflow linear; no D1, branching, canvas, or API tokens without explicit scope change. Auth, multi-sheet Excel, visual form layout, and webhook notifications are in scope (see roadmap).
 - Do not add NuxtHub, Drizzle, libsql, or a Rust SDK crate unless architecture changes explicitly.
 - Use `pnpm` for Node tasks, `cargo` for Rust tasks. Commit lockfiles.
 - Add one focused test for non-trivial logic. Run relevant gates after changes.

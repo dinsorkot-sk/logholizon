@@ -104,3 +104,10 @@ See [`packages/app/design.md`](packages/app/design.md) for the UI spec and [`doc
 - [x] Multi-user collaboration polish (audit actor, stale-write guard, user entity access)
 - [x] Field-level permissions (per-field view/edit by role, hidden-field redaction)
 - [x] Multi-sheet Excel (one sheet per entity workbook export/import)
+
+Next ([`docs/plans/2026-09-06-next-roadmap.md`](docs/plans/2026-09-06-next-roadmap.md)):
+
+- [ ] Quality & debt (E2E tests, helper refactor, API consistency)
+- [ ] Visual builder (form layout designer: sections, field ordering, live preview)
+- [ ] Notifications (webhook-first: rules, outbox, retry, delivery log)
+- [ ] Reporting & analytics (saved reports, charts, aggregation in core)
