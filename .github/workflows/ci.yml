@@ -34,3 +34,21 @@ jobs:
       - run: pnpm --dir packages/app run build
       - run: pnpm --dir packages/app run test
       - run: pnpm --dir packages/app run check
+
+  e2e:
+    name: E2E (playwright)
+    runs-on: ubuntu-latest
+    needs: [rust, app]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir packages/app exec playwright install --with-deps chromium
+      - run: pnpm --dir packages/app run e2e

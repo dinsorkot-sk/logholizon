@@ -32,21 +32,23 @@
 
 > เป้าหมาย: ลด debt ที่รู้อยู่ + ตั้ง E2E เป็น gate ก่อนขยาย feature
 
-### 1.1 E2E tests (Playwright)
+### 1.1 E2E tests (Playwright) ✅ Done 2026-09-06
 
-- **งาน:** เพิ่ม `@playwright/test` ใน `packages/app`; script `e2e` รันกับ dev server (core + app) + demo seed
-- **Flow หลัก:** login (demo) → create record → edit → transition → delete; admin: entity CRUD, backup/restore, user management
-- **Acceptance:** `pnpm --dir packages/app run e2e` ผ่านใน CI (job ใหม่ใน `.github/workflows/ci.yml`)
+- **งาน:** เพิ่ม `@playwright/test` ใน `packages/app`; script `e2e` (`tests/e2e/run.cjs`) seed temp DB + รัน core 8788 + app 3100 + `playwright test` (chromium ตัวเดียว, workers 1)
+- **Flow หลัก:** login (demo/admin ผ่าน API + dashboard assert) → create (API) → edit → transition → delete (UI) → search (keyboard + API assert); admin: users/audit read + 403 guard; login API 401 guard
+- **Acceptance:** `pnpm --dir packages/app run e2e` ผ่าน local (7 tests) + CI job `e2e` (needs rust+app)
+- **เลื่อน:** entity CRUD, backup/restore destructive, user management write flows — ไว้รอบถัดไป
 
-### 1.2 Refactor time helpers
+### 1.2 Refactor time helpers ✅ Done 2026-09-06
 
-- **งาน:** `[entity].vue` ยังมี local copy ของ `parseDate/relativeTime/absoluteTime/actionLabel` → ใช้ `app/utils/audit-time.ts` ร่วมกัน (ลบ local copy)
+- **ผลตรวจ:** `[entity].vue` + `admin/audit.vue` ใช้ shared util อยู่แล้ว ไม่มี local copy (premise เดิม stale) — ไม่ต้องลบอะไร
+- **งานที่ทำแทน:** เพิ่ม `tests/audit-time.test.ts` (coverage ที่ขาด) + `vitest.config.ts` exclude `tests/e2e/**`
 - **Acceptance:** ไม่มี duplicate helper; typecheck ผ่าน
 
-### 1.3 Consistency ของ entity list API
+### 1.3 Consistency ของ entity list API ✅ Done 2026-09-06
 
-- **งาน:** `admin/audit.vue` ยังเรียก `/api/meta/entities` (admin-only) — ตรวจว่าใช้ `/api/entities` ได้หรือต้องแยก; รวม endpoint ให้สม่ำเสมอ
-- **Acceptance:** ทุกหน้าใช้ `/api/entities` สำหรับ list ที่ user เห็นได้; admin pages ใช้ `/api/meta/*` เฉพาะที่ต้อง manage
+- **งาน:** `admin/audit.vue` สลับ `/api/meta/entities` → `/api/entities` (behavior สำหรับ admin เหมือนกันทุกประการ)
+- **Acceptance:** ทุกหน้าใช้ `/api/entities` สำหรับ list ที่ user เห็นได้; `admin/meta/*` pages ยังใช้ `/api/meta/*` เหมือนเดิม
 
 ### 1.4 Gates
 

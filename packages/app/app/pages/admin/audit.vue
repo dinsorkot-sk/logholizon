@@ -22,7 +22,7 @@ type AuditEntry = {
 type AuditList = { items: AuditEntry[]; total: number }
 
 const toast = useToast()
-const { data: entities } = await useFetch<Entity[]>('/api/meta/entities')
+const { data: entities } = await useFetch<Entity[]>('/api/entities')
 
 const limit = ref(50)
 const offset = ref(0)

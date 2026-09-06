@@ -818,7 +818,7 @@ async function confirmImport() {
 
       <USlideover :open="panelOpen" :title="selected ? `Edit ${entity.label}` : `New ${entity.label}`" @update:open="handlePanelOpenChange">
         <template #body>
-          <UForm id="record-form" class="space-y-4" @submit="save">
+          <UForm id="record-form" data-testid="record-form" class="space-y-4" @submit="save">
             <UFormField
               v-for="field in formFields"
               :key="field.id"

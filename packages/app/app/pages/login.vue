@@ -119,6 +119,7 @@ async function onSetup(event: FormSubmitEvent<SetupSchema>) {
       </UAuthForm>
       <UAuthForm
         v-else
+        data-testid="login-form"
         :schema="schema"
         :fields="fields"
         :loading="submitting"
