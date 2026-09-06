@@ -116,6 +116,207 @@ async fn permissions_crud_and_check() {
 }
 
 #[tokio::test]
+async fn field_permissions_crud_and_check() {
+    let pool = setup().await;
+    let title = repository::create_field(&pool, "work_order", "title", "text", true, false)
+        .await
+        .unwrap();
+    let priority = repository::create_field(&pool, "work_order", "priority", "text", false, false)
+        .await
+        .unwrap();
+
+    // Default: both roles can view and edit every field.
+    let perms = repository::get_field_permissions(&pool, "work_order")
+        .await
+        .unwrap();
+    assert_eq!(perms.len(), 4);
+    repository::check_field_permission(&pool, "work_order", "title", "user", false)
+        .await
+        .unwrap();
+    repository::check_field_permission(&pool, "work_order", "title", "user", true)
+        .await
+        .unwrap();
+
+    // Hide priority from users.
+    repository::update_field_permissions(
+        &pool,
+        "work_order",
+        &[(priority.id.clone(), "user".to_string(), false, false)],
+    )
+    .await
+    .unwrap();
+    let err = repository::check_field_permission(&pool, "work_order", "priority", "user", false)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("no view access"));
+
+    // Make title view-only for users.
+    repository::update_field_permissions(
+        &pool,
+        "work_order",
+        &[(title.id.clone(), "user".to_string(), true, false)],
+    )
+    .await
+    .unwrap();
+    repository::check_field_permission(&pool, "work_order", "title", "user", false)
+        .await
+        .unwrap();
+    let err = repository::check_field_permission(&pool, "work_order", "title", "user", true)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("no edit access"));
+
+    // Admin bypasses the matrix.
+    repository::check_field_permission(&pool, "work_order", "priority", "admin", true)
+        .await
+        .unwrap();
+
+    // Invalid role rejected.
+    assert!(repository::update_field_permissions(
+        &pool,
+        "work_order",
+        &[(title.id.clone(), "superuser".to_string(), true, true)],
+    )
+    .await
+    .is_err());
+
+    // Field from another entity rejected.
+    repository::create_entity(&pool, "other", "other", "Other")
+        .await
+        .unwrap();
+    let other_field = repository::create_field(&pool, "other", "note", "text", false, false)
+        .await
+        .unwrap();
+    assert!(repository::update_field_permissions(
+        &pool,
+        "work_order",
+        &[(other_field.id.clone(), "user".to_string(), false, false)],
+    )
+    .await
+    .is_err());
+
+    // Missing entity rejected.
+    assert!(repository::get_field_permissions(&pool, "missing")
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn field_permissions_enforce_on_documents() {
+    use serde_json::json;
+    let pool = setup().await;
+    let title = repository::create_field(&pool, "work_order", "title", "text", true, false)
+        .await
+        .unwrap();
+    let secret = repository::create_field(&pool, "work_order", "secret", "text", false, false)
+        .await
+        .unwrap();
+    let note = repository::create_field(&pool, "work_order", "note", "text", false, false)
+        .await
+        .unwrap();
+
+    // secret hidden, note view-only for users.
+    repository::update_field_permissions(
+        &pool,
+        "work_order",
+        &[
+            (secret.id.clone(), "user".to_string(), false, false),
+            (note.id.clone(), "user".to_string(), true, false),
+        ],
+    )
+    .await
+    .unwrap();
+
+    // Create as user: hidden field dropped, view-only field kept.
+    let doc = repository::create_document_as_role(
+        &pool,
+        "d1",
+        "work_order",
+        &json!({"title": "Fix pump", "secret": "s3cr3t", "note": "hello"}),
+        Some("alice"),
+        "user",
+    )
+    .await
+    .unwrap();
+    assert_eq!(doc.payload["title"], "Fix pump");
+    assert!(doc.payload.get("secret").is_none());
+    assert_eq!(doc.payload["note"], "hello");
+
+    // List as user: hidden field stripped.
+    let list =
+        repository::list_documents_as_role(&pool, "work_order", 10, 0, &Default::default(), "user")
+            .await
+            .unwrap();
+    assert_eq!(list.total, 1);
+    assert!(list.items[0].payload.get("secret").is_none());
+    assert_eq!(list.items[0].payload["note"], "hello");
+
+    // Update as user: non-editable fields preserve existing values.
+    let updated = repository::update_document_as_role(
+        &pool,
+        "d1",
+        &json!({"title": "Fixed", "secret": "hacked", "note": "changed"}),
+        Some("alice"),
+        None,
+        "user",
+    )
+    .await
+    .unwrap();
+    assert_eq!(updated.payload["title"], "Fixed");
+    assert!(updated.payload.get("secret").is_none());
+    assert_eq!(updated.payload["note"], "hello");
+
+    // Export as user excludes hidden fields.
+    let csv = repository::export_documents_csv_as_role(&pool, "work_order", "user")
+        .await
+        .unwrap();
+    let header = csv.lines().next().unwrap();
+    assert!(header.contains("title"), "{header}");
+    assert!(!header.contains("secret"), "{header}");
+
+    // Audit as user redacts hidden fields.
+    let audit = repository::list_document_audit_as_role(&pool, "d1", 10, 0, "user")
+        .await
+        .unwrap();
+    assert!(audit
+        .items
+        .iter()
+        .all(|e| e.payload.get("secret").is_none()));
+
+    // Admin still sees everything.
+    let admin_list = repository::list_documents_as_role(
+        &pool,
+        "work_order",
+        10,
+        0,
+        &Default::default(),
+        "admin",
+    )
+    .await
+    .unwrap();
+    assert_eq!(admin_list.items[0].payload["note"], "hello");
+
+    // Hidden required field is not required for that role.
+    repository::update_field_permissions(
+        &pool,
+        "work_order",
+        &[(title.id.clone(), "user".to_string(), false, false)],
+    )
+    .await
+    .unwrap();
+    repository::create_document_as_role(
+        &pool,
+        "d2",
+        "work_order",
+        &json!({"note": "no title"}),
+        Some("alice"),
+        "user",
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
 async fn views_crud() {
     let pool = setup().await;
 

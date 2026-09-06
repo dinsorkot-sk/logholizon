@@ -15,6 +15,7 @@ type WorkflowState = { id: string; name: string; label: string; position: number
 type WorkflowTransition = { id: string; action: string; from_state: string; to_state: string }
 type WorkflowDefinition = { states: WorkflowState[]; transitions: WorkflowTransition[] }
 type EntityPermission = { role: string; can_view: boolean; can_edit: boolean }
+type FieldPermission = { field_id: string; role: string; can_view: boolean; can_edit: boolean }
 type EntityView = { id: string; entity_id: string; name: string; config: Record<string, unknown>; created_at: string }
 
 const toast = useToast()
@@ -28,6 +29,8 @@ const workflowUrl = computed(() => selectedId.value ? `/api/meta/entities/${enco
 const { data: workflow, status: workflowStatus, error: workflowError, refresh: refreshWorkflow } = await useFetch<WorkflowDefinition>(workflowUrl, { immediate: false })
 const permissionsUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/permissions` : '')
 const { data: permissions, status: permissionsStatus, error: permissionsError, refresh: refreshPermissions } = await useFetch<EntityPermission[]>(permissionsUrl, { immediate: false })
+const fieldPermissionsUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/field-permissions` : '')
+const { data: fieldPermissions, status: fieldPermissionsStatus, error: fieldPermissionsError, refresh: refreshFieldPermissions } = await useFetch<FieldPermission[]>(fieldPermissionsUrl, { immediate: false })
 const viewsUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/views` : '')
 const { data: views, status: viewsStatus, error: viewsError, refresh: refreshViews } = await useFetch<EntityView[]>(viewsUrl, { immediate: false })
 
@@ -67,6 +70,7 @@ function selectEntity(id: string) {
   refreshDetail()
   refreshWorkflow()
   refreshPermissions()
+  refreshFieldPermissions()
   refreshViews()
 }
 
@@ -95,6 +99,38 @@ async function togglePermission(permission: EntityPermission, key: 'can_view' | 
     })
   } finally {
     savingPermissions.value = false
+  }
+}
+
+const savingFieldPermissions = ref(false)
+
+function fieldPermissionFor(fieldId: string) {
+  return (fieldPermissions.value || []).find(p => p.field_id === fieldId && p.role === 'user')
+}
+
+async function toggleFieldPermission(fieldId: string, key: 'can_view' | 'can_edit') {
+  if (!selectedId.value || !fieldPermissions.value) return
+  const current = fieldPermissionFor(fieldId)
+  const next = { field_id: fieldId, role: 'user', can_view: current?.can_view ?? true, can_edit: current?.can_edit ?? true }
+  next[key] = !next[key]
+  if (!next.can_view) next.can_edit = false
+  savingFieldPermissions.value = true
+  try {
+    await $fetch(`/api/meta/entities/${encodeURIComponent(selectedId.value)}/field-permissions`, {
+      method: 'PUT',
+      body: { permissions: [next] }
+    })
+    await refreshFieldPermissions()
+    toast.add({ title: 'Field permissions updated', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    toast.add({
+      title: 'Unable to update field permissions',
+      description: e?.data?.message || e?.statusMessage || 'Update failed',
+      color: 'error',
+      icon: 'i-lucide-alert-circle'
+    })
+  } finally {
+    savingFieldPermissions.value = false
   }
 }
 
@@ -791,6 +827,7 @@ const fieldColumns: TableColumn<Field>[] = [
                 </template>
               </UAlert>
               <div v-else class="space-y-2 py-3">
+                <h3 class="text-sm font-semibold">Entity access</h3>
                 <div v-for="permission in permissions || []" :key="permission.role" class="flex items-center justify-between gap-4 rounded-lg border border-default px-4 py-3">
                   <div>
                     <p class="font-mono text-sm font-medium">{{ permission.role }}</p>
@@ -803,6 +840,37 @@ const fieldColumns: TableColumn<Field>[] = [
                     <UFormField label="Edit" :ui="{ label: 'text-xs' }">
                       <USwitch :model-value="permission.can_edit" :disabled="savingPermissions || !permission.can_view" @update:model-value="togglePermission(permission, 'can_edit')" />
                     </UFormField>
+                  </div>
+                </div>
+                <h3 class="pt-4 text-sm font-semibold">Field access (user role — admin always has full access)</h3>
+                <div v-if="fieldPermissionsStatus === 'pending'" class="py-4">
+                  <USkeleton v-for="index in 2" :key="index" class="mb-2 h-8 w-full" />
+                </div>
+                <UAlert
+                  v-else-if="fieldPermissionsStatus === 'error'"
+                  color="error"
+                  title="Cannot load field permissions"
+                  :description="fieldPermissionsError?.message || 'Check the Rust core connection.'"
+                >
+                  <template #actions>
+                    <UButton size="sm" variant="outline" @click="refreshFieldPermissions()">Retry</UButton>
+                  </template>
+                </UAlert>
+                <div v-else-if="!(detail?.fields || []).length" class="py-4 text-sm text-muted">No fields yet.</div>
+                <div v-else class="space-y-2">
+                  <div v-for="field in detail?.fields || []" :key="field.id" class="flex items-center justify-between gap-4 rounded-lg border border-default px-4 py-2">
+                    <div>
+                      <p class="font-mono text-sm font-medium">{{ field.name }}</p>
+                      <p class="text-xs text-muted">{{ field.type }}{{ field.required ? ' · required' : '' }}{{ field.is_status ? ' · status' : '' }}</p>
+                    </div>
+                    <div class="flex items-center gap-4">
+                      <UFormField label="View" :ui="{ label: 'text-xs' }">
+                        <USwitch :model-value="fieldPermissionFor(field.id)?.can_view ?? true" :disabled="savingFieldPermissions" @update:model-value="toggleFieldPermission(field.id, 'can_view')" />
+                      </UFormField>
+                      <UFormField label="Edit" :ui="{ label: 'text-xs' }">
+                        <USwitch :model-value="fieldPermissionFor(field.id)?.can_edit ?? true" :disabled="savingFieldPermissions || !(fieldPermissionFor(field.id)?.can_view ?? true)" @update:model-value="toggleFieldPermission(field.id, 'can_edit')" />
+                      </UFormField>
+                    </div>
                   </div>
                 </div>
               </div>

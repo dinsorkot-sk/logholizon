@@ -102,6 +102,10 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
             get(get_entity_permissions).put(update_entity_permissions),
         )
         .route(
+            "/v1/meta/entities/{id}/field-permissions",
+            get(get_field_permissions).put(update_field_permissions),
+        )
+        .route(
             "/v1/meta/entities/{id}/views",
             get(list_entity_views).post(create_entity_view),
         )
@@ -449,6 +453,47 @@ async fn update_entity_permissions(
         .map_err(map_db_error)
 }
 
+async fn get_field_permissions(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<repository::FieldPermission>>, AppError> {
+    repository::get_field_permissions(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateFieldPermissionsRequest {
+    pub permissions: Vec<FieldPermissionEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FieldPermissionEntry {
+    pub field_id: String,
+    pub role: String,
+    #[serde(default = "default_true")]
+    pub can_view: bool,
+    #[serde(default)]
+    pub can_edit: bool,
+}
+
+async fn update_field_permissions(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<UpdateFieldPermissionsRequest>,
+) -> Result<Json<Vec<repository::FieldPermission>>, AppError> {
+    let entries: Vec<(String, String, bool, bool)> = input
+        .permissions
+        .into_iter()
+        .map(|p| (p.field_id, p.role, p.can_view, p.can_edit))
+        .collect();
+    repository::update_field_permissions(&state.pool, &id, &entries)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
 async fn list_entity_views(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -629,12 +674,13 @@ async fn transition_document(
     repository::check_permission(&state.pool, &existing.entity_id, &current_role(&user), true)
         .await
         .map_err(map_db_error)?;
-    repository::transition_document(
+    repository::transition_document_as_role(
         &state.pool,
         &id,
         &input.action,
         current_actor(&user).as_deref(),
         input.expected_updated_at.as_deref(),
+        &current_role(&user),
     )
     .await
     .map(Json)
@@ -657,10 +703,14 @@ async fn dashboard_counts(
     repository::check_permission(&state.pool, &query.entity_id, &current_role(&user), false)
         .await
         .map_err(map_db_error)?;
-    repository::count_documents_by_status(&state.pool, &query.entity_id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
+    repository::count_documents_by_status_as_role(
+        &state.pool,
+        &query.entity_id,
+        &current_role(&user),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
 }
 
 async fn dashboard_pm(
@@ -674,7 +724,7 @@ async fn dashboard_pm(
     repository::check_permission(&state.pool, &query.entity_id, &current_role(&user), false)
         .await
         .map_err(map_db_error)?;
-    repository::pm_summary(&state.pool, &query.entity_id)
+    repository::pm_summary_as_role(&state.pool, &query.entity_id, &current_role(&user))
         .await
         .map(Json)
         .map_err(map_db_error)
@@ -763,7 +813,7 @@ async fn export_documents_for_user(
     repository::check_permission(&state.pool, &id, &current_role(&user), false)
         .await
         .map_err(map_db_error)?;
-    let csv = repository::export_documents_csv(&state.pool, &id)
+    let csv = repository::export_documents_csv_as_role(&state.pool, &id, &current_role(&user))
         .await
         .map_err(map_db_error)?;
     Ok(([("content-type", "text/csv; charset=utf-8")], csv).into_response())
@@ -778,7 +828,7 @@ async fn preview_import_for_user(
     repository::check_permission(&state.pool, &id, &current_role(&user), false)
         .await
         .map_err(map_db_error)?;
-    repository::preview_documents_csv(&state.pool, &id, &body)
+    repository::preview_documents_csv_as_role(&state.pool, &id, &body, &current_role(&user))
         .await
         .map(Json)
         .map_err(map_db_error)
@@ -793,10 +843,16 @@ async fn confirm_import_for_user(
     repository::check_permission(&state.pool, &id, &current_role(&user), true)
         .await
         .map_err(map_db_error)?;
-    repository::confirm_documents_csv(&state.pool, &id, &body, current_actor(&user).as_deref())
-        .await
-        .map(Json)
-        .map_err(map_db_error)
+    repository::confirm_documents_csv_as_role(
+        &state.pool,
+        &id,
+        &body,
+        current_actor(&user).as_deref(),
+        &current_role(&user),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
 }
 
 async fn list_documents(
@@ -813,7 +869,7 @@ async fn list_documents(
     repository::check_permission(&state.pool, &query.entity_id, &current_role(&user), false)
         .await
         .map_err(map_db_error)?;
-    repository::list_documents(
+    repository::list_documents_as_role(
         &state.pool,
         &query.entity_id,
         query.limit,
@@ -825,6 +881,7 @@ async fn list_documents(
             sort_dir: query.sort_dir,
             view_id: query.view_id,
         },
+        &current_role(&user),
     )
     .await
     .map(Json)
@@ -839,7 +896,7 @@ async fn create_document(
     repository::check_permission(&state.pool, &input.entity_id, &current_role(&user), true)
         .await
         .map_err(map_db_error)?;
-    repository::create_document(
+    repository::create_document_as_role(
         &state.pool,
         &input.id,
         &input.entity_id,
@@ -848,6 +905,7 @@ async fn create_document(
         }
         .payload,
         current_actor(&user).as_deref(),
+        &current_role(&user),
     )
     .await
     .map(|doc| (StatusCode::CREATED, Json(doc)))
@@ -865,6 +923,14 @@ async fn get_document(
     repository::check_permission(&state.pool, &doc.entity_id, &current_role(&user), false)
         .await
         .map_err(map_db_error)?;
+    let viewable =
+        repository::viewable_field_names(&state.pool, &doc.entity_id, &current_role(&user))
+            .await
+            .map_err(map_db_error)?;
+    let doc = repository::Document {
+        payload: repository::redact_payload(&doc.payload, &viewable),
+        ..doc
+    };
     Ok(Json(doc))
 }
 
@@ -880,12 +946,13 @@ async fn update_document(
     repository::check_permission(&state.pool, &existing.entity_id, &current_role(&user), true)
         .await
         .map_err(map_db_error)?;
-    repository::update_document(
+    repository::update_document_as_role(
         &state.pool,
         &id,
         &input.payload,
         current_actor(&user).as_deref(),
         input.expected_updated_at.as_deref(),
+        &current_role(&user),
     )
     .await
     .map(Json)
@@ -919,6 +986,7 @@ pub struct AuditQuery {
 
 async fn list_document_audit(
     State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
     Path(id): Path<String>,
     Query(query): Query<AuditQuery>,
 ) -> Result<Json<repository::AuditList>, AppError> {
@@ -928,10 +996,16 @@ async fn list_document_audit(
     if query.offset < 0 {
         return Err(AppError::BadRequest("offset must be >= 0".into()));
     }
-    repository::list_document_audit(&state.pool, &id, query.limit, query.offset)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
+    repository::list_document_audit_as_role(
+        &state.pool,
+        &id,
+        query.limit,
+        query.offset,
+        &current_role(&user),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
 }
 
 #[derive(Debug, Deserialize)]
@@ -950,6 +1024,7 @@ pub struct GlobalAuditQuery {
 
 async fn list_global_audit(
     State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
     Query(query): Query<GlobalAuditQuery>,
 ) -> Result<Json<repository::GlobalAuditList>, AppError> {
     if query.limit < 1 || query.limit > 100 {
@@ -958,7 +1033,7 @@ async fn list_global_audit(
     if query.offset < 0 {
         return Err(AppError::BadRequest("offset must be >= 0".into()));
     }
-    repository::list_global_audit(
+    repository::list_global_audit_as_role(
         &state.pool,
         query.limit,
         query.offset,
@@ -967,6 +1042,7 @@ async fn list_global_audit(
             action: query.action,
             search: query.search,
         },
+        &current_role(&user),
     )
     .await
     .map(Json)

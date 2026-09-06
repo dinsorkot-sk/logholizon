@@ -221,6 +221,68 @@ async fn user_entity_routes_enforce_can_edit() {
 }
 
 #[tokio::test]
+async fn user_entity_detail_includes_field_permissions() {
+    let (app, token, pool, _dir) = {
+        let (app, _admin_token, pool, dir) = authed_app().await;
+        logholizon_core::auth::register(&pool, "alice", "password123")
+            .await
+            .unwrap();
+        let session = logholizon_core::auth::login(&pool, "alice", "password123")
+            .await
+            .unwrap();
+        (app, session.token, pool, dir)
+    };
+    // Hide priority from users.
+    let fields = logholizon_core::repository::list_fields(&pool, "work_order")
+        .await
+        .unwrap();
+    let priority = fields.iter().find(|f| f.name == "priority").unwrap();
+    logholizon_core::repository::update_field_permissions(
+        &pool,
+        "work_order",
+        &[(priority.id.clone(), "user".to_string(), false, false)],
+    )
+    .await
+    .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/entities/work_order")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let fields = json["fields"].as_array().unwrap();
+    let priority_json = fields.iter().find(|f| f["name"] == "priority").unwrap();
+    assert_eq!(priority_json["can_view"], false);
+    assert_eq!(priority_json["can_edit"], false);
+    let title_json = fields.iter().find(|f| f["name"] == "title").unwrap();
+    assert_eq!(title_json["can_view"], true);
+}
+
+#[tokio::test]
+async fn field_permission_routes_require_admin() {
+    let (app, token) = authed_user_app().await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/meta/entities/work_order/field-permissions")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn health_returns_ok() {
     let pool = db::connect("sqlite::memory:").await.unwrap();
     db::migrate(&pool).await.unwrap();

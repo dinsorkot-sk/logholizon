@@ -18,7 +18,14 @@ export type CoreField = {
 
 export type CoreEntityDetail = CoreEntity & { fields: CoreField[] }
 
-export type CoreEntityWithPermission = CoreEntityDetail & { permission: CoreEntityPermission }
+export type CoreFieldWithPermission = CoreField & { can_view: boolean; can_edit: boolean }
+
+export type CoreEntityWithPermission = CoreEntity & {
+  fields: CoreFieldWithPermission[]
+  permission: CoreEntityPermission
+}
+
+export type CoreFieldPermission = { field_id: string; role: string; can_view: boolean; can_edit: boolean }
 
 export type CoreDocument = {
   id: string
@@ -269,6 +276,16 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       permissions: { role: string; can_view: boolean; can_edit: boolean }[]
     ): Promise<CoreEntityPermission[]> =>
       request<CoreEntityPermission[]>(`/v1/meta/entities/${encodeURIComponent(entityId)}/permissions`, {
+        method: 'PUT',
+        body: { permissions }
+      }),
+    getFieldPermissions: (entityId: string): Promise<CoreFieldPermission[]> =>
+      request<CoreFieldPermission[]>(`/v1/meta/entities/${encodeURIComponent(entityId)}/field-permissions`),
+    updateFieldPermissions: (
+      entityId: string,
+      permissions: { field_id: string; role: string; can_view: boolean; can_edit: boolean }[]
+    ): Promise<CoreFieldPermission[]> =>
+      request<CoreFieldPermission[]>(`/v1/meta/entities/${encodeURIComponent(entityId)}/field-permissions`, {
         method: 'PUT',
         body: { permissions }
       }),

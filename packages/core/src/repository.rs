@@ -43,8 +43,29 @@ pub struct EntityWithPermission {
     pub id: String,
     pub name: String,
     pub label: String,
-    pub fields: Vec<Field>,
+    pub fields: Vec<FieldWithPermission>,
     pub permission: EntityPermission,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FieldWithPermission {
+    pub id: String,
+    pub name: String,
+    pub r#type: String,
+    pub required: bool,
+    pub is_status: bool,
+    pub position: i64,
+    pub options: Vec<FieldOption>,
+    pub can_view: bool,
+    pub can_edit: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FieldPermission {
+    pub field_id: String,
+    pub role: String,
+    pub can_view: bool,
+    pub can_edit: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -366,13 +387,149 @@ pub async fn get_entity_with_permission(
     if !permission.can_view {
         return Err(AppError::Forbidden(format!("no view access to entity: {entity_id}")).into());
     }
+    let field_map = field_permission_map(pool, entity_id, role).await?;
+    let fields = detail
+        .fields
+        .into_iter()
+        .map(|f| {
+            let (can_view, can_edit) = field_map.get(&f.name).copied().unwrap_or((true, true));
+            FieldWithPermission {
+                id: f.id,
+                name: f.name,
+                r#type: f.r#type,
+                required: f.required,
+                is_status: f.is_status,
+                position: f.position,
+                options: f.options,
+                can_view,
+                can_edit,
+            }
+        })
+        .collect();
     Ok(EntityWithPermission {
         id: detail.id,
         name: detail.name,
         label: detail.label,
-        fields: detail.fields,
+        fields,
         permission,
     })
+}
+
+pub async fn get_field_permissions(
+    pool: &SqlitePool,
+    entity_id: &str,
+) -> Result<Vec<FieldPermission>> {
+    require_entity(pool, entity_id).await?;
+    let rows = sqlx::query_as::<_, (String, String, i64, i64)>(
+        "SELECT p.field_id, p.role, p.can_view, p.can_edit FROM _field_permission p \
+         JOIN _meta_field f ON f.id = p.field_id WHERE f.entity_id = ? ORDER BY f.position, f.name, p.role",
+    )
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(field_id, role, can_view, can_edit)| FieldPermission {
+            field_id,
+            role,
+            can_view: can_view != 0,
+            can_edit: can_edit != 0,
+        })
+        .collect())
+}
+
+pub async fn update_field_permissions(
+    pool: &SqlitePool,
+    entity_id: &str,
+    permissions: &[(String, String, bool, bool)],
+) -> Result<Vec<FieldPermission>> {
+    require_entity(pool, entity_id).await?;
+    for (field_id, role, _, _) in permissions {
+        if !matches!(role.as_str(), "admin" | "user") {
+            return Err(AppError::BadRequest(format!("invalid role: {role}")).into());
+        }
+        let owner: Option<String> =
+            sqlx::query_scalar("SELECT entity_id FROM _meta_field WHERE id = ?")
+                .bind(field_id)
+                .fetch_optional(pool)
+                .await?;
+        match owner {
+            Some(owner) if owner == entity_id => {}
+            _ => {
+                return Err(
+                    AppError::BadRequest(format!("field not found in entity: {field_id}")).into(),
+                );
+            }
+        }
+    }
+    let mut tx = pool.begin().await?;
+    for (field_id, role, can_view, can_edit) in permissions {
+        sqlx::query(
+            "INSERT INTO _field_permission (field_id, role, can_view, can_edit) VALUES (?, ?, ?, ?) \
+             ON CONFLICT(field_id, role) DO UPDATE SET can_view = excluded.can_view, can_edit = excluded.can_edit",
+        )
+        .bind(field_id)
+        .bind(role)
+        .bind(*can_view as i64)
+        .bind(*can_edit as i64)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    get_field_permissions(pool, entity_id).await
+}
+
+/// Per-field (can_view, can_edit) keyed by field name for a role.
+/// Admin bypasses the matrix (full access); missing rows default to allow.
+pub async fn field_permission_map(
+    pool: &SqlitePool,
+    entity_id: &str,
+    role: &str,
+) -> Result<std::collections::HashMap<String, (bool, bool)>> {
+    let fields = list_fields(pool, entity_id).await?;
+    if role == "admin" {
+        return Ok(fields.into_iter().map(|f| (f.name, (true, true))).collect());
+    }
+    let rows: Vec<(String, Option<i64>, Option<i64>)> = sqlx::query_as(
+        "SELECT f.name, p.can_view, p.can_edit FROM _meta_field f \
+         LEFT JOIN _field_permission p ON p.field_id = f.id AND p.role = ? \
+         WHERE f.entity_id = ?",
+    )
+    .bind(role)
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(name, can_view, can_edit)| {
+            // Missing row (NULL) = default allow.
+            (
+                name,
+                (can_view.unwrap_or(1) != 0, can_edit.unwrap_or(1) != 0),
+            )
+        })
+        .collect())
+}
+
+pub async fn check_field_permission(
+    pool: &SqlitePool,
+    entity_id: &str,
+    field_name: &str,
+    role: &str,
+    need_edit: bool,
+) -> Result<()> {
+    if role == "admin" {
+        return Ok(());
+    }
+    let map = field_permission_map(pool, entity_id, role).await?;
+    let (can_view, can_edit) = map.get(field_name).copied().unwrap_or((true, true));
+    if !can_view {
+        return Err(AppError::Forbidden(format!("no view access to field: {field_name}")).into());
+    }
+    if need_edit && !can_edit {
+        return Err(AppError::Forbidden(format!("no edit access to field: {field_name}")).into());
+    }
+    Ok(())
 }
 
 pub async fn list_entity_views(pool: &SqlitePool, entity_id: &str) -> Result<Vec<EntityView>> {
@@ -550,6 +707,16 @@ pub async fn create_field(
     .bind(position)
     .execute(pool)
     .await?;
+    // Default field permissions: both roles can view and edit.
+    for role in ["admin", "user"] {
+        sqlx::query(
+            "INSERT OR IGNORE INTO _field_permission (field_id, role, can_view, can_edit) VALUES (?, ?, 1, 1)",
+        )
+        .bind(&field_id)
+        .bind(role)
+        .execute(pool)
+        .await?;
+    }
     get_field(pool, &field_id).await
 }
 
@@ -783,10 +950,24 @@ pub async fn create_document(
     payload: &Value,
     actor: Option<&str>,
 ) -> Result<Document> {
+    create_document_as_role(pool, id, entity_id, payload, actor, "admin").await
+}
+
+pub async fn create_document_as_role(
+    pool: &SqlitePool,
+    id: &str,
+    entity_id: &str,
+    payload: &Value,
+    actor: Option<&str>,
+    role: &str,
+) -> Result<Document> {
     if id.trim().is_empty() {
         bail!("id is required");
     }
-    validate_payload(pool, entity_id, payload).await?;
+    // Create: drop hidden fields, but keep view-only (non-editable) fields
+    // so the initial values are stored.
+    let payload = filter_hidden_payload(pool, entity_id, payload, role).await?;
+    validate_payload_for_role(pool, entity_id, &payload, role).await?;
     let mut tx = pool.begin().await?;
     sqlx::query("INSERT INTO _doc (id, entity_id, payload) VALUES (?, ?, ?)")
         .bind(id)
@@ -826,7 +1007,20 @@ pub async fn get_document(pool: &SqlitePool, id: &str) -> Result<Document> {
 }
 
 pub async fn export_documents_csv(pool: &SqlitePool, entity_id: &str) -> Result<String> {
+    export_documents_csv_as_role(pool, entity_id, "admin").await
+}
+
+pub async fn export_documents_csv_as_role(
+    pool: &SqlitePool,
+    entity_id: &str,
+    role: &str,
+) -> Result<String> {
     let fields = list_fields(pool, entity_id).await?;
+    let viewable = viewable_field_names(pool, entity_id, role).await?;
+    let fields: Vec<Field> = fields
+        .into_iter()
+        .filter(|f| viewable.contains(&f.name))
+        .collect();
     if fields.is_empty() {
         return Err(AppError::BadRequest("entity has no fields".into()).into());
     }
@@ -885,7 +1079,22 @@ pub async fn preview_documents_csv(
     entity_id: &str,
     input: &str,
 ) -> Result<ImportPreview> {
-    let fields = list_fields(pool, entity_id).await?;
+    preview_documents_csv_as_role(pool, entity_id, input, "admin").await
+}
+
+pub async fn preview_documents_csv_as_role(
+    pool: &SqlitePool,
+    entity_id: &str,
+    input: &str,
+    role: &str,
+) -> Result<ImportPreview> {
+    let all_fields = list_fields(pool, entity_id).await?;
+    // Import is a write: the header must match the editable fields.
+    let field_map = field_permission_map(pool, entity_id, role).await?;
+    let fields: Vec<Field> = all_fields
+        .into_iter()
+        .filter(|f| field_map.get(&f.name).copied().unwrap_or((true, true)).1)
+        .collect();
     let records = parse_csv(input)?;
     if records.is_empty() {
         return Err(AppError::BadRequest("CSV is empty".into()).into());
@@ -948,7 +1157,7 @@ pub async fn preview_documents_csv(
             }
         }
         let value = Value::Object(payload);
-        if let Err(error) = validate_payload(pool, entity_id, &value).await {
+        if let Err(error) = validate_payload_for_role(pool, entity_id, &value, role).await {
             errors.push(format!("row {}: {error}", index + 2));
         }
         rows.push(serde_json::json!({ "id": id, "payload": value }));
@@ -968,7 +1177,17 @@ pub async fn confirm_documents_csv(
     input: &str,
     actor: Option<&str>,
 ) -> Result<ImportResult> {
-    let preview = preview_documents_csv(pool, entity_id, input).await?;
+    confirm_documents_csv_as_role(pool, entity_id, input, actor, "admin").await
+}
+
+pub async fn confirm_documents_csv_as_role(
+    pool: &SqlitePool,
+    entity_id: &str,
+    input: &str,
+    actor: Option<&str>,
+    role: &str,
+) -> Result<ImportResult> {
+    let preview = preview_documents_csv_as_role(pool, entity_id, input, role).await?;
     if !preview.errors.is_empty() {
         return Err(AppError::BadRequest(preview.errors.join("; ")).into());
     }
@@ -1105,6 +1324,17 @@ pub async fn list_documents(
     offset: i64,
     filter: &ListDocumentsFilter,
 ) -> Result<DocumentList> {
+    list_documents_as_role(pool, entity_id, limit, offset, filter, "admin").await
+}
+
+pub async fn list_documents_as_role(
+    pool: &SqlitePool,
+    entity_id: &str,
+    limit: i64,
+    offset: i64,
+    filter: &ListDocumentsFilter,
+    role: &str,
+) -> Result<DocumentList> {
     use sqlx::Row;
     let mut filter = filter.clone();
     if let Some(view_id) = filter.view_id.clone().filter(|s| !s.trim().is_empty()) {
@@ -1115,23 +1345,30 @@ pub async fn list_documents(
         apply_view_config(&mut filter, &view.config);
     }
     let fields = list_fields(pool, entity_id).await?;
+    let viewable = viewable_field_names(pool, entity_id, role).await?;
     let mut where_sql = String::from("entity_id = ?");
     let mut params: Vec<String> = vec![entity_id.to_string()];
 
     if let Some(status) = filter.status.as_deref().filter(|s| !s.trim().is_empty()) {
         if let Some(status_field) = fields.iter().find(|f| f.is_status) {
-            where_sql.push_str(&format!(
-                " AND json_extract(payload, '$.{}') = ?",
-                status_field.name
-            ));
-            params.push(status.to_string());
+            // Hidden status field: ignore the filter rather than leak existence.
+            if viewable.contains(&status_field.name) {
+                where_sql.push_str(&format!(
+                    " AND json_extract(payload, '$.{}') = ?",
+                    status_field.name
+                ));
+                params.push(status.to_string());
+            }
         }
     }
     if let Some(search) = filter.search.as_deref().filter(|s| !s.trim().is_empty()) {
         let like = format!("%{}%", search.trim());
         let mut clauses = vec!["id LIKE ?".to_string()];
         params.push(like.clone());
-        for field in fields.iter().filter(|f| f.r#type == "text") {
+        for field in fields
+            .iter()
+            .filter(|f| f.r#type == "text" && viewable.contains(&f.name))
+        {
             clauses.push(format!("json_extract(payload, '$.{}') LIKE ?", field.name));
             params.push(like.clone());
         }
@@ -1148,7 +1385,7 @@ pub async fn list_documents(
     };
 
     let sort_col = match filter.sort_by.as_deref() {
-        Some(name) if fields.iter().any(|f| f.name == name) => {
+        Some(name) if fields.iter().any(|f| f.name == name) && viewable.contains(name) => {
             format!("json_extract(payload, '$.{name}')")
         }
         _ => "created_at".to_string(),
@@ -1168,10 +1405,11 @@ pub async fn list_documents(
     let rows = q.bind(limit).bind(offset).fetch_all(pool).await?;
     let mut items = Vec::new();
     for row in rows {
+        let payload: Value = serde_json::from_str(&row.try_get::<String, _>("payload")?)?;
         items.push(Document {
             id: row.try_get("id")?,
             entity_id: row.try_get("entity_id")?,
-            payload: serde_json::from_str(&row.try_get::<String, _>("payload")?)?,
+            payload: redact_payload(&payload, &viewable),
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
         });
@@ -1186,8 +1424,28 @@ pub async fn update_document(
     actor: Option<&str>,
     expected_updated_at: Option<&str>,
 ) -> Result<Document> {
+    update_document_as_role(pool, id, payload, actor, expected_updated_at, "admin").await
+}
+
+pub async fn update_document_as_role(
+    pool: &SqlitePool,
+    id: &str,
+    payload: &Value,
+    actor: Option<&str>,
+    expected_updated_at: Option<&str>,
+    role: &str,
+) -> Result<Document> {
     let existing = get_document(pool, id).await?;
-    validate_payload(pool, &existing.entity_id, payload).await?;
+    // Drop hidden keys from the incoming payload first (unknown-field
+    // tolerance), then merge over stored values and restore stored values
+    // for non-editable fields so a forced write cannot change them.
+    let incoming = filter_hidden_payload(pool, &existing.entity_id, payload, role).await?;
+    let merged = merge_editable_payload(&existing.payload, &incoming);
+    let merged =
+        restore_readonly_fields(pool, &existing.entity_id, &existing.payload, &merged, role)
+            .await?;
+    validate_payload_for_role(pool, &existing.entity_id, &merged, role).await?;
+    let payload = merged;
     let mut tx = pool.begin().await?;
     let result = sqlx::query(
         "UPDATE _doc SET payload = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ? AND (? IS NULL OR updated_at = ?)",
@@ -1224,6 +1482,17 @@ pub async fn transition_document(
     actor: Option<&str>,
     expected_updated_at: Option<&str>,
 ) -> Result<Document> {
+    transition_document_as_role(pool, id, action, actor, expected_updated_at, "admin").await
+}
+
+pub async fn transition_document_as_role(
+    pool: &SqlitePool,
+    id: &str,
+    action: &str,
+    actor: Option<&str>,
+    expected_updated_at: Option<&str>,
+    role: &str,
+) -> Result<Document> {
     let existing = get_document(pool, id).await?;
     let fields = list_fields(pool, &existing.entity_id).await?;
     let status_field = fields
@@ -1246,9 +1515,10 @@ pub async fn transition_document(
     let target = target.ok_or_else(|| {
         AppError::BadRequest(format!("invalid transition: {current} cannot {action}"))
     })?;
+    check_field_permission(pool, &existing.entity_id, &status_field.name, role, true).await?;
     let mut next = existing.payload;
     next[status_field.name.as_str()] = Value::String(target);
-    validate_payload(pool, &existing.entity_id, &next).await?;
+    validate_payload_for_role(pool, &existing.entity_id, &next, role).await?;
     let mut tx = pool.begin().await?;
     let result = sqlx::query(
         "UPDATE _doc SET payload = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ? AND (? IS NULL OR updated_at = ?)",
@@ -1501,10 +1771,19 @@ pub async fn count_documents_by_status(
     pool: &SqlitePool,
     entity_id: &str,
 ) -> Result<Vec<StatusCount>> {
+    count_documents_by_status_as_role(pool, entity_id, "admin").await
+}
+
+pub async fn count_documents_by_status_as_role(
+    pool: &SqlitePool,
+    entity_id: &str,
+    role: &str,
+) -> Result<Vec<StatusCount>> {
     let fields = list_fields(pool, entity_id).await?;
     let Some(status_field) = fields.iter().find(|f| f.is_status) else {
         return Ok(Vec::new());
     };
+    check_field_permission(pool, entity_id, &status_field.name, role, false).await?;
     let query = format!(
         "SELECT json_extract(payload, '$.{}'), COUNT(*) FROM _doc WHERE entity_id = ? GROUP BY json_extract(payload, '$.{}') ORDER BY 1",
         status_field.name, status_field.name
@@ -1522,6 +1801,14 @@ pub async fn count_documents_by_status(
 /// PM summary: open (not done), overdue (not done and due_date < today),
 /// done this week (done and updated_at >= start of current UTC week).
 pub async fn pm_summary(pool: &SqlitePool, entity_id: &str) -> Result<PmSummary> {
+    pm_summary_as_role(pool, entity_id, "admin").await
+}
+
+pub async fn pm_summary_as_role(
+    pool: &SqlitePool,
+    entity_id: &str,
+    role: &str,
+) -> Result<PmSummary> {
     let fields = list_fields(pool, entity_id).await?;
     let Some(status_field) = fields.iter().find(|f| f.is_status) else {
         return Ok(PmSummary {
@@ -1531,6 +1818,7 @@ pub async fn pm_summary(pool: &SqlitePool, entity_id: &str) -> Result<PmSummary>
             total: 0,
         });
     };
+    check_field_permission(pool, entity_id, &status_field.name, role, false).await?;
     let status_col = format!("json_extract(payload, '$.{}')", status_field.name);
     let due_col = fields
         .iter()
@@ -1601,7 +1889,18 @@ pub async fn list_document_audit(
     limit: i64,
     offset: i64,
 ) -> Result<AuditList> {
-    if get_document(pool, doc_id).await.is_err() {
+    list_document_audit_as_role(pool, doc_id, limit, offset, "admin").await
+}
+
+pub async fn list_document_audit_as_role(
+    pool: &SqlitePool,
+    doc_id: &str,
+    limit: i64,
+    offset: i64,
+    role: &str,
+) -> Result<AuditList> {
+    let entity_id = get_document(pool, doc_id).await.map(|d| d.entity_id);
+    if entity_id.is_err() {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _audit_log WHERE doc_id = ?")
             .bind(doc_id)
             .fetch_one(pool)
@@ -1622,15 +1921,20 @@ pub async fn list_document_audit(
     .bind(offset)
     .fetch_all(pool)
     .await?;
+    let viewable = match &entity_id {
+        Ok(entity_id) => viewable_field_names(pool, entity_id, role).await?,
+        Err(_) => std::collections::HashSet::new(),
+    };
     let mut items = Vec::new();
     for row in rows {
         use sqlx::Row;
+        let payload: Value = serde_json::from_str(&row.try_get::<String, _>("payload")?)?;
         items.push(AuditEntry {
             id: row.try_get("id")?,
             entity_id: row.try_get("entity_id")?,
             doc_id: row.try_get("doc_id")?,
             action: row.try_get("action")?,
-            payload: serde_json::from_str(&row.try_get::<String, _>("payload")?)?,
+            payload: redact_payload(&payload, &viewable),
             created_at: row.try_get("created_at")?,
             actor: row.try_get("actor")?,
         });
@@ -1643,6 +1947,16 @@ pub async fn list_global_audit(
     limit: i64,
     offset: i64,
     filter: &GlobalAuditFilter,
+) -> Result<GlobalAuditList> {
+    list_global_audit_as_role(pool, limit, offset, filter, "admin").await
+}
+
+pub async fn list_global_audit_as_role(
+    pool: &SqlitePool,
+    limit: i64,
+    offset: i64,
+    filter: &GlobalAuditFilter,
+    role: &str,
 ) -> Result<GlobalAuditList> {
     use sqlx::Row;
     let mut where_sql = String::from("1 = 1");
@@ -1681,14 +1995,27 @@ pub async fn list_global_audit(
     }
     let rows = q.bind(limit).bind(offset).fetch_all(pool).await?;
     let mut items = Vec::new();
+    // Cache per-entity viewable sets (audit spans entities).
+    let mut viewable_cache: std::collections::HashMap<String, std::collections::HashSet<String>> =
+        std::collections::HashMap::new();
     for row in rows {
+        let entity_id: String = row.try_get("entity_id")?;
+        let payload: Value = serde_json::from_str(&row.try_get::<String, _>("payload")?)?;
+        let viewable = match viewable_cache.get(&entity_id) {
+            Some(set) => set.clone(),
+            None => {
+                let set = viewable_field_names(pool, &entity_id, role).await?;
+                viewable_cache.insert(entity_id.clone(), set.clone());
+                set
+            }
+        };
         items.push(GlobalAuditEntry {
             id: row.try_get("id")?,
-            entity_id: row.try_get("entity_id")?,
+            entity_id,
             entity_label: row.try_get("label")?,
             doc_id: row.try_get("doc_id")?,
             action: row.try_get("action")?,
-            payload: serde_json::from_str(&row.try_get::<String, _>("payload")?)?,
+            payload: redact_payload(&payload, &viewable),
             created_at: row.try_get("created_at")?,
             actor: row.try_get("actor")?,
         });
@@ -1705,12 +2032,29 @@ fn audit_id(doc_id: &str, action: &str) -> String {
     format!("{doc_id}-{action}-{nanos}")
 }
 
+/// Validate a payload for a role. Only viewable fields are validated;
+/// hidden required fields are not required for that role.
+#[allow(dead_code)]
 async fn validate_payload(pool: &SqlitePool, entity_id: &str, payload: &Value) -> Result<()> {
+    validate_payload_for_role(pool, entity_id, payload, "admin").await
+}
+
+async fn validate_payload_for_role(
+    pool: &SqlitePool,
+    entity_id: &str,
+    payload: &Value,
+    role: &str,
+) -> Result<()> {
     let object = payload
         .as_object()
         .ok_or_else(|| AppError::BadRequest("payload must be a JSON object".into()))?;
     let fields = list_fields(pool, entity_id).await?;
-    for field in &fields {
+    let field_map = field_permission_map(pool, entity_id, role).await?;
+    let visible: Vec<&Field> = fields
+        .iter()
+        .filter(|f| field_map.get(&f.name).copied().unwrap_or((true, true)).0)
+        .collect();
+    for field in &visible {
         let value = object.get(&field.name);
         if field.required && value.is_none() {
             return Err(
@@ -1722,11 +2066,113 @@ async fn validate_payload(pool: &SqlitePool, entity_id: &str, payload: &Value) -
         }
     }
     for key in object.keys() {
-        if !fields.iter().any(|f| f.name == *key) {
+        if !visible.iter().any(|f| f.name == *key) {
             return Err(AppError::BadRequest(format!("unknown field: {key}")).into());
         }
     }
     Ok(())
+}
+
+/// Drop hidden (non-viewable) fields from an incoming payload.
+/// View-only (non-editable) fields are kept so their values are stored;
+/// enforcement of edit rights happens by merging over stored values on
+/// update. Admin payloads pass through unchanged.
+async fn filter_hidden_payload(
+    pool: &SqlitePool,
+    entity_id: &str,
+    payload: &Value,
+    role: &str,
+) -> Result<Value> {
+    if role == "admin" {
+        return Ok(payload.clone());
+    }
+    let Some(object) = payload.as_object() else {
+        return Err(AppError::BadRequest("payload must be a JSON object".into()).into());
+    };
+    let field_map = field_permission_map(pool, entity_id, role).await?;
+    let filtered: serde_json::Map<String, Value> = object
+        .iter()
+        .filter(|(key, _)| field_map.get(*key).copied().unwrap_or((true, true)).0)
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    Ok(Value::Object(filtered))
+}
+
+/// Restore stored values for non-editable (view-only) fields.
+async fn restore_readonly_fields(
+    pool: &SqlitePool,
+    entity_id: &str,
+    stored: &Value,
+    merged: &Value,
+    role: &str,
+) -> Result<Value> {
+    if role == "admin" {
+        return Ok(merged.clone());
+    }
+    let Some(stored_object) = stored.as_object() else {
+        return Ok(merged.clone());
+    };
+    let Some(merged_object) = merged.as_object() else {
+        return Ok(merged.clone());
+    };
+    let field_map = field_permission_map(pool, entity_id, role).await?;
+    let mut restored = merged_object.clone();
+    for (key, stored_value) in stored_object {
+        let (_, can_edit) = field_map.get(key).copied().unwrap_or((true, true));
+        if !can_edit {
+            restored.insert(key.clone(), stored_value.clone());
+        }
+    }
+    Ok(Value::Object(restored))
+}
+
+/// Merge an incoming partial payload over the stored payload.
+fn merge_editable_payload(stored: &Value, incoming: &Value) -> Value {
+    let Some(stored_object) = stored.as_object() else {
+        return incoming.clone();
+    };
+    let Some(incoming_object) = incoming.as_object() else {
+        return incoming.clone();
+    };
+    let mut merged = stored_object.clone();
+    for (key, value) in incoming_object {
+        merged.insert(key.clone(), value.clone());
+    }
+    Value::Object(merged)
+}
+
+/// Strip non-viewable fields from a stored payload for a role.
+pub fn redact_payload(payload: &Value, viewable: &std::collections::HashSet<String>) -> Value {
+    let Some(object) = payload.as_object() else {
+        return payload.clone();
+    };
+    Value::Object(
+        object
+            .iter()
+            .filter(|(key, _)| viewable.contains(*key))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+    )
+}
+
+pub async fn viewable_field_names(
+    pool: &SqlitePool,
+    entity_id: &str,
+    role: &str,
+) -> Result<std::collections::HashSet<String>> {
+    if role == "admin" {
+        return Ok(list_fields(pool, entity_id)
+            .await?
+            .into_iter()
+            .map(|f| f.name)
+            .collect());
+    }
+    let map = field_permission_map(pool, entity_id, role).await?;
+    Ok(map
+        .into_iter()
+        .filter(|(_, (can_view, _))| *can_view)
+        .map(|(name, _)| name)
+        .collect())
 }
 
 fn validate_field_value(field: &Field, value: &Value) -> Result<()> {

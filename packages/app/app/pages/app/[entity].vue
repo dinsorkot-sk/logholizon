@@ -10,7 +10,7 @@ const UCheckbox = resolveComponent('UCheckbox')
 const UBadge = resolveComponent('UBadge')
 
 type FieldOption = { id: string; value: string; label: string }
-type Field = { id: string; name: string; type: string; required: boolean; is_status: boolean; options: FieldOption[] }
+type Field = { id: string; name: string; type: string; required: boolean; is_status: boolean; options: FieldOption[]; can_view?: boolean; can_edit?: boolean }
 type EntityPermission = { role: string; can_view: boolean; can_edit: boolean }
 type Entity = { id: string; name: string; label: string; fields: Field[]; permission?: EntityPermission }
 type Document = { id: string; entity_id: string; payload: Record<string, unknown>; created_at: string; updated_at: string }
@@ -112,6 +112,12 @@ const { data: entity, status: entityStatus, error: entityError } = await useFetc
   { watch: [entityId] }
 )
 const canEdit = computed(() => entity.value?.permission?.can_edit ?? true)
+const viewableFields = computed(() => (entity.value?.fields || []).filter(f => f.can_view ?? true))
+const editableFields = computed(() => viewableFields.value.filter(f => f.can_edit ?? true))
+const formFields = computed(() => viewableFields.value.filter(f => !f.is_status))
+function isFieldEditable(name: string) {
+  return editableFields.value.some(f => f.name === name)
+}
 const activeViewId = computed(() => {
   const view = route.query.view
   return typeof view === 'string' && view.trim() ? view : ''
@@ -152,7 +158,7 @@ const { data: audit, status: auditStatus, refresh: refreshAudit } = await useFet
 )
 
 function emptyPayload() {
-  const fields = entity.value?.fields || []
+  const fields = viewableFields.value
   const statusField = fields.find(f => f.is_status)
   const defaultStatus = workflow.value?.states[0]?.name || statusField?.options[0]?.value || ''
   return defaultPayload(fields, defaultStatus)
@@ -203,12 +209,12 @@ async function reloadLatest() {
 
 function validate() {
   Object.keys(fieldErrors).forEach(key => delete fieldErrors[key])
-  Object.assign(fieldErrors, validatePayload(entity.value?.fields || [], payload))
+  Object.assign(fieldErrors, validatePayload(viewableFields.value, payload))
   return Object.keys(fieldErrors).length === 0
 }
 
 function normalizedPayload() {
-  return normalizePayload(entity.value?.fields || [], payload)
+  return normalizePayload(editableFields.value, payload)
 }
 
 async function save() {
@@ -353,7 +359,7 @@ const sortItems = computed(() => {
     { label: 'Created (newest)', value: 'created__desc' },
     { label: 'Created (oldest)', value: 'created__asc' }
   ]
-  for (const field of entity.value?.fields || []) {
+  for (const field of viewableFields.value) {
     items.push({ label: `${field.name} (A–Z)`, value: `${field.name}__asc` })
     items.push({ label: `${field.name} (Z–A)`, value: `${field.name}__desc` })
   }
@@ -406,7 +412,7 @@ const auditItems = computed(() => {
 // --- Column visibility ---
 watch(entity, (e) => {
   if (e) {
-    visibleColumns.value = new Set(e.fields.map(f => f.name))
+    visibleColumns.value = new Set(e.fields.filter(f => f.can_view ?? true).map(f => f.name))
   }
 }, { immediate: true })
 
@@ -504,7 +510,7 @@ const tableColumns = computed<TableColumn<Document>[]>(() => {
     }),
     meta: { class: { th: 'w-10', td: 'w-10' } }
   }]
-  for (const field of entity.value?.fields.filter(f => visibleColumns.value.has(f.name)) || []) {
+  for (const field of viewableFields.value.filter(f => visibleColumns.value.has(f.name))) {
     cols.push({
       accessorKey: `payload.${field.name}`,
       header: field.name,
@@ -647,7 +653,7 @@ async function confirmImport() {
             <UButton variant="outline" icon="i-lucide-settings-2">Columns</UButton>
             <template #content>
               <div class="w-52 p-2">
-                <label v-for="field in entity.fields" :key="field.id" class="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-default">
+                <label v-for="field in viewableFields" :key="field.id" class="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-default">
                   <UCheckbox :model-value="visibleColumns.has(field.name)" @update:model-value="toggleColumn(field.name)" />
                   <span class="font-mono">{{ field.name }}</span>
                 </label>
@@ -738,11 +744,12 @@ async function confirmImport() {
         <template #body>
           <UForm id="record-form" class="space-y-4" @submit="save">
             <UFormField
-              v-for="field in entity.fields.filter(item => !item.is_status)"
+              v-for="field in formFields"
               :key="field.id"
               :label="field.name"
               :required="field.required"
               :error="fieldErrors[field.name]"
+              :hint="isFieldEditable(field.name) ? undefined : 'View only'"
             >
               <USelectMenu
                 v-if="field.type === 'select' && !field.is_status"
@@ -751,8 +758,9 @@ async function confirmImport() {
                 value-key="value"
                 placeholder="Select…"
                 class="w-full"
+                :disabled="!isFieldEditable(field.name)"
               />
-              <UInput v-else v-model="payload[field.name] as string" :type="field.type === 'date' ? 'date' : field.type === 'number' ? 'number' : 'text'" />
+              <UInput v-else v-model="payload[field.name] as string" :disabled="!isFieldEditable(field.name)" :type="field.type === 'date' ? 'date' : field.type === 'number' ? 'number' : 'text'" />
             </UFormField>
             <UAlert v-if="error" color="error" :title="error" />
             <div v-if="selected" class="border-t pt-4">
