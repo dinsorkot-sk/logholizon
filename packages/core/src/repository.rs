@@ -10,6 +10,7 @@ pub struct Entity {
     pub id: String,
     pub name: String,
     pub label: String,
+    pub module: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -20,6 +21,8 @@ pub struct Field {
     pub required: bool,
     pub is_status: bool,
     pub position: i64,
+    pub ref_entity: Option<String>,
+    pub computed_expr: Option<String>,
     pub options: Vec<FieldOption>,
 }
 
@@ -35,6 +38,7 @@ pub struct EntityDetail {
     pub id: String,
     pub name: String,
     pub label: String,
+    pub module: Option<String>,
     pub fields: Vec<Field>,
 }
 
@@ -43,6 +47,7 @@ pub struct EntityWithPermission {
     pub id: String,
     pub name: String,
     pub label: String,
+    pub module: Option<String>,
     pub fields: Vec<FieldWithPermission>,
     pub permission: EntityPermission,
 }
@@ -55,6 +60,8 @@ pub struct FieldWithPermission {
     pub required: bool,
     pub is_status: bool,
     pub position: i64,
+    pub ref_entity: Option<String>,
+    pub computed_expr: Option<String>,
     pub options: Vec<FieldOption>,
     pub can_view: bool,
     pub can_edit: bool,
@@ -240,7 +247,7 @@ pub async fn list_entities(pool: &SqlitePool) -> Result<Vec<Entity>> {
 
 pub async fn list_entities_for_role(pool: &SqlitePool, role: &str) -> Result<Vec<Entity>> {
     let rows = sqlx::query(
-        "SELECT e.id, e.name, e.label FROM _meta_entity e \
+        "SELECT e.id, e.name, e.label, e.module FROM _meta_entity e \
          LEFT JOIN _entity_permission p ON p.entity_id = e.id AND p.role = ? \
          WHERE COALESCE(p.can_view, 1) != 0 ORDER BY e.name",
     )
@@ -254,6 +261,7 @@ pub async fn list_entities_for_role(pool: &SqlitePool, role: &str) -> Result<Vec
             id: row.try_get("id")?,
             name: row.try_get("name")?,
             label: row.try_get("label")?,
+            module: row.try_get("module")?,
         });
     }
     Ok(entities)
@@ -283,11 +291,12 @@ pub async fn create_entity(pool: &SqlitePool, id: &str, name: &str, label: &str)
         id: id.to_string(),
         name: name.to_string(),
         label: label.to_string(),
+        module: None,
     })
 }
 
 pub async fn get_entity_detail(pool: &SqlitePool, entity_id: &str) -> Result<EntityDetail> {
-    let entity = sqlx::query("SELECT id, name, label FROM _meta_entity WHERE id = ?")
+    let entity = sqlx::query("SELECT id, name, label, module FROM _meta_entity WHERE id = ?")
         .bind(entity_id)
         .fetch_optional(pool)
         .await?
@@ -298,13 +307,14 @@ pub async fn get_entity_detail(pool: &SqlitePool, entity_id: &str) -> Result<Ent
         id: entity.try_get("id")?,
         name: entity.try_get("name")?,
         label: entity.try_get("label")?,
+        module: entity.try_get("module")?,
         fields,
     })
 }
 
 pub async fn list_fields(pool: &SqlitePool, entity_id: &str) -> Result<Vec<Field>> {
     let rows = sqlx::query(
-        "SELECT id, name, type, required, is_status, position FROM _meta_field WHERE entity_id = ? ORDER BY position, name",
+        "SELECT id, name, type, required, is_status, position, ref_entity, computed_expr FROM _meta_field WHERE entity_id = ? ORDER BY position, name",
     )
     .bind(entity_id)
     .fetch_all(pool)
@@ -321,6 +331,8 @@ pub async fn list_fields(pool: &SqlitePool, entity_id: &str) -> Result<Vec<Field
             required: row.try_get::<i64, _>("required")? != 0,
             is_status: row.try_get::<i64, _>("is_status")? != 0,
             position: row.try_get("position")?,
+            ref_entity: row.try_get("ref_entity")?,
+            computed_expr: row.try_get("computed_expr")?,
             options,
         });
     }
@@ -445,6 +457,8 @@ pub async fn get_entity_with_permission(
                 required: f.required,
                 is_status: f.is_status,
                 position: f.position,
+                ref_entity: f.ref_entity,
+                computed_expr: f.computed_expr,
                 options: f.options,
                 can_view,
                 can_edit,
@@ -455,9 +469,82 @@ pub async fn get_entity_with_permission(
         id: detail.id,
         name: detail.name,
         label: detail.label,
+        module: detail.module,
         fields,
         permission,
     })
+}
+
+#[derive(Debug, Serialize)]
+pub struct EntityOption {
+    pub id: String,
+    pub label: String,
+}
+
+/// Dropdown options for reference fields: id + display label, where the
+/// label is the first text field value (falling back to the document id).
+/// Respects the caller's view permission on the target entity.
+pub async fn list_entity_options(
+    pool: &SqlitePool,
+    entity_id: &str,
+    role: &str,
+) -> Result<Vec<EntityOption>> {
+    check_permission(pool, entity_id, role, false).await?;
+    let fields = list_fields(pool, entity_id).await?;
+    let label_field = fields
+        .iter()
+        .find(|f| f.r#type == "text")
+        .map(|f| f.name.clone());
+    let rows = sqlx::query_as::<_, (String, String)>(
+        "SELECT id, payload FROM _doc WHERE entity_id = ? ORDER BY created_at DESC LIMIT 500",
+    )
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await?;
+    let mut options = Vec::new();
+    for (id, payload) in rows {
+        let label = label_field
+            .as_deref()
+            .and_then(|name| {
+                serde_json::from_str::<Value>(&payload)
+                    .ok()?
+                    .get(name)?
+                    .as_str()
+                    .map(str::to_string)
+            })
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| id.clone());
+        options.push(EntityOption { id, label });
+    }
+    Ok(options)
+}
+
+/// Apply computed fields to a stored payload (on read). Each computed
+/// field's `{placeholder}` template is interpolated from the payload.
+pub fn apply_computed_fields(fields: &[Field], payload: &Value) -> Value {
+    let computed: Vec<(&str, &str)> = fields
+        .iter()
+        .filter_map(|f| {
+            if f.r#type == "computed" {
+                f.computed_expr
+                    .as_deref()
+                    .map(|expr| (f.name.as_str(), expr))
+            } else {
+                None
+            }
+        })
+        .collect();
+    if computed.is_empty() {
+        return payload.clone();
+    }
+    let mut object = payload.as_object().cloned().unwrap_or_default();
+    for (name, expr) in computed {
+        object.insert(
+            name.to_string(),
+            Value::String(compute_field_value(expr, payload)),
+        );
+    }
+    Value::Object(object)
 }
 
 pub async fn get_field_permissions(
@@ -1044,16 +1131,24 @@ pub async fn list_field_options(pool: &SqlitePool, field_id: &str) -> Result<Vec
     Ok(options)
 }
 
-pub async fn update_entity(pool: &SqlitePool, id: &str, name: &str, label: &str) -> Result<Entity> {
+pub async fn update_entity(
+    pool: &SqlitePool,
+    id: &str,
+    name: &str,
+    label: &str,
+    module: Option<&str>,
+) -> Result<Entity> {
     if name.trim().is_empty() || label.trim().is_empty() {
         bail!("name and label are required");
     }
-    let result = sqlx::query("UPDATE _meta_entity SET name = ?, label = ? WHERE id = ?")
-        .bind(name)
-        .bind(label)
-        .bind(id)
-        .execute(pool)
-        .await?;
+    let result =
+        sqlx::query("UPDATE _meta_entity SET name = ?, label = ?, module = ? WHERE id = ?")
+            .bind(name)
+            .bind(label)
+            .bind(module.map(str::trim).filter(|s| !s.is_empty()))
+            .bind(id)
+            .execute(pool)
+            .await?;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("entity not found: {id}")).into());
     }
@@ -1061,6 +1156,10 @@ pub async fn update_entity(pool: &SqlitePool, id: &str, name: &str, label: &str)
         id: id.to_string(),
         name: name.to_string(),
         label: label.to_string(),
+        module: module
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
     })
 }
 
@@ -1089,6 +1188,7 @@ pub async fn delete_entity(pool: &SqlitePool, id: &str) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn create_field(
     pool: &SqlitePool,
     entity_id: &str,
@@ -1096,10 +1196,14 @@ pub async fn create_field(
     field_type: &str,
     required: bool,
     is_status: bool,
+    ref_entity: Option<&str>,
+    computed_expr: Option<&str>,
 ) -> Result<Field> {
     validate_field_name(name)?;
     validate_field_type(field_type)?;
     validate_status_field(pool, entity_id, None, field_type, is_status).await?;
+    validate_reference_field(pool, entity_id, field_type, ref_entity).await?;
+    validate_computed_field(field_type, computed_expr)?;
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _meta_entity WHERE id = ?)")
         .bind(entity_id)
         .fetch_one(pool)
@@ -1115,7 +1219,7 @@ pub async fn create_field(
     .await?;
     let field_id = format!("{entity_id}_{name}");
     sqlx::query(
-        "INSERT INTO _meta_field (id, entity_id, name, type, required, is_status, position) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO _meta_field (id, entity_id, name, type, required, is_status, position, ref_entity, computed_expr) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&field_id)
     .bind(entity_id)
@@ -1124,6 +1228,8 @@ pub async fn create_field(
     .bind(required as i64)
     .bind(is_status as i64)
     .bind(position)
+    .bind(ref_entity.map(str::trim).filter(|s| !s.is_empty()))
+    .bind(computed_expr.map(str::trim).filter(|s| !s.is_empty()))
     .execute(pool)
     .await?;
     // Default field permissions: both roles can view and edit.
@@ -1141,7 +1247,7 @@ pub async fn create_field(
 
 pub async fn get_field(pool: &SqlitePool, field_id: &str) -> Result<Field> {
     let row = sqlx::query(
-        "SELECT id, name, type, required, is_status, position FROM _meta_field WHERE id = ?",
+        "SELECT id, name, type, required, is_status, position, ref_entity, computed_expr FROM _meta_field WHERE id = ?",
     )
     .bind(field_id)
     .fetch_optional(pool)
@@ -1156,10 +1262,13 @@ pub async fn get_field(pool: &SqlitePool, field_id: &str) -> Result<Field> {
         required: row.try_get::<i64, _>("required")? != 0,
         is_status: row.try_get::<i64, _>("is_status")? != 0,
         position: row.try_get("position")?,
+        ref_entity: row.try_get("ref_entity")?,
+        computed_expr: row.try_get("computed_expr")?,
         options,
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn update_field(
     pool: &SqlitePool,
     field_id: &str,
@@ -1167,6 +1276,8 @@ pub async fn update_field(
     field_type: &str,
     required: bool,
     is_status: bool,
+    ref_entity: Option<&str>,
+    computed_expr: Option<&str>,
 ) -> Result<Field> {
     validate_field_name(name)?;
     validate_field_type(field_type)?;
@@ -1176,13 +1287,17 @@ pub async fn update_field(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("field not found: {field_id}")))?;
     validate_status_field(pool, &entity_id, Some(field_id), field_type, is_status).await?;
+    validate_reference_field(pool, &entity_id, field_type, ref_entity).await?;
+    validate_computed_field(field_type, computed_expr)?;
     let result = sqlx::query(
-        "UPDATE _meta_field SET name = ?, type = ?, required = ?, is_status = ? WHERE id = ?",
+        "UPDATE _meta_field SET name = ?, type = ?, required = ?, is_status = ?, ref_entity = ?, computed_expr = ? WHERE id = ?",
     )
     .bind(name)
     .bind(field_type)
     .bind(required as i64)
     .bind(is_status as i64)
+    .bind(ref_entity.map(str::trim).filter(|s| !s.is_empty()))
+    .bind(computed_expr.map(str::trim).filter(|s| !s.is_empty()))
     .bind(field_id)
     .execute(pool)
     .await?;
@@ -1318,10 +1433,119 @@ fn validate_field_name(name: &str) -> Result<()> {
 }
 
 fn validate_field_type(field_type: &str) -> Result<()> {
-    if !matches!(field_type, "text" | "number" | "date" | "select") {
+    if !matches!(
+        field_type,
+        "text"
+            | "number"
+            | "date"
+            | "select"
+            | "checkbox"
+            | "textarea"
+            | "currency"
+            | "reference"
+            | "computed"
+    ) {
         return Err(AppError::BadRequest(format!("invalid field type: {field_type}")).into());
     }
     Ok(())
+}
+
+async fn validate_reference_field(
+    pool: &SqlitePool,
+    entity_id: &str,
+    field_type: &str,
+    ref_entity: Option<&str>,
+) -> Result<()> {
+    if field_type != "reference" {
+        if ref_entity
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .is_some()
+        {
+            return Err(AppError::BadRequest(
+                "ref_entity is only valid for reference fields".into(),
+            )
+            .into());
+        }
+        return Ok(());
+    }
+    let target = ref_entity
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| AppError::BadRequest("reference fields require a ref_entity".into()))?;
+    if target == entity_id {
+        return Err(
+            AppError::BadRequest("reference field cannot point at its own entity".into()).into(),
+        );
+    }
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _meta_entity WHERE id = ?)")
+        .bind(target)
+        .fetch_one(pool)
+        .await?;
+    if !exists {
+        return Err(AppError::NotFound(format!("entity not found: {target}")).into());
+    }
+    Ok(())
+}
+
+fn validate_computed_field(field_type: &str, computed_expr: Option<&str>) -> Result<()> {
+    if field_type != "computed" {
+        if computed_expr
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .is_some()
+        {
+            return Err(AppError::BadRequest(
+                "computed_expr is only valid for computed fields".into(),
+            )
+            .into());
+        }
+        return Ok(());
+    }
+    let expr = computed_expr
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| AppError::BadRequest("computed fields require a computed_expr".into()))?;
+    if !expr.contains('{') || !expr.contains('}') {
+        return Err(AppError::BadRequest(
+            "computed_expr must reference fields like {title}".into(),
+        )
+        .into());
+    }
+    Ok(())
+}
+
+/// Template interpolation for computed fields: `{field_name}` placeholders
+/// are replaced with the payload value (missing = empty string).
+pub fn compute_field_value(expr: &str, payload: &Value) -> String {
+    let mut output = String::with_capacity(expr.len());
+    let mut rest = expr;
+    while let Some(start) = rest.find('{') {
+        output.push_str(&rest[..start]);
+        let after = &rest[start + 1..];
+        match after.find('}') {
+            Some(end) => {
+                let key = after[..end].trim();
+                let value = payload
+                    .get(key)
+                    .map(|v| match v {
+                        Value::String(s) => s.clone(),
+                        Value::Null => String::new(),
+                        other => other.to_string().trim_matches('"').to_string(),
+                    })
+                    .unwrap_or_default();
+                output.push_str(&value);
+                rest = &after[end + 1..];
+            }
+            None => {
+                output.push_str(&rest[start..]);
+                rest = "";
+                break;
+            }
+        }
+    }
+    output.push_str(rest);
+    output
 }
 
 async fn validate_status_field(
@@ -1416,10 +1640,13 @@ pub async fn get_document(pool: &SqlitePool, id: &str) -> Result<Document> {
             .await?
             .ok_or_else(|| AppError::NotFound(format!("document not found: {id}")))?;
     use sqlx::Row;
+    let entity_id: String = row.try_get("entity_id")?;
+    let payload: Value = serde_json::from_str(&row.try_get::<String, _>("payload")?)?;
+    let fields = list_fields(pool, &entity_id).await?;
     Ok(Document {
         id: row.try_get("id")?,
-        entity_id: row.try_get("entity_id")?,
-        payload: serde_json::from_str(&row.try_get::<String, _>("payload")?)?,
+        entity_id,
+        payload: apply_computed_fields(&fields, &payload),
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
     })
@@ -2180,10 +2407,11 @@ pub async fn list_documents_as_role(
     let mut items = Vec::new();
     for row in rows {
         let payload: Value = serde_json::from_str(&row.try_get::<String, _>("payload")?)?;
+        let with_computed = apply_computed_fields(&fields, &payload);
         items.push(Document {
             id: row.try_get("id")?,
             entity_id: row.try_get("entity_id")?,
-            payload: redact_payload(&payload, &viewable),
+            payload: redact_payload(&with_computed, &viewable),
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
         });
@@ -2938,6 +3166,17 @@ async fn validate_payload_for_role(
         .filter(|f| field_map.get(&f.name).copied().unwrap_or((true, true)).0)
         .collect();
     for field in &visible {
+        // Computed fields are derived on read; never accepted from clients.
+        if field.r#type == "computed" {
+            if object.contains_key(&field.name) {
+                return Err(AppError::BadRequest(format!(
+                    "computed field is read-only: {}",
+                    field.name
+                ))
+                .into());
+            }
+            continue;
+        }
         let value = object.get(&field.name);
         if field.required && value.is_none() {
             return Err(
@@ -2946,6 +3185,24 @@ async fn validate_payload_for_role(
         }
         if let Some(value) = value {
             validate_field_value(field, value)?;
+            if field.r#type == "reference" {
+                let target = field.ref_entity.as_deref().unwrap_or_default();
+                let doc_id = value.as_str().unwrap_or_default();
+                let exists: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM _doc WHERE id = ? AND entity_id = ?)",
+                )
+                .bind(doc_id)
+                .bind(target)
+                .fetch_one(pool)
+                .await?;
+                if !exists {
+                    return Err(AppError::BadRequest(format!(
+                        "unknown reference: {} is not a {target}",
+                        field.name
+                    ))
+                    .into());
+                }
+            }
         }
     }
     for key in object.keys() {
@@ -3060,10 +3317,12 @@ pub async fn viewable_field_names(
 
 fn validate_field_value(field: &Field, value: &Value) -> Result<()> {
     let valid = match field.r#type.as_str() {
-        "text" => value.is_string(),
-        "number" => value.is_number(),
-        "boolean" => value.is_boolean(),
+        "text" | "textarea" => value.is_string(),
+        "number" | "currency" => value.is_number(),
+        "checkbox" | "boolean" => value.is_boolean(),
         "date" => value.is_string(),
+        "reference" => value.is_string(),
+        "computed" => false,
         "select" => {
             value.is_string()
                 && field

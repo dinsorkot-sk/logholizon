@@ -191,6 +191,7 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
             axum::routing::post(confirm_workbook_import_for_user),
         )
         .route("/v1/entities/{id}", get(get_entity_for_user))
+        .route("/v1/entities/{id}/options", get(entity_options))
         .route("/v1/entities/{id}/workflow", get(get_workflow_for_user))
         .route("/v1/entities/{id}/views", get(list_entity_views_for_user))
         .route("/v1/views/{id}", get(get_entity_view_for_user))
@@ -292,6 +293,20 @@ async fn create_entity(
         .map_err(map_db_error)
 }
 
+async fn entity_options(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<repository::EntityOption>>, AppError> {
+    repository::check_permission(&state.pool, &id, &current_role(&user), false)
+        .await
+        .map_err(map_db_error)?;
+    repository::list_entity_options(&state.pool, &id, &current_role(&user))
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
 async fn get_entity(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -306,6 +321,8 @@ async fn get_entity(
 pub struct UpdateEntity {
     pub name: String,
     pub label: String,
+    #[serde(default)]
+    pub module: Option<String>,
 }
 
 async fn update_entity(
@@ -313,10 +330,16 @@ async fn update_entity(
     Path(id): Path<String>,
     Json(input): Json<UpdateEntity>,
 ) -> Result<Json<repository::Entity>, AppError> {
-    repository::update_entity(&state.pool, &id, &input.name, &input.label)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
+    repository::update_entity(
+        &state.pool,
+        &id,
+        &input.name,
+        &input.label,
+        input.module.as_deref(),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
 }
 
 async fn delete_entity(
@@ -337,6 +360,10 @@ pub struct CreateField {
     pub required: bool,
     #[serde(default)]
     pub is_status: bool,
+    #[serde(default)]
+    pub ref_entity: Option<String>,
+    #[serde(default)]
+    pub computed_expr: Option<String>,
 }
 
 async fn create_field(
@@ -351,6 +378,8 @@ async fn create_field(
         &input.r#type,
         input.required,
         input.is_status,
+        input.ref_entity.as_deref(),
+        input.computed_expr.as_deref(),
     )
     .await
     .map(|field| (StatusCode::CREATED, Json(field)))
@@ -365,6 +394,10 @@ pub struct UpdateField {
     pub required: bool,
     #[serde(default)]
     pub is_status: bool,
+    #[serde(default)]
+    pub ref_entity: Option<String>,
+    #[serde(default)]
+    pub computed_expr: Option<String>,
 }
 
 async fn update_field(
@@ -379,6 +412,8 @@ async fn update_field(
         &input.r#type,
         input.required,
         input.is_status,
+        input.ref_entity.as_deref(),
+        input.computed_expr.as_deref(),
     )
     .await
     .map(Json)

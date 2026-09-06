@@ -5,7 +5,7 @@ const open = ref(false)
 const commandOpen = ref(false)
 const { user, logout } = useAuth()
 const router = useRouter()
-const { data: entities, status, error, refresh } = await useFetch<{ id: string; label: string }[]>('/api/entities')
+const { data: entities, status, error, refresh } = await useFetch<{ id: string; label: string; module?: string | null }[]>('/api/entities')
 
 const isAdmin = computed(() => user.value?.role === 'admin')
 
@@ -27,11 +27,37 @@ const mainLinks = computed<NavigationMenuItem[]>(() => {
   return links
 })
 
-const entityLinks = computed<NavigationMenuItem[]>(() => (entities.value || []).map(e => ({
-  label: e.label,
-  icon: 'i-lucide-table',
-  to: `/app/${encodeURIComponent(e.id)}`
-})))
+const entityLinks = computed<NavigationMenuItem[]>(() => {
+  const groups = new Map<string, { id: string; label: string }[]>()
+  for (const e of entities.value || []) {
+    const module = (e.module || '').trim() || 'Other'
+    if (!groups.has(module)) groups.set(module, [])
+    groups.get(module)!.push(e)
+  }
+  const names = [...groups.keys()].sort((a, b) => {
+    if (a === 'Other') return 1
+    if (b === 'Other') return -1
+    return a.localeCompare(b)
+  })
+  if (names.length <= 1 && !names[0]) return []
+  // Single group without a real module name: keep the flat list.
+  if (names.length === 1 && names[0] === 'Other') {
+    return (groups.get('Other') || []).map(e => ({
+      label: e.label,
+      icon: 'i-lucide-table',
+      to: `/app/${encodeURIComponent(e.id)}`
+    }))
+  }
+  return names.map(name => ({
+    label: name,
+    icon: 'i-lucide-box',
+    children: (groups.get(name) || []).map(e => ({
+      label: e.label,
+      icon: 'i-lucide-table',
+      to: `/app/${encodeURIComponent(e.id)}`
+    }))
+  }))
+})
 
 // --- Command palette (⌘K) ---
 const commandGroups = computed<CommandPaletteGroup[]>(() => {
@@ -49,18 +75,26 @@ const commandGroups = computed<CommandPaletteGroup[]>(() => {
       { label: 'Settings', icon: 'i-lucide-settings', to: '/admin/settings', kbds: ['g', 's'] }
     )
   }
-  return [
-    { id: 'navigation', label: 'Navigation', items: nav },
-    {
-      id: 'entities',
-      label: 'Entities',
-      items: (entities.value || []).map(e => ({
+  const entityItems: CommandPaletteGroup['items'] = []
+  const modules = new Map<string, { id: string; label: string }[]>()
+  for (const e of entities.value || []) {
+    const module = (e.module || '').trim() || 'Other'
+    if (!modules.has(module)) modules.set(module, [])
+    modules.get(module)!.push(e)
+  }
+  for (const name of [...modules.keys()].sort()) {
+    for (const e of modules.get(name) || []) {
+      entityItems.push({
         label: e.label,
-        suffix: e.id,
+        suffix: name === 'Other' ? e.id : `${name} · ${e.id}`,
         icon: 'i-lucide-table',
         to: `/app/${encodeURIComponent(e.id)}`
-      }))
+      })
     }
+  }
+  return [
+    { id: 'navigation', label: 'Navigation', items: nav },
+    { id: 'entities', label: 'Entities', items: entityItems }
   ]
 })
 

@@ -62,7 +62,7 @@ async fn seed_is_idempotent() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(count, 2);
+    assert_eq!(count, 5);
 }
 
 #[tokio::test]

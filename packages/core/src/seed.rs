@@ -170,7 +170,314 @@ pub async fn seed(pool: &SqlitePool) -> Result<()> {
         sqlx::query("INSERT OR IGNORE INTO _workflow_transition (id, entity_id, from_state, to_state, action) VALUES (?, 'pm_schedule', ?, ?, ?)")
             .bind(id).bind(from_state).bind(to_state).bind(action).execute(&mut *tx).await?;
     }
+    seed_inventory_module(&mut tx).await?;
     tx.commit().await?;
+    Ok(())
+}
+
+/// Inventory sample module (proves the module builder end-to-end):
+/// `product` + `warehouse` entities linked from `stock_move` via reference
+/// fields, grouped under the "Stock" module in the sidebar.
+async fn seed_inventory_module(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>) -> Result<()> {
+    for (id, name, label, module) in [
+        ("product", "product", "Product", "Stock"),
+        ("warehouse", "warehouse", "Warehouse", "Stock"),
+        ("stock_move", "stock_move", "Stock Move", "Stock"),
+    ] {
+        sqlx::query(
+            "INSERT INTO _meta_entity (id, name, label, module) VALUES (?, ?, ?, ?) \
+             ON CONFLICT(id) DO UPDATE SET module = excluded.module",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(label)
+        .bind(module)
+        .execute(&mut **tx)
+        .await?;
+        for role in ["admin", "user"] {
+            sqlx::query(
+                "INSERT OR IGNORE INTO _entity_permission (entity_id, role, can_view, can_edit) VALUES (?, ?, 1, 1)",
+            )
+            .bind(id)
+            .bind(role)
+            .execute(&mut **tx)
+            .await?;
+        }
+    }
+    // (field_id, entity_id, name, type, required, is_status, ref_entity, computed_expr)
+    for (id, entity_id, name, field_type, required, is_status, ref_entity, computed_expr) in [
+        (
+            "product_title",
+            "product",
+            "title",
+            "text",
+            1,
+            0,
+            None,
+            None,
+        ),
+        ("product_sku", "product", "sku", "text", 1, 0, None, None),
+        (
+            "product_unit",
+            "product",
+            "unit",
+            "select",
+            0,
+            0,
+            None,
+            None,
+        ),
+        (
+            "product_reorder_level",
+            "product",
+            "reorder_level",
+            "number",
+            0,
+            0,
+            None,
+            None,
+        ),
+        (
+            "product_status",
+            "product",
+            "status",
+            "select",
+            1,
+            1,
+            None,
+            None,
+        ),
+        (
+            "product_summary",
+            "product",
+            "summary",
+            "computed",
+            0,
+            0,
+            None,
+            Some("{title} [{sku}]"),
+        ),
+        (
+            "warehouse_title",
+            "warehouse",
+            "title",
+            "text",
+            1,
+            0,
+            None,
+            None,
+        ),
+        (
+            "warehouse_location",
+            "warehouse",
+            "location",
+            "text",
+            0,
+            0,
+            None,
+            None,
+        ),
+        (
+            "warehouse_status",
+            "warehouse",
+            "status",
+            "select",
+            1,
+            1,
+            None,
+            None,
+        ),
+        (
+            "stock_move_product",
+            "stock_move",
+            "product",
+            "reference",
+            1,
+            0,
+            Some("product"),
+            None,
+        ),
+        (
+            "stock_move_warehouse",
+            "stock_move",
+            "warehouse",
+            "reference",
+            1,
+            0,
+            Some("warehouse"),
+            None,
+        ),
+        (
+            "stock_move_qty",
+            "stock_move",
+            "qty",
+            "number",
+            1,
+            0,
+            None,
+            None,
+        ),
+        (
+            "stock_move_move_type",
+            "stock_move",
+            "move_type",
+            "select",
+            1,
+            0,
+            None,
+            None,
+        ),
+        (
+            "stock_move_status",
+            "stock_move",
+            "status",
+            "select",
+            1,
+            1,
+            None,
+            None,
+        ),
+    ] {
+        let id: &str = id;
+        let entity_id: &str = entity_id;
+        let name: &str = name;
+        let field_type: &str = field_type;
+        let ref_entity: Option<&str> = ref_entity;
+        let computed_expr: Option<&str> = computed_expr;
+        sqlx::query(
+            "INSERT INTO _meta_field (id, entity_id, name, type, required, is_status, ref_entity, computed_expr) VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(id) DO UPDATE SET ref_entity = excluded.ref_entity, computed_expr = excluded.computed_expr",
+        )
+        .bind(id)
+        .bind(entity_id)
+        .bind(name)
+        .bind(field_type)
+        .bind(required)
+        .bind(is_status)
+        .bind(ref_entity)
+        .bind(computed_expr)
+        .execute(&mut **tx)
+        .await?;
+        for role in ["admin", "user"] {
+            sqlx::query(
+                "INSERT OR IGNORE INTO _field_permission (field_id, role, can_view, can_edit) VALUES (?, ?, 1, 1)",
+            )
+            .bind(id)
+            .bind(role)
+            .execute(&mut **tx)
+            .await?;
+        }
+    }
+    for (id, field_id, value, label) in [
+        ("product_unit_pcs", "product_unit", "pcs", "Pieces"),
+        ("product_unit_box", "product_unit", "box", "Box"),
+        ("product_unit_kg", "product_unit", "kg", "Kilograms"),
+        (
+            "product_status_active",
+            "product_status",
+            "active",
+            "Active",
+        ),
+        (
+            "product_status_discontinued",
+            "product_status",
+            "discontinued",
+            "Discontinued",
+        ),
+        (
+            "warehouse_status_active",
+            "warehouse_status",
+            "active",
+            "Active",
+        ),
+        (
+            "warehouse_status_closed",
+            "warehouse_status",
+            "closed",
+            "Closed",
+        ),
+        (
+            "stock_move_move_type_in",
+            "stock_move_move_type",
+            "in",
+            "Stock In",
+        ),
+        (
+            "stock_move_move_type_out",
+            "stock_move_move_type",
+            "out",
+            "Stock Out",
+        ),
+        (
+            "stock_move_status_draft",
+            "stock_move_status",
+            "draft",
+            "Draft",
+        ),
+        (
+            "stock_move_status_confirmed",
+            "stock_move_status",
+            "confirmed",
+            "Confirmed",
+        ),
+        (
+            "stock_move_status_done",
+            "stock_move_status",
+            "done",
+            "Done",
+        ),
+    ] {
+        sqlx::query("INSERT OR IGNORE INTO _meta_field_option (id, field_id, value, label) VALUES (?, ?, ?, ?)")
+            .bind(id)
+            .bind(field_id)
+            .bind(value)
+            .bind(label)
+            .execute(&mut **tx)
+            .await?;
+    }
+    for (id, entity_id, name, label, position) in [
+        ("product_active", "product", "active", "Active", 0),
+        (
+            "product_discontinued",
+            "product",
+            "discontinued",
+            "Discontinued",
+            1,
+        ),
+        ("warehouse_active", "warehouse", "active", "Active", 0),
+        ("warehouse_closed", "warehouse", "closed", "Closed", 1),
+        ("stock_move_draft", "stock_move", "draft", "Draft", 0),
+        (
+            "stock_move_confirmed",
+            "stock_move",
+            "confirmed",
+            "Confirmed",
+            1,
+        ),
+        ("stock_move_done", "stock_move", "done", "Done", 2),
+    ] {
+        sqlx::query("INSERT OR IGNORE INTO _workflow_state (id, entity_id, name, label, position) VALUES (?, ?, ?, ?, ?)")
+            .bind(id).bind(entity_id).bind(name).bind(label).bind(position).execute(&mut **tx).await?;
+    }
+    for (id, entity_id, from_state, to_state, action) in [
+        (
+            "stock_move_confirm",
+            "stock_move",
+            "draft",
+            "confirmed",
+            "confirm",
+        ),
+        (
+            "stock_move_receive",
+            "stock_move",
+            "confirmed",
+            "done",
+            "done",
+        ),
+    ] {
+        sqlx::query("INSERT OR IGNORE INTO _workflow_transition (id, entity_id, from_state, to_state, action) VALUES (?, ?, ?, ?, ?)")
+            .bind(id).bind(entity_id).bind(from_state).bind(to_state).bind(action).execute(&mut **tx).await?;
+    }
     Ok(())
 }
 

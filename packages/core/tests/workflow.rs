@@ -221,12 +221,13 @@ async fn status_field_name_is_metadata_driven() {
     repository::create_entity(&pool, "ticket", "ticket", "Ticket")
         .await
         .unwrap();
-    repository::create_field(&pool, "ticket", "title", "text", true, false)
+    repository::create_field(&pool, "ticket", "title", "text", true, false, None, None)
         .await
         .unwrap();
-    let state = repository::create_field(&pool, "ticket", "state", "select", true, true)
-        .await
-        .unwrap();
+    let state =
+        repository::create_field(&pool, "ticket", "state", "select", true, true, None, None)
+            .await
+            .unwrap();
     assert!(state.is_status);
     for (value, label) in [("new", "New"), ("open", "Open"), ("closed", "Closed")] {
         repository::create_field_option(&pool, &state.id, value, label)
@@ -444,7 +445,7 @@ async fn entity_without_status_field_rejects_transition() {
     repository::create_entity(&pool, "note", "note", "Note")
         .await
         .unwrap();
-    repository::create_field(&pool, "note", "body", "text", false, false)
+    repository::create_field(&pool, "note", "body", "text", false, false, None, None)
         .await
         .unwrap();
     repository::create_document(&pool, "n-1", "note", &json!({"body": "hello"}), None)

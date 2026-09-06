@@ -79,7 +79,7 @@ async fn admin_status_reports_counts() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["entities"], 2);
+    assert_eq!(json["entities"], 5);
     assert_eq!(json["integrity"], true);
 }
 

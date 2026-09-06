@@ -10,7 +10,8 @@ const UCheckbox = resolveComponent('UCheckbox')
 const UBadge = resolveComponent('UBadge')
 
 type FieldOption = { id: string; value: string; label: string }
-type Field = { id: string; name: string; type: string; required: boolean; is_status: boolean; options: FieldOption[]; can_view?: boolean; can_edit?: boolean }
+type Field = { id: string; name: string; type: string; required: boolean; is_status: boolean; ref_entity?: string | null; computed_expr?: string | null; options: FieldOption[]; can_view?: boolean; can_edit?: boolean }
+type EntityOption = { id: string; label: string }
 type EntityPermission = { role: string; can_view: boolean; can_edit: boolean }
 type Entity = { id: string; name: string; label: string; fields: Field[]; permission?: EntityPermission }
 type Document = { id: string; entity_id: string; payload: Record<string, unknown>; created_at: string; updated_at: string }
@@ -119,6 +120,25 @@ const { data: entity, status: entityStatus, error: entityError } = await useFetc
 )
 const canEdit = computed(() => entity.value?.permission?.can_edit ?? true)
 const viewableFields = computed(() => (entity.value?.fields || []).filter(f => f.can_view ?? true))
+// Reference dropdown options, keyed by target entity id.
+const refOptions = ref<Record<string, EntityOption[]>>({})
+async function loadRefOptions(field: Field) {
+  const target = field.ref_entity
+  if (field.type !== 'reference' || !target || refOptions.value[target]) return
+  try {
+    refOptions.value[target] = await $fetch<EntityOption[]>(`/api/entities/${encodeURIComponent(target)}/options`)
+  } catch {
+    refOptions.value[target] = []
+  }
+}
+watch(viewableFields, (fields) => {
+  fields.filter(f => f.type === 'reference').forEach(loadRefOptions)
+}, { immediate: true })
+function refLabel(field: Field, value: unknown) {
+  if (value === '' || value === null || value === undefined) return '—'
+  const options = field.ref_entity ? refOptions.value[field.ref_entity] || [] : []
+  return options.find(o => o.id === value)?.label || String(value)
+}
 const editableFields = computed(() => viewableFields.value.filter(f => f.can_edit ?? true))
 const formFields = computed(() => viewableFields.value.filter(f => !f.is_status))
 function isFieldEditable(name: string) {
@@ -341,6 +361,8 @@ function fieldLabel(field: Field, value: unknown) {
     const option = field.options.find(o => o.value === value)
     return option?.label || String(value)
   }
+  if (field.type === 'reference') return refLabel(field, value)
+  if (field.type === 'checkbox') return value ? 'Yes' : 'No'
   return String(value)
 }
 
@@ -852,7 +874,7 @@ async function confirmImport() {
                   :label="field.name"
                   :required="field.required"
                   :error="fieldErrors[field.name]"
-                  :hint="isFieldEditable(field.name) ? undefined : 'View only'"
+                  :hint="field.type === 'computed' ? 'Computed automatically' : isFieldEditable(field.name) ? undefined : 'View only'"
                 >
                   <USelectMenu
                     v-if="field.type === 'select' && !field.is_status"
@@ -863,7 +885,28 @@ async function confirmImport() {
                     class="w-full"
                     :disabled="!isFieldEditable(field.name)"
                   />
-                  <UInput v-else v-model="payload[field.name] as string" :disabled="!isFieldEditable(field.name)" :type="field.type === 'date' ? 'date' : field.type === 'number' ? 'number' : 'text'" />
+                  <USelectMenu
+                    v-else-if="field.type === 'reference'"
+                    v-model="payload[field.name] as string"
+                    :items="(field.ref_entity ? refOptions[field.ref_entity] || [] : []).map(o => ({ label: o.label, value: o.id }))"
+                    value-key="value"
+                    placeholder="Select…"
+                    class="w-full"
+                    :disabled="!isFieldEditable(field.name)"
+                  />
+                  <UCheckbox
+                    v-else-if="field.type === 'checkbox'"
+                    v-model="payload[field.name] as boolean"
+                    :disabled="!isFieldEditable(field.name)"
+                  />
+                  <UTextarea
+                    v-else-if="field.type === 'textarea'"
+                    v-model="payload[field.name] as string"
+                    :disabled="!isFieldEditable(field.name)"
+                    class="w-full"
+                  />
+                  <UInput v-else-if="field.type === 'computed'" :model-value="String(payload[field.name] ?? '')" disabled />
+                  <UInput v-else v-model="payload[field.name] as string" :disabled="!isFieldEditable(field.name)" :type="field.type === 'date' ? 'date' : field.type === 'number' || field.type === 'currency' ? 'number' : 'text'" />
                 </UFormField>
               </div>
             </template>
@@ -874,7 +917,7 @@ async function confirmImport() {
                 :label="field.name"
                 :required="field.required"
                 :error="fieldErrors[field.name]"
-                :hint="isFieldEditable(field.name) ? undefined : 'View only'"
+                :hint="field.type === 'computed' ? 'Computed automatically' : isFieldEditable(field.name) ? undefined : 'View only'"
               >
                 <USelectMenu
                   v-if="field.type === 'select' && !field.is_status"
@@ -885,7 +928,28 @@ async function confirmImport() {
                   class="w-full"
                   :disabled="!isFieldEditable(field.name)"
                 />
-                <UInput v-else v-model="payload[field.name] as string" :disabled="!isFieldEditable(field.name)" :type="field.type === 'date' ? 'date' : field.type === 'number' ? 'number' : 'text'" />
+                <USelectMenu
+                  v-else-if="field.type === 'reference'"
+                  v-model="payload[field.name] as string"
+                  :items="(field.ref_entity ? refOptions[field.ref_entity] || [] : []).map(o => ({ label: o.label, value: o.id }))"
+                  value-key="value"
+                  placeholder="Select…"
+                  class="w-full"
+                  :disabled="!isFieldEditable(field.name)"
+                />
+                <UCheckbox
+                  v-else-if="field.type === 'checkbox'"
+                  v-model="payload[field.name] as boolean"
+                  :disabled="!isFieldEditable(field.name)"
+                />
+                <UTextarea
+                  v-else-if="field.type === 'textarea'"
+                  v-model="payload[field.name] as string"
+                  :disabled="!isFieldEditable(field.name)"
+                  class="w-full"
+                />
+                <UInput v-else-if="field.type === 'computed'" :model-value="String(payload[field.name] ?? '')" disabled />
+                <UInput v-else v-model="payload[field.name] as string" :disabled="!isFieldEditable(field.name)" :type="field.type === 'date' ? 'date' : field.type === 'number' || field.type === 'currency' ? 'number' : 'text'" />
               </UFormField>
             </template>
             <UAlert v-if="error" color="error" :title="error" />

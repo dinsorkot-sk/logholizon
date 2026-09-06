@@ -111,3 +111,11 @@ Next ([`docs/plans/2026-09-06-next-roadmap.md`](docs/plans/2026-09-06-next-roadm
 - [x] Visual builder (form layout designer: sections, field ordering, live preview)
 - [x] Notifications (webhook-first: rules, outbox, retry, delivery log)
 - [x] Reporting & analytics (saved reports, charts, aggregation in core)
+
+Module builder ([`docs/plans/2026-09-06-module-builder.md`](docs/plans/2026-09-06-module-builder.md)):
+
+- [x] Reference fields (link entities, options endpoint, existence validation)
+- [x] Field types (checkbox, textarea, currency)
+- [x] Computed fields (template interpolation, evaluated on read)
+- [x] Module grouping (sidebar + command palette)
+- [x] Inventory sample module (product, warehouse, stock_move)

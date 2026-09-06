@@ -1,4 +1,6 @@
-export type CoreEntity = { id: string; name: string; label: string }
+export type CoreEntity = { id: string; name: string; label: string; module?: string | null }
+
+export type CoreEntityOption = { id: string; label: string }
 
 export type CoreUser = { id: string; username: string; role: string }
 export type CoreSession = { token: string; user: CoreUser }
@@ -13,6 +15,8 @@ export type CoreField = {
   required: boolean
   is_status: boolean
   position: number
+  ref_entity?: string | null
+  computed_expr?: string | null
   options: CoreFieldOption[]
 }
 
@@ -210,21 +214,23 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
         method: 'POST',
         body: entity
       }),
-    updateEntity: (id: string, entity: { name: string; label: string }): Promise<CoreEntity> =>
+    updateEntity: (id: string, entity: { name: string; label: string; module?: string | null }): Promise<CoreEntity> =>
       request<CoreEntity>(`/v1/meta/entities/${encodeURIComponent(id)}`, {
         method: 'PUT',
         body: entity
       }),
+    getEntityOptions: (id: string): Promise<CoreEntityOption[]> =>
+      request<CoreEntityOption[]>(`/v1/entities/${encodeURIComponent(id)}/options`),
     deleteEntity: (id: string): Promise<void> =>
       request<void>(`/v1/meta/entities/${encodeURIComponent(id)}`, {
         method: 'DELETE'
       }),
-    createField: (entityId: string, field: { name: string; type: string; required: boolean; is_status: boolean }): Promise<CoreField> =>
+    createField: (entityId: string, field: { name: string; type: string; required: boolean; is_status: boolean; ref_entity?: string | null; computed_expr?: string | null }): Promise<CoreField> =>
       request<CoreField>(`/v1/meta/entities/${encodeURIComponent(entityId)}/fields`, {
         method: 'POST',
         body: field
       }),
-    updateField: (id: string, field: { name: string; type: string; required: boolean; is_status: boolean }): Promise<CoreField> =>
+    updateField: (id: string, field: { name: string; type: string; required: boolean; is_status: boolean; ref_entity?: string | null; computed_expr?: string | null }): Promise<CoreField> =>
       request<CoreField>(`/v1/meta/fields/${encodeURIComponent(id)}`, {
         method: 'PUT',
         body: field

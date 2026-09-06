@@ -12,17 +12,35 @@ async fn setup() -> sqlx::SqlitePool {
 #[tokio::test]
 async fn field_crud_orders_by_position() {
     let pool = setup().await;
-    let title = repository::create_field(&pool, "work_order", "title", "text", true, false)
-        .await
-        .unwrap();
+    let title = repository::create_field(
+        &pool,
+        "work_order",
+        "title",
+        "text",
+        true,
+        false,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(title.name, "title");
     assert!(title.required);
     assert!(!title.is_status);
     assert_eq!(title.position, 0);
 
-    let status = repository::create_field(&pool, "work_order", "status", "select", true, true)
-        .await
-        .unwrap();
+    let status = repository::create_field(
+        &pool,
+        "work_order",
+        "status",
+        "select",
+        true,
+        true,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(status.position, 1);
     assert!(status.is_status);
 
@@ -32,9 +50,10 @@ async fn field_crud_orders_by_position() {
     assert_eq!(fields[1].name, "status");
 
     // update field
-    let updated = repository::update_field(&pool, &title.id, "title", "text", false, false)
-        .await
-        .unwrap();
+    let updated =
+        repository::update_field(&pool, &title.id, "title", "text", false, false, None, None)
+            .await
+            .unwrap();
     assert!(!updated.required);
 
     // delete field cascades options
@@ -118,12 +137,30 @@ async fn permissions_crud_and_check() {
 #[tokio::test]
 async fn field_permissions_crud_and_check() {
     let pool = setup().await;
-    let title = repository::create_field(&pool, "work_order", "title", "text", true, false)
-        .await
-        .unwrap();
-    let priority = repository::create_field(&pool, "work_order", "priority", "text", false, false)
-        .await
-        .unwrap();
+    let title = repository::create_field(
+        &pool,
+        "work_order",
+        "title",
+        "text",
+        true,
+        false,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let priority = repository::create_field(
+        &pool,
+        "work_order",
+        "priority",
+        "text",
+        false,
+        false,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     // Default: both roles can view and edit every field.
     let perms = repository::get_field_permissions(&pool, "work_order")
@@ -184,9 +221,10 @@ async fn field_permissions_crud_and_check() {
     repository::create_entity(&pool, "other", "other", "Other")
         .await
         .unwrap();
-    let other_field = repository::create_field(&pool, "other", "note", "text", false, false)
-        .await
-        .unwrap();
+    let other_field =
+        repository::create_field(&pool, "other", "note", "text", false, false, None, None)
+            .await
+            .unwrap();
     assert!(repository::update_field_permissions(
         &pool,
         "work_order",
@@ -205,15 +243,42 @@ async fn field_permissions_crud_and_check() {
 async fn field_permissions_enforce_on_documents() {
     use serde_json::json;
     let pool = setup().await;
-    let title = repository::create_field(&pool, "work_order", "title", "text", true, false)
-        .await
-        .unwrap();
-    let secret = repository::create_field(&pool, "work_order", "secret", "text", false, false)
-        .await
-        .unwrap();
-    let note = repository::create_field(&pool, "work_order", "note", "text", false, false)
-        .await
-        .unwrap();
+    let title = repository::create_field(
+        &pool,
+        "work_order",
+        "title",
+        "text",
+        true,
+        false,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let secret = repository::create_field(
+        &pool,
+        "work_order",
+        "secret",
+        "text",
+        false,
+        false,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let note = repository::create_field(
+        &pool,
+        "work_order",
+        "note",
+        "text",
+        false,
+        false,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     // secret hidden, note view-only for users.
     repository::update_field_permissions(
@@ -361,12 +426,30 @@ async fn views_crud() {
 #[tokio::test]
 async fn form_layout_crud_and_validation() {
     let pool = setup().await;
-    let title = repository::create_field(&pool, "work_order", "title", "text", true, false)
-        .await
-        .unwrap();
-    let note = repository::create_field(&pool, "work_order", "note", "text", false, false)
-        .await
-        .unwrap();
+    let title = repository::create_field(
+        &pool,
+        "work_order",
+        "title",
+        "text",
+        true,
+        false,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let note = repository::create_field(
+        &pool,
+        "work_order",
+        "note",
+        "text",
+        false,
+        false,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     // Default: empty config when no layout saved yet.
     let layout = repository::get_entity_form_layout(&pool, "work_order")
@@ -434,28 +517,51 @@ async fn field_validation_rejects_bad_input() {
     let pool = setup().await;
     // invalid type
     assert!(
-        repository::create_field(&pool, "work_order", "bad", "json", false, false)
+        repository::create_field(&pool, "work_order", "bad", "json", false, false, None, None)
             .await
             .is_err()
     );
     // invalid name (uppercase / spaces)
-    assert!(
-        repository::create_field(&pool, "work_order", "Bad Name", "text", false, false)
-            .await
-            .is_err()
-    );
+    assert!(repository::create_field(
+        &pool,
+        "work_order",
+        "Bad Name",
+        "text",
+        false,
+        false,
+        None,
+        None
+    )
+    .await
+    .is_err());
     // duplicate name
-    repository::create_field(&pool, "work_order", "title", "text", false, false)
-        .await
-        .unwrap();
-    assert!(
-        repository::create_field(&pool, "work_order", "title", "text", false, false)
-            .await
-            .is_err()
-    );
+    repository::create_field(
+        &pool,
+        "work_order",
+        "title",
+        "text",
+        false,
+        false,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(repository::create_field(
+        &pool,
+        "work_order",
+        "title",
+        "text",
+        false,
+        false,
+        None,
+        None
+    )
+    .await
+    .is_err());
     // field on missing entity
     assert!(
-        repository::create_field(&pool, "missing", "title", "text", false, false)
+        repository::create_field(&pool, "missing", "title", "text", false, false, None, None)
             .await
             .is_err()
     );
@@ -465,44 +571,91 @@ async fn field_validation_rejects_bad_input() {
 async fn status_field_validation() {
     let pool = setup().await;
     // is_status requires type select
-    let err = repository::create_field(&pool, "work_order", "state", "text", false, true)
-        .await
-        .unwrap_err();
+    let err = repository::create_field(
+        &pool,
+        "work_order",
+        "state",
+        "text",
+        false,
+        true,
+        None,
+        None,
+    )
+    .await
+    .unwrap_err();
     assert!(err
         .to_string()
         .contains("status field must be of type select"));
 
     // first status field is allowed
-    let status = repository::create_field(&pool, "work_order", "status", "select", true, true)
-        .await
-        .unwrap();
+    let status = repository::create_field(
+        &pool,
+        "work_order",
+        "status",
+        "select",
+        true,
+        true,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     assert!(status.is_status);
 
     // second status field in the same entity is rejected
-    let err = repository::create_field(&pool, "work_order", "state", "select", false, true)
-        .await
-        .unwrap_err();
+    let err = repository::create_field(
+        &pool,
+        "work_order",
+        "state",
+        "select",
+        false,
+        true,
+        None,
+        None,
+    )
+    .await
+    .unwrap_err();
     assert!(err.to_string().contains("already has a status field"));
 
     // updating the existing status field to is_status=false is allowed
-    let updated = repository::update_field(&pool, &status.id, "status", "select", true, false)
-        .await
-        .unwrap();
+    let updated = repository::update_field(
+        &pool, &status.id, "status", "select", true, false, None, None,
+    )
+    .await
+    .unwrap();
     assert!(!updated.is_status);
 
     // now a different field can become the status field
-    let state = repository::create_field(&pool, "work_order", "state", "select", false, true)
-        .await
-        .unwrap();
+    let state = repository::create_field(
+        &pool,
+        "work_order",
+        "state",
+        "select",
+        false,
+        true,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     assert!(state.is_status);
 }
 
 #[tokio::test]
 async fn option_crud_and_last_option_guard() {
     let pool = setup().await;
-    let status = repository::create_field(&pool, "work_order", "status", "select", true, true)
-        .await
-        .unwrap();
+    let status = repository::create_field(
+        &pool,
+        "work_order",
+        "status",
+        "select",
+        true,
+        true,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     let open = repository::create_field_option(&pool, &status.id, "open", "Open")
         .await
         .unwrap();
@@ -531,9 +684,187 @@ async fn option_crud_and_last_option_guard() {
 }
 
 #[tokio::test]
+async fn reference_field_validation() {
+    use serde_json::json;
+    let pool = setup().await;
+    repository::create_entity(&pool, "product", "product", "Product")
+        .await
+        .unwrap();
+    repository::create_field(&pool, "product", "title", "text", true, false, None, None)
+        .await
+        .unwrap();
+    repository::create_document(&pool, "p1", "product", &json!({"title": "Pump"}), None)
+        .await
+        .unwrap();
+
+    // Reference without target rejected.
+    assert!(repository::create_field(
+        &pool,
+        "work_order",
+        "part",
+        "reference",
+        false,
+        false,
+        None,
+        None
+    )
+    .await
+    .is_err());
+    // Reference to missing entity rejected.
+    assert!(repository::create_field(
+        &pool,
+        "work_order",
+        "part",
+        "reference",
+        false,
+        false,
+        Some("nope"),
+        None
+    )
+    .await
+    .is_err());
+    // Reference to self rejected.
+    assert!(repository::create_field(
+        &pool,
+        "work_order",
+        "part",
+        "reference",
+        false,
+        false,
+        Some("work_order"),
+        None
+    )
+    .await
+    .is_err());
+    // ref_entity on non-reference type rejected.
+    assert!(repository::create_field(
+        &pool,
+        "work_order",
+        "note",
+        "text",
+        false,
+        false,
+        Some("product"),
+        None
+    )
+    .await
+    .is_err());
+
+    let part = repository::create_field(
+        &pool,
+        "work_order",
+        "part",
+        "reference",
+        false,
+        false,
+        Some("product"),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(part.ref_entity.as_deref(), Some("product"));
+
+    // Payload referencing a missing doc rejected.
+    assert!(repository::create_document(
+        &pool,
+        "w1",
+        "work_order",
+        &json!({"part": "missing"}),
+        None
+    )
+    .await
+    .is_err());
+    // Payload referencing an existing doc accepted.
+    repository::create_document(&pool, "w1", "work_order", &json!({"part": "p1"}), None)
+        .await
+        .unwrap();
+
+    // Options endpoint resolves labels.
+    let options = repository::list_entity_options(&pool, "product", "admin")
+        .await
+        .unwrap();
+    assert_eq!(options.len(), 1);
+    assert_eq!(options[0].id, "p1");
+    assert_eq!(options[0].label, "Pump");
+}
+
+#[tokio::test]
+async fn new_field_types_validate() {
+    use serde_json::json;
+    let pool = setup().await;
+    for (name, field_type) in [
+        ("done", "checkbox"),
+        ("notes", "textarea"),
+        ("price", "currency"),
+    ] {
+        let field = repository::create_field(
+            &pool,
+            "work_order",
+            name,
+            field_type,
+            false,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(field.r#type, field_type);
+    }
+    repository::create_document(
+        &pool,
+        "w1",
+        "work_order",
+        &json!({"done": true, "notes": "hello", "price": 9.5}),
+        None,
+    )
+    .await
+    .unwrap();
+    // Wrong JSON types rejected.
+    assert!(
+        repository::create_document(&pool, "w2", "work_order", &json!({"done": "yes"}), None)
+            .await
+            .is_err()
+    );
+    assert!(repository::create_document(
+        &pool,
+        "w3",
+        "work_order",
+        &json!({"price": "free"}),
+        None
+    )
+    .await
+    .is_err());
+}
+
+#[tokio::test]
+async fn entity_module_roundtrip() {
+    let pool = setup().await;
+    let entities = repository::list_entities(&pool).await.unwrap();
+    assert!(entities.iter().all(|e| e.module.is_none()));
+    let updated = repository::update_entity(
+        &pool,
+        "work_order",
+        "work_order",
+        "Work Order",
+        Some("Stock"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(updated.module.as_deref(), Some("Stock"));
+    let entities = repository::list_entities(&pool).await.unwrap();
+    let work_order = entities.iter().find(|e| e.id == "work_order").unwrap();
+    assert_eq!(work_order.module.as_deref(), Some("Stock"));
+    let detail = repository::get_entity_detail(&pool, "work_order")
+        .await
+        .unwrap();
+    assert_eq!(detail.module.as_deref(), Some("Stock"));
+}
+
+#[tokio::test]
 async fn entity_update_and_delete_guards() {
     let pool = setup().await;
-    let updated = repository::update_entity(&pool, "work_order", "work_order", "Work Orders")
+    let updated = repository::update_entity(&pool, "work_order", "work_order", "Work Orders", None)
         .await
         .unwrap();
     assert_eq!(updated.label, "Work Orders");
@@ -548,9 +879,18 @@ async fn entity_update_and_delete_guards() {
 
     // delete entity with documents is rejected
     let pool = setup().await;
-    repository::create_field(&pool, "work_order", "title", "text", false, false)
-        .await
-        .unwrap();
+    repository::create_field(
+        &pool,
+        "work_order",
+        "title",
+        "text",
+        false,
+        false,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     repository::create_document(
         &pool,
         "doc-1",

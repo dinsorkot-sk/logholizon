@@ -24,6 +24,63 @@ async fn seeded_pool() -> sqlx::SqlitePool {
 }
 
 #[tokio::test]
+async fn computed_field_interpolates_on_read() {
+    use logholizon_core::seed;
+    let pool = db::connect("sqlite::memory:").await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    seed::seed(&pool).await.unwrap();
+    repository::create_field(
+        &pool,
+        "work_order",
+        "summary",
+        "computed",
+        false,
+        false,
+        None,
+        Some("{title} [{status}]"),
+    )
+    .await
+    .unwrap();
+
+    // Incoming computed keys are rejected.
+    assert!(repository::create_document(
+        &pool,
+        "w1",
+        "work_order",
+        &json!({"title": "Pump", "status": "draft", "summary": "x"}),
+        None,
+    )
+    .await
+    .is_err());
+
+    repository::create_document(
+        &pool,
+        "w1",
+        "work_order",
+        &json!({"title": "Pump", "status": "draft"}),
+        None,
+    )
+    .await
+    .unwrap();
+    let doc = repository::get_document(&pool, "w1").await.unwrap();
+    assert_eq!(doc.payload["summary"], "Pump [draft]");
+
+    // Computed without expr rejected.
+    assert!(repository::create_field(
+        &pool,
+        "work_order",
+        "bad",
+        "computed",
+        false,
+        false,
+        None,
+        None
+    )
+    .await
+    .is_err());
+}
+
+#[tokio::test]
 async fn document_crud_validates_payload() {
     let pool = seeded_pool().await;
     let doc =

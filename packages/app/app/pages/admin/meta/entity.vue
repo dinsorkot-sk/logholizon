@@ -7,9 +7,9 @@ import type { TableColumn } from '@nuxt/ui'
 const UButton = resolveComponent('UButton')
 const UBadge = resolveComponent('UBadge')
 
-type Entity = { id: string; name: string; label: string }
+type Entity = { id: string; name: string; label: string; module?: string | null }
 type FieldOption = { id: string; value: string; label: string }
-type Field = { id: string; name: string; type: string; required: boolean; is_status: boolean; position: number; options: FieldOption[] }
+type Field = { id: string; name: string; type: string; required: boolean; is_status: boolean; position: number; ref_entity?: string | null; computed_expr?: string | null; options: FieldOption[] }
 type EntityDetail = Entity & { fields: Field[] }
 type WorkflowState = { id: string; name: string; label: string; position: number }
 type WorkflowTransition = { id: string; action: string; from_state: string; to_state: string }
@@ -62,7 +62,12 @@ const typeItems = [
   { label: 'Text', value: 'text', icon: 'i-lucide-type' },
   { label: 'Number', value: 'number', icon: 'i-lucide-hash' },
   { label: 'Date', value: 'date', icon: 'i-lucide-calendar' },
-  { label: 'Select', value: 'select', icon: 'i-lucide-chevrons-up-down' }
+  { label: 'Select', value: 'select', icon: 'i-lucide-chevrons-up-down' },
+  { label: 'Checkbox', value: 'checkbox', icon: 'i-lucide-square-check' },
+  { label: 'Textarea', value: 'textarea', icon: 'i-lucide-align-left' },
+  { label: 'Currency', value: 'currency', icon: 'i-lucide-dollar-sign' },
+  { label: 'Reference', value: 'reference', icon: 'i-lucide-link' },
+  { label: 'Computed', value: 'computed', icon: 'i-lucide-function-square' }
 ]
 
 function typeBadgeColor(type: string) {
@@ -70,6 +75,10 @@ function typeBadgeColor(type: string) {
     case 'text': return 'info'
     case 'select': return 'primary'
     case 'number': return 'warning'
+    case 'checkbox': return 'success'
+    case 'currency': return 'success'
+    case 'reference': return 'info'
+    case 'computed': return 'neutral'
     default: return 'neutral'
   }
 }
@@ -469,7 +478,7 @@ async function createEntity() {
 
 // --- Edit entity ---
 const editOpen = ref(false)
-const editForm = reactive({ name: '', label: '' })
+const editForm = reactive({ name: '', label: '', module: '' })
 const editing = ref(false)
 const editError = ref('')
 
@@ -477,6 +486,7 @@ function openEditEntity() {
   if (!detail.value) return
   editForm.name = detail.value.name
   editForm.label = detail.value.label
+  editForm.module = detail.value.module || ''
   editError.value = ''
   editOpen.value = true
 }
@@ -533,7 +543,7 @@ async function removeEntity() {
 // --- Field editor ---
 const fieldOpen = ref(false)
 const editingField = ref<Field | null>(null)
-const fieldForm = reactive({ name: '', type: 'text', required: false, is_status: false })
+const fieldForm = reactive({ name: '', type: 'text', required: false, is_status: false, ref_entity: '', computed_expr: '' })
 const fieldError = ref('')
 const savingField = ref(false)
 const newOption = reactive({ value: '', label: '' })
@@ -550,6 +560,8 @@ function openAddField() {
   fieldForm.type = 'text'
   fieldForm.required = false
   fieldForm.is_status = false
+  fieldForm.ref_entity = ''
+  fieldForm.computed_expr = ''
   fieldError.value = ''
   optionError.value = ''
   newOption.value = ''
@@ -563,6 +575,8 @@ function openEditField(field: Field) {
   fieldForm.type = field.type
   fieldForm.required = field.required
   fieldForm.is_status = field.is_status
+  fieldForm.ref_entity = field.ref_entity || ''
+  fieldForm.computed_expr = field.computed_expr || ''
   fieldError.value = ''
   optionError.value = ''
   newOption.value = ''
@@ -586,7 +600,7 @@ async function saveField() {
     if (editingField.value) {
       await $fetch(`/api/meta/fields/${encodeURIComponent(editingField.value.id)}`, {
         method: 'PUT',
-        body: { name: fieldForm.name, type: fieldForm.type, required: fieldForm.required, is_status: fieldForm.is_status }
+        body: { name: fieldForm.name, type: fieldForm.type, required: fieldForm.required, is_status: fieldForm.is_status, ref_entity: fieldForm.ref_entity || null, computed_expr: fieldForm.computed_expr || null }
       })
       fieldOpen.value = false
       await refreshDetail()
@@ -594,7 +608,7 @@ async function saveField() {
     } else {
       const created = await $fetch<Field>(`/api/meta/entities/${encodeURIComponent(detail.value.id)}/fields`, {
         method: 'POST',
-        body: { name: fieldForm.name, type: fieldForm.type, required: fieldForm.required, is_status: fieldForm.is_status }
+        body: { name: fieldForm.name, type: fieldForm.type, required: fieldForm.required, is_status: fieldForm.is_status, ref_entity: fieldForm.ref_entity || null, computed_expr: fieldForm.computed_expr || null }
       })
       await refreshDetail()
       if (created.type === 'select') {
@@ -1316,6 +1330,9 @@ const fieldColumns: TableColumn<Field>[] = [
             <UFormField label="Label">
               <UInput v-model="editForm.label" />
             </UFormField>
+            <UFormField label="Module" hint="Groups entities in the sidebar, e.g. Stock">
+              <UInput v-model="editForm.module" placeholder="e.g. Stock" />
+            </UFormField>
             <UAlert v-if="editError" color="error" :title="editError" />
           </UForm>
         </template>
@@ -1357,6 +1374,12 @@ const fieldColumns: TableColumn<Field>[] = [
             </UFormField>
             <UFormField v-if="fieldForm.type === 'select'" label="Status field" hint="Drives workflow transitions and status badges">
               <USwitch v-model="fieldForm.is_status" />
+            </UFormField>
+            <UFormField v-if="fieldForm.type === 'reference'" label="Target entity" hint="Documents to pick from">
+              <USelectMenu v-model="fieldForm.ref_entity" :items="(entities || []).map(e => ({ label: e.label, value: e.id }))" value-key="value" placeholder="Select entity…" class="w-full" />
+            </UFormField>
+            <UFormField v-if="fieldForm.type === 'computed'" label="Expression" hint="Template with {field} placeholders, e.g. {title} - {sku}">
+              <UInput v-model="fieldForm.computed_expr" placeholder="{title} - {sku}" />
             </UFormField>
 
             <div v-if="fieldForm.type === 'select'">

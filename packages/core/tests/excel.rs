@@ -7,12 +7,14 @@ async fn seeded_pool() -> sqlx::SqlitePool {
     repository::create_entity(&pool, "ticket", "ticket", "Ticket")
         .await
         .unwrap();
-    repository::create_field(&pool, "ticket", "title", "text", true, false)
+    repository::create_field(&pool, "ticket", "title", "text", true, false, None, None)
         .await
         .unwrap();
-    repository::create_field(&pool, "ticket", "priority", "number", false, false)
-        .await
-        .unwrap();
+    repository::create_field(
+        &pool, "ticket", "priority", "number", false, false, None, None,
+    )
+    .await
+    .unwrap();
     pool
 }
 
@@ -73,7 +75,7 @@ async fn export_rejects_over_1000_rows() {
 async fn preview_reports_row_errors() {
     let pool = seeded_pool().await;
     // required number field: an unparseable value must surface as missing-required
-    repository::create_field(&pool, "ticket", "qty", "number", true, false)
+    repository::create_field(&pool, "ticket", "qty", "number", true, false, None, None)
         .await
         .unwrap();
     let err = repository::preview_documents_csv(&pool, "ticket", "id,title\nx1,a\n")
@@ -135,13 +137,13 @@ async fn confirm_import_rolls_back_on_error() {
     repository::create_entity(&pool, "alpha", "alpha", "Alpha")
         .await
         .unwrap();
-    repository::create_field(&pool, "alpha", "title", "text", true, false)
+    repository::create_field(&pool, "alpha", "title", "text", true, false, None, None)
         .await
         .unwrap();
     repository::create_entity(&pool, "beta", "beta", "Beta")
         .await
         .unwrap();
-    repository::create_field(&pool, "beta", "title", "text", true, false)
+    repository::create_field(&pool, "beta", "title", "text", true, false, None, None)
         .await
         .unwrap();
     // x1 belongs to beta
