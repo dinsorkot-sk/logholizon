@@ -186,11 +186,13 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       entityId: string,
       limit = 50,
       offset = 0,
-      options: { search?: string; status?: string; sortBy?: string; sortDir?: string } = {}
-    ): Promise<CoreDocumentList> =>
-      request<CoreDocumentList>('/v1/documents', {
-        query: { entity_id: entityId, limit, offset, ...options }
-      }),
+      options: { search?: string; status?: string; sortBy?: string; sortDir?: string; viewId?: string } = {}
+    ): Promise<CoreDocumentList> => {
+      const { viewId, ...rest } = options
+      return request<CoreDocumentList>('/v1/documents', {
+        query: { entity_id: entityId, limit, offset, ...rest, ...(viewId ? { view_id: viewId } : {}) }
+      })
+    },
     createDocument: (input: CreateDocumentInput): Promise<CoreDocument> =>
       request<CoreDocument>('/v1/documents', {
         method: 'POST',
@@ -274,6 +276,8 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
         method: 'POST',
         body: view
       }),
+    getEntityView: (id: string): Promise<CoreEntityView> =>
+      request<CoreEntityView>(`/v1/meta/views/${encodeURIComponent(id)}`),
     deleteEntityView: (id: string): Promise<void> =>
       request<void>(`/v1/meta/views/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     deleteWorkflowTransition: (id: string): Promise<void> =>

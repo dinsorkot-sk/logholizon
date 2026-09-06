@@ -107,7 +107,7 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
         )
         .route(
             "/v1/meta/views/{id}",
-            axum::routing::delete(delete_entity_view),
+            get(get_entity_view).delete(delete_entity_view),
         )
         .route(
             "/v1/meta/entities/{id}/workflow/states",
@@ -207,6 +207,8 @@ pub struct ListDocumentsQuery {
     pub sort_by: Option<String>,
     #[serde(default)]
     pub sort_dir: Option<String>,
+    #[serde(default)]
+    pub view_id: Option<String>,
 }
 
 fn default_limit() -> i64 {
@@ -461,6 +463,16 @@ async fn create_entity_view(
         .map_err(map_db_error)
 }
 
+async fn get_entity_view(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::EntityView>, AppError> {
+    repository::get_entity_view(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
 async fn delete_entity_view(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -666,6 +678,7 @@ async fn list_documents(
             status: query.status,
             sort_by: query.sort_by,
             sort_dir: query.sort_dir,
+            view_id: query.view_id,
         },
     )
     .await

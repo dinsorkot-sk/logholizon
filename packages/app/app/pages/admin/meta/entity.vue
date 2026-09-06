@@ -836,7 +836,7 @@ const fieldColumns: TableColumn<Field>[] = [
                       <p class="font-mono text-xs text-muted">{{ view.id }}</p>
                     </div>
                     <div class="flex items-center gap-1">
-                      <UButton size="xs" variant="ghost" :to="`/app/${encodeURIComponent(selectedId)}`">Open</UButton>
+                      <UButton size="xs" variant="ghost" :to="`/app/${encodeURIComponent(selectedId)}?view=${encodeURIComponent(view.id)}`">Open</UButton>
                       <UButton size="xs" variant="ghost" color="error" @click="confirmDeleteView(view)">Delete</UButton>
                     </div>
                   </div>

@@ -260,3 +260,76 @@ async fn list_documents_supports_search_filter_sort() {
         .unwrap();
     assert_eq!(list.items.len(), 1);
 }
+
+#[tokio::test]
+async fn list_documents_applies_view_config() {
+    let pool = seeded_pool().await;
+    repository::create_document(
+        &pool,
+        "d1",
+        "ticket",
+        &json!({"title": "Fix pump", "priority": 1}),
+    )
+    .await
+    .unwrap();
+    repository::create_document(
+        &pool,
+        "d2",
+        "ticket",
+        &json!({"title": "Replace belt", "priority": 2}),
+    )
+    .await
+    .unwrap();
+
+    let view =
+        repository::create_entity_view(&pool, "ticket", "Pump only", &json!({"search": "pump"}))
+            .await
+            .unwrap();
+
+    // View config filters the list.
+    let list = repository::list_documents(
+        &pool,
+        "ticket",
+        10,
+        0,
+        &repository::ListDocumentsFilter {
+            view_id: Some(view.id.clone()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(list.total, 1);
+    assert_eq!(list.items[0].id, "d1");
+
+    // Explicit params win over the view config.
+    let list = repository::list_documents(
+        &pool,
+        "ticket",
+        10,
+        0,
+        &repository::ListDocumentsFilter {
+            view_id: Some(view.id.clone()),
+            search: Some("belt".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(list.total, 1);
+    assert_eq!(list.items[0].id, "d2");
+
+    // Unknown view rejected.
+    assert!(repository::list_documents(
+        &pool,
+        "ticket",
+        10,
+        0,
+        &repository::ListDocumentsFilter {
+            view_id: Some("missing".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .is_err());
+}

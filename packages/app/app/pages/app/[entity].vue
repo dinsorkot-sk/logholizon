@@ -92,10 +92,20 @@ const visibleColumns = ref<Set<string>>(new Set())
 const bulkDeleteOpen = ref(false)
 const bulkDeleting = ref(false)
 
+type EntityView = { id: string; name: string; config: Record<string, unknown> }
+
 const { data: entities } = await useFetch<{ id: string; label: string }[]>('/api/meta/entities')
 const { data: entity, status: entityStatus, error: entityError } = await useFetch<Entity>(
   () => `/api/meta/entities/${encodeURIComponent(entityId.value)}`,
   { watch: [entityId] }
+)
+const activeViewId = computed(() => {
+  const view = route.query.view
+  return typeof view === 'string' && view.trim() ? view : ''
+})
+const { data: activeView } = await useFetch<EntityView>(
+  () => activeViewId.value ? `/api/meta/views/${encodeURIComponent(activeViewId.value)}` : '',
+  { watch: [activeViewId], immediate: false }
 )
 const documentsUrl = computed(() => {
   const params = new URLSearchParams({
@@ -107,8 +117,13 @@ const documentsUrl = computed(() => {
   if (statusFilter.value && statusFilter.value !== 'all') params.set('status', statusFilter.value)
   if (sortBy.value) params.set('sort_by', sortBy.value)
   if (sortDir.value) params.set('sort_dir', sortDir.value)
+  if (activeViewId.value) params.set('view_id', activeViewId.value)
   return `/api/documents?${params.toString()}`
 })
+
+function clearView() {
+  router.push({ path: route.path, query: {} })
+}
 const { data: documents, status: documentsStatus, error: documentsError, refresh } = await useFetch<DocumentList>(
   documentsUrl,
   { watch: [documentsUrl] }
@@ -619,6 +634,10 @@ async function confirmImport() {
           <UButton variant="outline" icon="i-lucide-download" :loading="exporting" @click="exportCsv">Export CSV</UButton>
           <input ref="importInput" type="file" accept=".csv,text/csv" class="hidden" @change="previewImport">
           <UButton variant="outline" icon="i-lucide-upload" :loading="importing" @click="importInput?.click()">Import CSV</UButton>
+      </div>
+      <div v-if="activeViewId" class="mb-3 flex items-center gap-2">
+        <UBadge color="primary" variant="subtle" icon="i-lucide-eye">View: {{ activeView?.name || activeViewId }}</UBadge>
+        <UButton size="xs" variant="ghost" @click="clearView">Clear</UButton>
       </div>
         <UAlert v-if="importPreview" class="w-full" :color="importPreview.errors.length ? 'error' : 'success'" :title="`${importPreview.rows.length} rows previewed`">
           <template #description>

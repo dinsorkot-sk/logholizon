@@ -1000,6 +1000,35 @@ pub struct ListDocumentsFilter {
     pub status: Option<String>,
     pub sort_by: Option<String>,
     pub sort_dir: Option<String>,
+    pub view_id: Option<String>,
+}
+
+/// View config keys understood by `list_documents`.
+/// `{ "status": "open", "search": "pump", "sort_by": "title", "sort_dir": "asc" }`
+fn apply_view_config(filter: &mut ListDocumentsFilter, config: &Value) {
+    let Some(object) = config.as_object() else {
+        return;
+    };
+    let get_str = |key: &str| {
+        object
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    if filter.status.is_none() {
+        filter.status = get_str("status");
+    }
+    if filter.search.is_none() {
+        filter.search = get_str("search");
+    }
+    if filter.sort_by.is_none() {
+        filter.sort_by = get_str("sort_by");
+    }
+    if filter.sort_dir.is_none() {
+        filter.sort_dir = get_str("sort_dir");
+    }
 }
 
 pub async fn list_documents(
@@ -1010,6 +1039,14 @@ pub async fn list_documents(
     filter: &ListDocumentsFilter,
 ) -> Result<DocumentList> {
     use sqlx::Row;
+    let mut filter = filter.clone();
+    if let Some(view_id) = filter.view_id.clone().filter(|s| !s.trim().is_empty()) {
+        let view = get_entity_view(pool, &view_id).await?;
+        if view.entity_id != entity_id {
+            return Err(AppError::BadRequest("view belongs to another entity".into()).into());
+        }
+        apply_view_config(&mut filter, &view.config);
+    }
     let fields = list_fields(pool, entity_id).await?;
     let mut where_sql = String::from("entity_id = ?");
     let mut params: Vec<String> = vec![entity_id.to_string()];

@@ -12,7 +12,8 @@ export default defineEventHandler(async (event) => {
     search: typeof query.search === 'string' ? query.search : undefined,
     status: typeof query.status === 'string' ? query.status : undefined,
     sortBy: typeof query.sort_by === 'string' ? query.sort_by : undefined,
-    sortDir: typeof query.sort_dir === 'string' ? query.sort_dir : undefined
+    sortDir: typeof query.sort_dir === 'string' ? query.sort_dir : undefined,
+    viewId: typeof query.view_id === 'string' ? query.view_id : undefined
   })
 })
 
