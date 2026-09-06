@@ -8,5 +8,5 @@ export default defineEventHandler(async (event) => {
   if (typeof body.payload !== 'object' || body.payload === null || Array.isArray(body.payload)) {
     throw createError({ statusCode: 400, statusMessage: 'payload must be a JSON object' })
   }
-  return coreClient().createDocument(body)
+  return coreClient(event).createDocument(body)
 })

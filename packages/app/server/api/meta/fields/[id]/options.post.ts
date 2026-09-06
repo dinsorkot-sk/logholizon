@@ -9,5 +9,5 @@ export default defineEventHandler(async (event) => {
   if (!body?.value?.trim() || !body?.label?.trim()) {
     throw createError({ statusCode: 400, statusMessage: 'value and label are required' })
   }
-  return coreClient().createFieldOption(id, { value: body.value, label: body.label })
+  return coreClient(event).createFieldOption(id, { value: body.value, label: body.label })
 })

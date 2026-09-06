@@ -9,7 +9,7 @@ export default defineEventHandler(async (event) => {
   if (!body?.from_state?.trim() || !body?.to_state?.trim() || !body?.action?.trim()) {
     throw createError({ statusCode: 400, statusMessage: 'from_state, to_state, and action are required' })
   }
-  return coreClient().createWorkflowTransition(id, {
+  return coreClient(event).createWorkflowTransition(id, {
     from_state: body.from_state,
     to_state: body.to_state,
     action: body.action

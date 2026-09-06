@@ -9,5 +9,5 @@ export default defineEventHandler(async (event) => {
   if (!body?.name?.trim() || !body?.label?.trim()) {
     throw createError({ statusCode: 400, statusMessage: 'name and label are required' })
   }
-  return coreClient().createWorkflowState(id, { name: body.name, label: body.label })
+  return coreClient(event).createWorkflowState(id, { name: body.name, label: body.label })
 })

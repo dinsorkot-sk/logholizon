@@ -1,7 +1,8 @@
 use axum::{
     extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    http::{HeaderMap, Request, StatusCode},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
     routing::get,
     Json, Router,
 };
@@ -39,6 +40,33 @@ async fn require_user(state: &AppState, headers: &HeaderMap) -> Result<auth::Use
         .map_err(AppError::from)
 }
 
+/// Enforce authentication on every `/v1/*` route except the public whitelist.
+/// `/v1/meta/*` and `/v1/admin/*` additionally require the admin role.
+async fn auth_middleware(
+    State(state): State<AppState>,
+    request: Request<axum::body::Body>,
+    next: Next,
+) -> Result<Response, AppError> {
+    let path = request.uri().path().to_string();
+    let is_public = path == "/health"
+        || path == "/v1/version"
+        || path == "/v1/auth/register"
+        || path == "/v1/auth/login"
+        || path == "/v1/auth/status";
+    if is_public {
+        return Ok(next.run(request).await);
+    }
+
+    let user = require_user(&state, request.headers()).await?;
+    if (path.starts_with("/v1/meta/") || path.starts_with("/v1/admin/")) && user.role != "admin" {
+        return Err(AppError::Forbidden("admin role required".into()));
+    }
+
+    let mut request = request;
+    request.extensions_mut().insert(user);
+    Ok(next.run(request).await)
+}
+
 pub fn router(config: &Config, pool: SqlitePool) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -47,6 +75,16 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
         .route("/v1/auth/login", axum::routing::post(auth_login))
         .route("/v1/auth/logout", axum::routing::post(auth_logout))
         .route("/v1/auth/me", get(auth_me))
+        .route("/v1/auth/status", get(auth_status))
+        .route("/v1/admin/users", get(list_users).post(create_user))
+        .route(
+            "/v1/admin/users/{id}",
+            axum::routing::put(update_user).delete(delete_user),
+        )
+        .route(
+            "/v1/admin/users/{id}/reset-password",
+            axum::routing::post(reset_user_password),
+        )
         .route("/v1/admin/status", get(admin_status))
         .route("/v1/admin/backup", axum::routing::post(admin_backup))
         .route("/v1/admin/backups", get(admin_list_backups))
@@ -114,6 +152,13 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
         )
         .route("/v1/dashboard/counts", get(dashboard_counts))
         .route("/v1/dashboard/pm", get(dashboard_pm))
+        .layer(middleware::from_fn_with_state(
+            AppState {
+                pool: pool.clone(),
+                config: config.clone(),
+            },
+            auth_middleware,
+        ))
         .with_state(AppState {
             pool,
             config: config.clone(),
@@ -670,6 +715,82 @@ async fn auth_me(
     headers: HeaderMap,
 ) -> Result<Json<auth::User>, AppError> {
     require_user(&state, &headers).await.map(Json)
+}
+
+async fn auth_status(State(state): State<AppState>) -> Result<Json<serde_json::Value>, AppError> {
+    let has_users = auth::has_users(&state.pool).await.map_err(AppError::from)?;
+    Ok(Json(json!({ "has_users": has_users })))
+}
+
+async fn list_users(State(state): State<AppState>) -> Result<Json<Vec<auth::UserRow>>, AppError> {
+    auth::list_users(&state.pool)
+        .await
+        .map(Json)
+        .map_err(AppError::from)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateUserRequest {
+    pub username: String,
+    pub password: String,
+    #[serde(default = "default_user_role")]
+    pub role: String,
+}
+
+fn default_user_role() -> String {
+    "user".to_string()
+}
+
+async fn create_user(
+    State(state): State<AppState>,
+    Json(input): Json<CreateUserRequest>,
+) -> Result<(StatusCode, Json<auth::User>), AppError> {
+    auth::create_user(&state.pool, &input.username, &input.password, &input.role)
+        .await
+        .map(|user| (StatusCode::CREATED, Json(user)))
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateUserRequest {
+    pub role: String,
+}
+
+async fn update_user(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<UpdateUserRequest>,
+) -> Result<Json<auth::User>, AppError> {
+    auth::update_user_role(&state.pool, &id, &input.role)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn delete_user(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    auth::delete_user(&state.pool, &id)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResetPasswordRequest {
+    pub password: String,
+}
+
+async fn reset_user_password(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<ResetPasswordRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    auth::reset_password(&state.pool, &id, &input.password)
+        .await
+        .map(|()| Json(json!({ "message": "password reset" })))
+        .map_err(map_db_error)
 }
 
 // --- Admin: status / backup / restore ---

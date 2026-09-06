@@ -8,7 +8,7 @@ use sqlx::SqlitePool;
 
 use crate::error::AppError;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct User {
     pub id: String,
     pub username: String,
@@ -103,6 +103,131 @@ pub async fn logout(pool: &SqlitePool, token: &str) -> Result<()> {
         .execute(pool)
         .await?;
     Ok(())
+}
+
+#[derive(Debug, Serialize)]
+pub struct UserRow {
+    pub id: String,
+    pub username: String,
+    pub role: String,
+    pub created_at: String,
+}
+
+pub async fn list_users(pool: &SqlitePool) -> Result<Vec<UserRow>> {
+    let rows = sqlx::query_as::<_, (String, String, String, String)>(
+        "SELECT id, username, role, created_at FROM _user ORDER BY username",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, username, role, created_at)| UserRow {
+            id,
+            username,
+            role,
+            created_at,
+        })
+        .collect())
+}
+
+pub async fn create_user(
+    pool: &SqlitePool,
+    username: &str,
+    password: &str,
+    role: &str,
+) -> Result<User> {
+    let username = username.trim();
+    if username.is_empty() || password.len() < 8 {
+        bail!("username is required and password must be at least 8 characters");
+    }
+    if !matches!(role, "admin" | "user") {
+        bail!("role must be admin or user");
+    }
+    let id = format!("user_{username}");
+    let hash = hash_password(password)?;
+    sqlx::query("INSERT INTO _user (id, username, password_hash, role) VALUES (?, ?, ?, ?)")
+        .bind(&id)
+        .bind(username)
+        .bind(&hash)
+        .bind(role)
+        .execute(pool)
+        .await?;
+    Ok(User {
+        id,
+        username: username.to_string(),
+        role: role.to_string(),
+    })
+}
+
+pub async fn update_user_role(pool: &SqlitePool, id: &str, role: &str) -> Result<User> {
+    if !matches!(role, "admin" | "user") {
+        bail!("role must be admin or user");
+    }
+    let result = sqlx::query("UPDATE _user SET role = ? WHERE id = ?")
+        .bind(role)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("user not found: {id}")).into());
+    }
+    let row = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT id, username, role FROM _user WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await?;
+    Ok(User {
+        id: row.0,
+        username: row.1,
+        role: row.2,
+    })
+}
+
+pub async fn delete_user(pool: &SqlitePool, id: &str) -> Result<()> {
+    let row = sqlx::query_as::<_, (String, String)>("SELECT id, role FROM _user WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+    let Some((_, role)) = row else {
+        return Err(AppError::NotFound(format!("user not found: {id}")).into());
+    };
+    if role == "admin" {
+        let admins: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _user WHERE role = 'admin'")
+            .fetch_one(pool)
+            .await?;
+        if admins <= 1 {
+            return Err(AppError::Conflict("cannot delete the last admin".into()).into());
+        }
+    }
+    sqlx::query("DELETE FROM _user WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn reset_password(pool: &SqlitePool, id: &str, password: &str) -> Result<()> {
+    if password.len() < 8 {
+        bail!("password must be at least 8 characters");
+    }
+    let hash = hash_password(password)?;
+    let result = sqlx::query("UPDATE _user SET password_hash = ? WHERE id = ?")
+        .bind(&hash)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("user not found: {id}")).into());
+    }
+    Ok(())
+}
+
+pub async fn has_users(pool: &SqlitePool) -> Result<bool> {
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _user")
+        .fetch_one(pool)
+        .await?;
+    Ok(count > 0)
 }
 
 pub async fn user_for_token(pool: &SqlitePool, token: &str) -> Result<User> {

@@ -9,7 +9,7 @@ export default defineEventHandler(async (event) => {
   if (!body?.name?.trim() || !body?.type?.trim()) {
     throw createError({ statusCode: 400, statusMessage: 'name and type are required' })
   }
-  return coreClient().updateField(id, {
+  return coreClient(event).updateField(id, {
     name: body.name,
     type: body.type,
     required: !!body.required,

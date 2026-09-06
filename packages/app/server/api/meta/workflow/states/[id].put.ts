@@ -9,5 +9,5 @@ export default defineEventHandler(async (event) => {
   if (!body?.label?.trim()) {
     throw createError({ statusCode: 400, statusMessage: 'label is required' })
   }
-  return coreClient().updateWorkflowState(id, { label: body.label })
+  return coreClient(event).updateWorkflowState(id, { label: body.label })
 })

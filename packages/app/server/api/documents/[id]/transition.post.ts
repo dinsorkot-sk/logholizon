@@ -6,5 +6,5 @@ export default defineEventHandler(async (event) => {
   if (!id?.trim() || typeof body?.action !== 'string' || !body.action.trim()) {
     throw createError({ statusCode: 400, statusMessage: 'id and action are required' })
   }
-  return coreClient().transitionDocument(id, body.action)
+  return coreClient(event).transitionDocument(id, body.action)
 })

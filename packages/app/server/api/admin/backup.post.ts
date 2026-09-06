@@ -1,3 +1,3 @@
 import { coreClient } from '../../core/client'
 
-export default defineEventHandler(() => coreClient().createBackup())
+export default defineEventHandler(event => coreClient(event).createBackup())

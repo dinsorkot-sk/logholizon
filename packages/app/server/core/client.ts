@@ -2,6 +2,7 @@ export type CoreEntity = { id: string; name: string; label: string }
 
 export type CoreUser = { id: string; username: string; role: string }
 export type CoreSession = { token: string; user: CoreUser }
+export type CoreUserRow = { id: string; username: string; role: string; created_at: string }
 
 export type CoreFieldOption = { id: string; value: string; label: string }
 
@@ -60,13 +61,21 @@ export type CoreBackupInfo = { name: string; size: number; modified: number }
 
 type CoreError = { code?: string; message?: string }
 
-export function coreClient() {
+export function coreClient(event?: Parameters<typeof getCookie>[0]) {
   const config = useRuntimeConfig()
   const baseURL = config.coreUrl.replace(/\/$/, '')
 
   async function request<T>(path: string, options?: Parameters<typeof $fetch<T>>[1]): Promise<T> {
     try {
-      return (await $fetch<T>(`${baseURL}${path}`, options)) as T
+      // Forward the browser session cookie as a Bearer token so the Rust
+      // core can authenticate gateway requests. Callers pass the Nitro
+      // event explicitly (server utils are not auto-imported here).
+      const token = event ? getCookie(event, 'lh_session') : undefined
+      const headers = new Headers(options?.headers as HeadersInit | undefined)
+      if (token && !headers.has('authorization')) {
+        headers.set('authorization', `Bearer ${token}`)
+      }
+      return (await $fetch<T>(`${baseURL}${path}`, { ...options, headers })) as T
     } catch (error: any) {
       const body = error?.data as CoreError | undefined
       throw createError({
@@ -80,10 +89,30 @@ export function coreClient() {
   return {
     login: (username: string, password: string): Promise<CoreSession> =>
       request<CoreSession>('/v1/auth/login', { method: 'POST', body: { username, password } }),
+    register: (username: string, password: string): Promise<CoreUser> =>
+      request<CoreUser>('/v1/auth/register', { method: 'POST', body: { username, password } }),
     logout: (token: string): Promise<void> =>
       request<void>('/v1/auth/logout', { method: 'POST', headers: { authorization: `Bearer ${token}` } }),
     me: (token: string): Promise<CoreUser> =>
       request<CoreUser>('/v1/auth/me', { headers: { authorization: `Bearer ${token}` } }),
+    authStatus: (): Promise<{ has_users: boolean }> =>
+      request<{ has_users: boolean }>('/v1/auth/status'),
+    listUsers: (): Promise<CoreUserRow[]> =>
+      request<CoreUserRow[]>('/v1/admin/users'),
+    createUser: (user: { username: string; password: string; role: string }): Promise<CoreUser> =>
+      request<CoreUser>('/v1/admin/users', { method: 'POST', body: user }),
+    updateUser: (id: string, role: string): Promise<CoreUser> =>
+      request<CoreUser>(`/v1/admin/users/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: { role }
+      }),
+    deleteUser: (id: string): Promise<void> =>
+      request<void>(`/v1/admin/users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    resetUserPassword: (id: string, password: string): Promise<void> =>
+      request<void>(`/v1/admin/users/${encodeURIComponent(id)}/reset-password`, {
+        method: 'POST',
+        body: { password }
+      }),
     listEntities: (): Promise<CoreEntity[]> => request<CoreEntity[]>('/v1/meta/entities'),
     getEntity: (id: string): Promise<CoreEntityDetail> =>
       request<CoreEntityDetail>(`/v1/meta/entities/${encodeURIComponent(id)}`),

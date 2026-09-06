@@ -4,7 +4,7 @@ export default defineEventHandler(async (event) => {
   const token = getCookie(event, 'lh_session')
   if (token) {
     try {
-      await coreClient().logout(token)
+      await coreClient(event).logout(token)
     } catch {
       // ignore: token may already be invalid
     }
