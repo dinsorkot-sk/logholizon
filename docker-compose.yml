@@ -1,0 +1,32 @@
+services:
+  core:
+    build: .
+    command: logholizon-core
+    environment:
+      CORE_HOST: 0.0.0.0
+      CORE_PORT: 8787
+      CORE_DATABASE_URL: sqlite:///data/core.db
+      CORE_BACKUP_INTERVAL_HOURS: 24
+      CORE_BACKUP_KEEP: 7
+    volumes:
+      - logholizon-data:/data
+    ports:
+      - "8787:8787"
+    restart: unless-stopped
+
+  app:
+    build: .
+    command: node /app/.output/server/index.mjs
+    environment:
+      NODE_ENV: production
+      CORE_URL: http://core:8787
+      NUXT_PORT: 3000
+      NUXT_HOST: 0.0.0.0
+    ports:
+      - "3000:3000"
+    depends_on:
+      - core
+    restart: unless-stopped
+
+volumes:
+  logholizon-data:

@@ -5,5 +5,5 @@ export default defineEventHandler(async (event) => {
   if (!id?.trim()) {
     throw createError({ statusCode: 400, statusMessage: 'id is required' })
   }
-  return coreClient().getEntity(id)
+  return coreClient(event).getEntity(id)
 })

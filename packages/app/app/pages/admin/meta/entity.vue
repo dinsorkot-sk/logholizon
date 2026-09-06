@@ -1,41 +1,689 @@
 <script setup lang="ts">
-type Entity = { id: string; name: string; label: string }
+definePageMeta({ middleware: 'auth' })
 
+import { h, resolveComponent } from 'vue'
+import type { TableColumn } from '@nuxt/ui'
+
+const UButton = resolveComponent('UButton')
+const UBadge = resolveComponent('UBadge')
+
+type Entity = { id: string; name: string; label: string }
+type FieldOption = { id: string; value: string; label: string }
+type Field = { id: string; name: string; type: string; required: boolean; is_status: boolean; position: number; options: FieldOption[] }
+type EntityDetail = Entity & { fields: Field[] }
+type WorkflowState = { id: string; name: string; label: string; position: number }
+type WorkflowTransition = { id: string; action: string; from_state: string; to_state: string }
+type WorkflowDefinition = { states: WorkflowState[]; transitions: WorkflowTransition[] }
+type EntityPermission = { role: string; can_view: boolean; can_edit: boolean }
+type FieldPermission = { field_id: string; role: string; can_view: boolean; can_edit: boolean }
+type EntityView = { id: string; entity_id: string; name: string; config: Record<string, unknown>; created_at: string }
+
+const toast = useToast()
 const { data: entities, status, refresh } = await useFetch<Entity[]>('/api/meta/entities')
 
-const form = reactive({ id: '', name: '', label: '' })
+const search = ref('')
+const selectedId = ref('')
+const detailUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}` : '')
+const { data: detail, status: detailStatus, error: detailError, refresh: refreshDetail } = await useFetch<EntityDetail>(detailUrl, { immediate: false })
+const workflowUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/workflow` : '')
+const { data: workflow, status: workflowStatus, error: workflowError, refresh: refreshWorkflow } = await useFetch<WorkflowDefinition>(workflowUrl, { immediate: false })
+const permissionsUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/permissions` : '')
+const { data: permissions, status: permissionsStatus, error: permissionsError, refresh: refreshPermissions } = await useFetch<EntityPermission[]>(permissionsUrl, { immediate: false })
+const fieldPermissionsUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/field-permissions` : '')
+const { data: fieldPermissions, status: fieldPermissionsStatus, error: fieldPermissionsError, refresh: refreshFieldPermissions } = await useFetch<FieldPermission[]>(fieldPermissionsUrl, { immediate: false })
+const viewsUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/views` : '')
+const { data: views, status: viewsStatus, error: viewsError, refresh: refreshViews } = await useFetch<EntityView[]>(viewsUrl, { immediate: false })
+
+const filteredEntities = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  if (!q) return entities.value || []
+  return (entities.value || []).filter(e =>
+    e.id.toLowerCase().includes(q) || e.label.toLowerCase().includes(q)
+  )
+})
+
+const tabItems = [
+  { label: 'Fields', icon: 'i-lucide-table', slot: 'fields' },
+  { label: 'Workflow', icon: 'i-lucide-git-branch', slot: 'workflow' },
+  { label: 'Permissions', icon: 'i-lucide-shield', slot: 'permissions' },
+  { label: 'Views', icon: 'i-lucide-eye', slot: 'views' }
+]
+
+const typeItems = [
+  { label: 'Text', value: 'text', icon: 'i-lucide-type' },
+  { label: 'Number', value: 'number', icon: 'i-lucide-hash' },
+  { label: 'Date', value: 'date', icon: 'i-lucide-calendar' },
+  { label: 'Select', value: 'select', icon: 'i-lucide-chevrons-up-down' }
+]
+
+function typeBadgeColor(type: string) {
+  switch (type) {
+    case 'text': return 'info'
+    case 'select': return 'primary'
+    case 'number': return 'warning'
+    default: return 'neutral'
+  }
+}
+
+function selectEntity(id: string) {
+  selectedId.value = id
+  refreshDetail()
+  refreshWorkflow()
+  refreshPermissions()
+  refreshFieldPermissions()
+  refreshViews()
+}
+
+// --- Permissions ---
+const savingPermissions = ref(false)
+
+async function togglePermission(permission: EntityPermission, key: 'can_view' | 'can_edit') {
+  if (!selectedId.value || !permissions.value) return
+  const next = permissions.value.map(p =>
+    p.role === permission.role ? { ...p, [key]: !p[key] } : { ...p }
+  )
+  savingPermissions.value = true
+  try {
+    await $fetch(`/api/meta/entities/${encodeURIComponent(selectedId.value)}/permissions`, {
+      method: 'PUT',
+      body: { permissions: next }
+    })
+    await refreshPermissions()
+    toast.add({ title: 'Permissions updated', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    toast.add({
+      title: 'Unable to update permissions',
+      description: e?.data?.message || e?.statusMessage || 'Update failed',
+      color: 'error',
+      icon: 'i-lucide-alert-circle'
+    })
+  } finally {
+    savingPermissions.value = false
+  }
+}
+
+const savingFieldPermissions = ref(false)
+
+function fieldPermissionFor(fieldId: string) {
+  return (fieldPermissions.value || []).find(p => p.field_id === fieldId && p.role === 'user')
+}
+
+async function toggleFieldPermission(fieldId: string, key: 'can_view' | 'can_edit') {
+  if (!selectedId.value || !fieldPermissions.value) return
+  const current = fieldPermissionFor(fieldId)
+  const next = { field_id: fieldId, role: 'user', can_view: current?.can_view ?? true, can_edit: current?.can_edit ?? true }
+  next[key] = !next[key]
+  if (!next.can_view) next.can_edit = false
+  savingFieldPermissions.value = true
+  try {
+    await $fetch(`/api/meta/entities/${encodeURIComponent(selectedId.value)}/field-permissions`, {
+      method: 'PUT',
+      body: { permissions: [next] }
+    })
+    await refreshFieldPermissions()
+    toast.add({ title: 'Field permissions updated', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    toast.add({
+      title: 'Unable to update field permissions',
+      description: e?.data?.message || e?.statusMessage || 'Update failed',
+      color: 'error',
+      icon: 'i-lucide-alert-circle'
+    })
+  } finally {
+    savingFieldPermissions.value = false
+  }
+}
+
+// --- Views ---
+const viewOpen = ref(false)
+const viewForm = reactive({ name: '' })
+const viewError = ref('')
+const savingView = ref(false)
+const deleteViewOpen = ref(false)
+const viewToDelete = ref<EntityView | null>(null)
+const deletingView = ref(false)
+
+function openAddView() {
+  viewForm.name = ''
+  viewError.value = ''
+  viewOpen.value = true
+}
+
+async function saveView() {
+  if (!selectedId.value) return
+  viewError.value = ''
+  if (!viewForm.name.trim()) {
+    viewError.value = 'name is required'
+    return
+  }
+  savingView.value = true
+  try {
+    await $fetch(`/api/meta/entities/${encodeURIComponent(selectedId.value)}/views`, {
+      method: 'POST',
+      body: { name: viewForm.name, config: {} }
+    })
+    viewOpen.value = false
+    await refreshViews()
+    toast.add({ title: 'View created', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    viewError.value = e?.data?.message || e?.statusMessage || 'Failed to create view'
+  } finally {
+    savingView.value = false
+  }
+}
+
+function confirmDeleteView(view: EntityView) {
+  viewToDelete.value = view
+  deleteViewOpen.value = true
+}
+
+async function removeView() {
+  if (!viewToDelete.value) return
+  deletingView.value = true
+  try {
+    await $fetch(`/api/meta/views/${encodeURIComponent(viewToDelete.value.id)}`, { method: 'DELETE' })
+    deleteViewOpen.value = false
+    viewToDelete.value = null
+    await refreshViews()
+    toast.add({ title: 'View deleted', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    toast.add({
+      title: 'Unable to delete view',
+      description: e?.data?.message || e?.statusMessage || 'Delete failed',
+      color: 'error',
+      icon: 'i-lucide-alert-circle'
+    })
+  } finally {
+    deletingView.value = false
+  }
+}
+
+// --- Create entity ---
+const createOpen = ref(false)
+const createForm = reactive({ id: '', name: '', label: '' })
 const creating = ref(false)
-const error = ref('')
+const createError = ref('')
 
 async function createEntity() {
-  error.value = ''
-  if (!form.id.trim() || !form.name.trim() || !form.label.trim()) {
-    error.value = 'id, name, and label are required'
+  createError.value = ''
+  if (!createForm.id.trim() || !createForm.name.trim() || !createForm.label.trim()) {
+    createError.value = 'id, name, and label are required'
+    return
+  }
+  if (!/^[a-z][a-z0-9_]*$/.test(createForm.id)) {
+    createError.value = 'id must be lowercase snake_case (e.g. work_order)'
     return
   }
   creating.value = true
   try {
-    await $fetch('/api/meta/entities', { method: 'POST', body: { ...form } })
-    form.id = ''
-    form.name = ''
-    form.label = ''
+    await $fetch('/api/meta/entities', { method: 'POST', body: { ...createForm } })
+    createOpen.value = false
+    createForm.id = ''
+    createForm.name = ''
+    createForm.label = ''
     await refresh()
+    toast.add({ title: 'Entity created', color: 'success', icon: 'i-lucide-check' })
   } catch (e: any) {
-    error.value = e?.data?.message || e?.statusMessage || 'Failed to create entity'
+    createError.value = e?.data?.message || e?.statusMessage || 'Failed to create entity'
   } finally {
     creating.value = false
   }
 }
+
+// --- Edit entity ---
+const editOpen = ref(false)
+const editForm = reactive({ name: '', label: '' })
+const editing = ref(false)
+const editError = ref('')
+
+function openEditEntity() {
+  if (!detail.value) return
+  editForm.name = detail.value.name
+  editForm.label = detail.value.label
+  editError.value = ''
+  editOpen.value = true
+}
+
+async function saveEntity() {
+  if (!detail.value) return
+  editError.value = ''
+  if (!editForm.name.trim() || !editForm.label.trim()) {
+    editError.value = 'name and label are required'
+    return
+  }
+  editing.value = true
+  try {
+    await $fetch(`/api/meta/entities/${encodeURIComponent(detail.value.id)}`, {
+      method: 'PUT',
+      body: { ...editForm }
+    })
+    editOpen.value = false
+    await refresh()
+    await refreshDetail()
+    toast.add({ title: 'Entity updated', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    editError.value = e?.data?.message || e?.statusMessage || 'Failed to update entity'
+  } finally {
+    editing.value = false
+  }
+}
+
+// --- Delete entity ---
+const deleteEntityOpen = ref(false)
+const deletingEntity = ref(false)
+
+async function removeEntity() {
+  if (!detail.value) return
+  deletingEntity.value = true
+  try {
+    await $fetch(`/api/meta/entities/${encodeURIComponent(detail.value.id)}`, { method: 'DELETE' })
+    deleteEntityOpen.value = false
+    selectedId.value = ''
+    await refresh()
+    toast.add({ title: 'Entity deleted', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    toast.add({
+      title: 'Unable to delete entity',
+      description: e?.data?.message || e?.statusMessage || 'Delete failed',
+      color: 'error',
+      icon: 'i-lucide-alert-circle'
+    })
+  } finally {
+    deletingEntity.value = false
+  }
+}
+
+// --- Field editor ---
+const fieldOpen = ref(false)
+const editingField = ref<Field | null>(null)
+const fieldForm = reactive({ name: '', type: 'text', required: false, is_status: false })
+const fieldError = ref('')
+const savingField = ref(false)
+const newOption = reactive({ value: '', label: '' })
+const optionError = ref('')
+
+const editingFieldOptions = computed(() => {
+  if (!editingField.value) return []
+  return detail.value?.fields.find(f => f.id === editingField.value?.id)?.options || []
+})
+
+function openAddField() {
+  editingField.value = null
+  fieldForm.name = ''
+  fieldForm.type = 'text'
+  fieldForm.required = false
+  fieldForm.is_status = false
+  fieldError.value = ''
+  optionError.value = ''
+  newOption.value = ''
+  newOption.label = ''
+  fieldOpen.value = true
+}
+
+function openEditField(field: Field) {
+  editingField.value = field
+  fieldForm.name = field.name
+  fieldForm.type = field.type
+  fieldForm.required = field.required
+  fieldForm.is_status = field.is_status
+  fieldError.value = ''
+  optionError.value = ''
+  newOption.value = ''
+  newOption.label = ''
+  fieldOpen.value = true
+}
+
+async function saveField() {
+  if (!detail.value) return
+  fieldError.value = ''
+  if (!fieldForm.name.trim()) {
+    fieldError.value = 'name is required'
+    return
+  }
+  if (!/^[a-z][a-z0-9_]*$/.test(fieldForm.name)) {
+    fieldError.value = 'name must be lowercase snake_case (e.g. work_order)'
+    return
+  }
+  savingField.value = true
+  try {
+    if (editingField.value) {
+      await $fetch(`/api/meta/fields/${encodeURIComponent(editingField.value.id)}`, {
+        method: 'PUT',
+        body: { name: fieldForm.name, type: fieldForm.type, required: fieldForm.required, is_status: fieldForm.is_status }
+      })
+      fieldOpen.value = false
+      await refreshDetail()
+      toast.add({ title: 'Field updated', color: 'success', icon: 'i-lucide-check' })
+    } else {
+      const created = await $fetch<Field>(`/api/meta/entities/${encodeURIComponent(detail.value.id)}/fields`, {
+        method: 'POST',
+        body: { name: fieldForm.name, type: fieldForm.type, required: fieldForm.required, is_status: fieldForm.is_status }
+      })
+      await refreshDetail()
+      if (created.type === 'select') {
+        // keep slideover open so the user can add options right away
+        editingField.value = created
+        toast.add({ title: 'Field created — add options', color: 'success', icon: 'i-lucide-check' })
+      } else {
+        fieldOpen.value = false
+        toast.add({ title: 'Field created', color: 'success', icon: 'i-lucide-check' })
+      }
+    }
+  } catch (e: any) {
+    fieldError.value = e?.data?.message || e?.statusMessage || 'Failed to save field'
+  } finally {
+    savingField.value = false
+  }
+}
+
+async function addOption() {
+  if (!editingField.value) return
+  optionError.value = ''
+  if (!newOption.value.trim() || !newOption.label.trim()) {
+    optionError.value = 'value and label are required'
+    return
+  }
+  try {
+    await $fetch(`/api/meta/fields/${encodeURIComponent(editingField.value.id)}/options`, {
+      method: 'POST',
+      body: { value: newOption.value, label: newOption.label }
+    })
+    newOption.value = ''
+    newOption.label = ''
+    await refreshDetail()
+  } catch (e: any) {
+    optionError.value = e?.data?.message || e?.statusMessage || 'Failed to add option'
+  }
+}
+
+async function removeOption(option: FieldOption) {
+  if (!editingField.value) return
+  optionError.value = ''
+  try {
+    await $fetch(`/api/meta/options/${encodeURIComponent(option.id)}`, { method: 'DELETE' })
+    await refreshDetail()
+  } catch (e: any) {
+    optionError.value = e?.data?.message || e?.statusMessage || 'Failed to remove option'
+  }
+}
+
+// --- Delete field ---
+const deleteFieldOpen = ref(false)
+const deletingField = ref(false)
+const fieldToDelete = ref<Field | null>(null)
+
+function confirmDeleteField(field: Field) {
+  fieldToDelete.value = field
+  deleteFieldOpen.value = true
+}
+
+async function removeField() {
+  if (!fieldToDelete.value) return
+  deletingField.value = true
+  try {
+    await $fetch(`/api/meta/fields/${encodeURIComponent(fieldToDelete.value.id)}`, { method: 'DELETE' })
+    deleteFieldOpen.value = false
+    fieldToDelete.value = null
+    await refreshDetail()
+    toast.add({ title: 'Field deleted', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    toast.add({
+      title: 'Unable to delete field',
+      description: e?.data?.message || e?.statusMessage || 'Delete failed',
+      color: 'error',
+      icon: 'i-lucide-alert-circle'
+    })
+  } finally {
+    deletingField.value = false
+  }
+}
+
+// --- Workflow editor ---
+const stateOpen = ref(false)
+const editingState = ref<WorkflowState | null>(null)
+const stateForm = reactive({ name: '', label: '' })
+const stateError = ref('')
+const savingState = ref(false)
+const deleteStateOpen = ref(false)
+const stateToDelete = ref<WorkflowState | null>(null)
+const deletingState = ref(false)
+
+const transitionOpen = ref(false)
+const transitionForm = reactive({ from_state: '', to_state: '', action: '' })
+const transitionError = ref('')
+const savingTransition = ref(false)
+const deleteTransitionOpen = ref(false)
+const transitionToDelete = ref<WorkflowTransition | null>(null)
+const deletingTransition = ref(false)
+
+function openAddState() {
+  editingState.value = null
+  stateForm.name = ''
+  stateForm.label = ''
+  stateError.value = ''
+  stateOpen.value = true
+}
+
+function openEditState(state: WorkflowState) {
+  editingState.value = state
+  stateForm.name = state.name
+  stateForm.label = state.label
+  stateError.value = ''
+  stateOpen.value = true
+}
+
+async function saveState() {
+  if (!selectedId.value) return
+  stateError.value = ''
+  if (!stateForm.name.trim() || !stateForm.label.trim()) {
+    stateError.value = 'name and label are required'
+    return
+  }
+  if (!/^[a-z][a-z0-9_]*$/.test(stateForm.name)) {
+    stateError.value = 'name must be lowercase snake_case (e.g. open)'
+    return
+  }
+  savingState.value = true
+  try {
+    if (editingState.value) {
+      await $fetch(`/api/meta/workflow/states/${encodeURIComponent(editingState.value.id)}`, {
+        method: 'PUT',
+        body: { label: stateForm.label }
+      })
+      toast.add({ title: 'State updated', color: 'success', icon: 'i-lucide-check' })
+    } else {
+      await $fetch(`/api/meta/entities/${encodeURIComponent(selectedId.value)}/workflow/states`, {
+        method: 'POST',
+        body: { name: stateForm.name, label: stateForm.label }
+      })
+      toast.add({ title: 'State created', color: 'success', icon: 'i-lucide-check' })
+    }
+    stateOpen.value = false
+    await refreshWorkflow()
+  } catch (e: any) {
+    stateError.value = e?.data?.message || e?.statusMessage || 'Failed to save state'
+  } finally {
+    savingState.value = false
+  }
+}
+
+function confirmDeleteState(state: WorkflowState) {
+  stateToDelete.value = state
+  deleteStateOpen.value = true
+}
+
+async function removeState() {
+  if (!stateToDelete.value) return
+  deletingState.value = true
+  try {
+    await $fetch(`/api/meta/workflow/states/${encodeURIComponent(stateToDelete.value.id)}`, { method: 'DELETE' })
+    deleteStateOpen.value = false
+    stateToDelete.value = null
+    await refreshWorkflow()
+    toast.add({ title: 'State deleted', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    toast.add({
+      title: 'Unable to delete state',
+      description: e?.data?.message || e?.statusMessage || 'Delete failed',
+      color: 'error',
+      icon: 'i-lucide-alert-circle'
+    })
+  } finally {
+    deletingState.value = false
+  }
+}
+
+function openAddTransition() {
+  transitionForm.from_state = ''
+  transitionForm.to_state = ''
+  transitionForm.action = ''
+  transitionError.value = ''
+  transitionOpen.value = true
+}
+
+async function saveTransition() {
+  if (!selectedId.value) return
+  transitionError.value = ''
+  if (!transitionForm.from_state.trim() || !transitionForm.to_state.trim() || !transitionForm.action.trim()) {
+    transitionError.value = 'from, to, and action are required'
+    return
+  }
+  if (!/^[a-z][a-z0-9_]*$/.test(transitionForm.action)) {
+    transitionError.value = 'action must be lowercase snake_case (e.g. submit)'
+    return
+  }
+  if (transitionForm.from_state === transitionForm.to_state) {
+    transitionError.value = 'from and to must differ'
+    return
+  }
+  savingTransition.value = true
+  try {
+    await $fetch(`/api/meta/entities/${encodeURIComponent(selectedId.value)}/workflow/transitions`, {
+      method: 'POST',
+      body: { ...transitionForm }
+    })
+    transitionOpen.value = false
+    await refreshWorkflow()
+    toast.add({ title: 'Transition created', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    transitionError.value = e?.data?.message || e?.statusMessage || 'Failed to save transition'
+  } finally {
+    savingTransition.value = false
+  }
+}
+
+function confirmDeleteTransition(transition: WorkflowTransition) {
+  transitionToDelete.value = transition
+  deleteTransitionOpen.value = true
+}
+
+async function removeTransition() {
+  if (!transitionToDelete.value) return
+  deletingTransition.value = true
+  try {
+    await $fetch(`/api/meta/workflow/transitions/${encodeURIComponent(transitionToDelete.value.id)}`, { method: 'DELETE' })
+    deleteTransitionOpen.value = false
+    transitionToDelete.value = null
+    await refreshWorkflow()
+    toast.add({ title: 'Transition deleted', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    toast.add({
+      title: 'Unable to delete transition',
+      description: e?.data?.message || e?.statusMessage || 'Delete failed',
+      color: 'error',
+      icon: 'i-lucide-alert-circle'
+    })
+  } finally {
+    deletingTransition.value = false
+  }
+}
+
+const stateColumns: TableColumn<WorkflowState>[] = [
+  {
+    accessorKey: 'name',
+    header: 'State',
+    cell: ({ row }) => h('span', { class: 'font-mono' }, row.original.name)
+  },
+  {
+    accessorKey: 'label',
+    header: 'Label'
+  },
+  {
+    id: 'actions',
+    header: () => h('span', { class: 'sr-only' }, 'Actions'),
+    cell: ({ row }) => h('div', { class: 'flex justify-end gap-1' }, [
+      h(UButton, { size: 'xs', variant: 'ghost', onClick: () => openEditState(row.original) }, () => 'Edit'),
+      h(UButton, { size: 'xs', variant: 'ghost', color: 'error', onClick: () => confirmDeleteState(row.original) }, () => 'Delete')
+    ])
+  }
+]
+
+const transitionColumns: TableColumn<WorkflowTransition>[] = [
+  {
+    accessorKey: 'from_state',
+    header: 'From',
+    cell: ({ row }) => h('span', { class: 'font-mono' }, row.original.from_state)
+  },
+  {
+    accessorKey: 'action',
+    header: 'Action',
+    cell: ({ row }) => h(UBadge, { variant: 'subtle' }, () => row.original.action)
+  },
+  {
+    accessorKey: 'to_state',
+    header: 'To',
+    cell: ({ row }) => h('span', { class: 'font-mono' }, row.original.to_state)
+  },
+  {
+    id: 'actions',
+    header: () => h('span', { class: 'sr-only' }, 'Actions'),
+    cell: ({ row }) => h(UButton, { size: 'xs', variant: 'ghost', color: 'error', onClick: () => confirmDeleteTransition(row.original) }, () => 'Delete')
+  }
+]
+
+// --- Field table (UTable) ---
+const fieldColumns: TableColumn<Field>[] = [
+  {
+    accessorKey: 'name',
+    header: 'Name',
+    cell: ({ row }) => h('span', { class: 'font-mono' }, row.original.name)
+  },
+  {
+    accessorKey: 'type',
+    header: 'Type',
+    cell: ({ row }) => h(UBadge, { color: typeBadgeColor(row.original.type), variant: 'subtle' }, () => row.original.type)
+  },
+  {
+    accessorKey: 'required',
+    header: 'Required',
+    cell: ({ row }) => row.original.required ? 'Yes' : 'No'
+  },
+  {
+    accessorKey: 'is_status',
+    header: 'Status',
+    cell: ({ row }) => row.original.is_status
+      ? h(UBadge, { color: 'primary', variant: 'subtle' }, () => 'Status field')
+      : ''
+  },
+  {
+    id: 'actions',
+    header: () => h('span', { class: 'sr-only' }, 'Actions'),
+    cell: ({ row }) => h('div', { class: 'flex justify-end gap-1' }, [
+      h(UButton, { size: 'xs', variant: 'ghost', onClick: () => openEditField(row.original) }, () => 'Edit'),
+      h(UButton, { size: 'xs', variant: 'ghost', color: 'error', onClick: () => confirmDeleteField(row.original) }, () => 'Delete')
+    ])
+  }
+]
 </script>
 
 <template>
-  <UContainer class="py-8">
-    <UCard>
-      <template #header>
-        <div class="flex items-center justify-between">
-          <h1 class="text-xl font-semibold">
-            Entity Manager
-          </h1>
+  <UDashboardPanel id="entity-manager">
+    <template #header>
+      <UDashboardNavbar title="Entity Manager">
+        <template #leading>
+          <UDashboardSidebarCollapse />
+        </template>
+        <template #right>
           <UButton
             icon="i-lucide-refresh-cw"
             variant="ghost"
@@ -44,64 +692,480 @@ async function createEntity() {
           >
             Refresh
           </UButton>
+        </template>
+      </UDashboardNavbar>
+    </template>
+    <template #body>
+      <div class="grid h-full grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
+        <!-- Left: entity list -->
+        <UCard class="h-fit lg:h-full">
+          <UInput v-model="search" icon="i-lucide-search" placeholder="Search entities…" class="mb-3 w-full" />
+          <div class="space-y-1">
+            <UButton
+              v-for="entity in filteredEntities"
+              :key="entity.id"
+              variant="ghost"
+              class="w-full justify-between"
+              :class="selectedId === entity.id ? 'bg-primary/10 text-primary' : ''"
+              @click="selectEntity(entity.id)"
+            >
+              <span class="truncate">{{ entity.label }}</span>
+              <span class="shrink-0 font-mono text-xs text-muted">{{ entity.id }}</span>
+            </UButton>
+            <p v-if="!filteredEntities.length" class="py-6 text-center text-sm text-muted">
+              No entities found.
+            </p>
+          </div>
+          <UButton icon="i-lucide-plus" class="mt-4 w-full" @click="createOpen = true">
+            New Entity
+          </UButton>
+        </UCard>
+
+        <!-- Right: detail -->
+        <div v-if="!selectedId" class="flex flex-col items-center justify-center gap-3 py-24 text-center">
+          <UIcon name="i-lucide-mouse-pointer-click" class="h-10 w-10 text-muted" />
+          <p class="text-sm text-muted">Select an entity to manage its fields.</p>
         </div>
-      </template>
 
-      <UAlert
-        v-if="status === 'error'"
-        color="error"
-        title="Cannot load entities"
-        description="Is the Rust core running on port 8787?"
-        class="mb-4"
-      />
+        <UCard v-else-if="detailStatus === 'pending'" class="h-fit">
+          <USkeleton v-for="index in 4" :key="index" class="mb-3 h-8 w-full" />
+        </UCard>
 
-      <div v-else-if="status === 'pending'" class="py-8 text-center text-sm text-gray-500">
-        Loading entities…
+        <UCard v-else-if="detailError" class="h-fit">
+          <UAlert
+            color="error"
+            title="Cannot load entity"
+            :description="detailError.message || 'Check the Rust core connection.'"
+          >
+            <template #actions>
+              <UButton size="sm" variant="outline" @click="refreshDetail()">Retry</UButton>
+            </template>
+          </UAlert>
+        </UCard>
+
+        <UCard v-else-if="detail" class="h-fit">
+          <div class="mb-4 flex items-start justify-between gap-4">
+            <div>
+              <h2 class="text-lg font-semibold">{{ detail.label }}</h2>
+              <p class="font-mono text-sm text-muted">{{ detail.name }}</p>
+            </div>
+            <div class="flex gap-2">
+              <UButton size="sm" variant="outline" icon="i-lucide-pencil" @click="openEditEntity">
+                Edit
+              </UButton>
+              <UButton size="sm" color="error" variant="ghost" icon="i-lucide-trash" @click="deleteEntityOpen = true">
+                Delete
+              </UButton>
+            </div>
+          </div>
+
+          <UTabs :items="tabItems" class="w-full">
+            <template #fields>
+              <div class="flex items-center justify-between py-3">
+                <p class="text-sm text-muted">{{ detail.fields.length }} fields</p>
+                <UButton size="sm" icon="i-lucide-plus" @click="openAddField">Add field</UButton>
+              </div>
+              <UTable :data="detail.fields" :columns="fieldColumns" :get-row-id="(row: Field) => row.id" class="w-full">
+                <template #empty>
+                  <div class="py-10 text-center text-muted">
+                    No fields yet. Add your first field to start creating records.
+                  </div>
+                </template>
+              </UTable>
+            </template>
+            <template #workflow>
+              <div v-if="workflowStatus === 'pending'" class="py-6">
+                <USkeleton v-for="index in 3" :key="index" class="mb-3 h-8 w-full" />
+              </div>
+              <UAlert
+                v-else-if="workflowStatus === 'error'"
+                color="error"
+                title="Cannot load workflow"
+                :description="workflowError?.message || 'Check the Rust core connection.'"
+              >
+                <template #actions>
+                  <UButton size="sm" variant="outline" @click="refreshWorkflow()">Retry</UButton>
+                </template>
+              </UAlert>
+              <div v-else class="space-y-6 py-3">
+                <div>
+                  <div class="flex items-center justify-between pb-2">
+                    <p class="text-sm text-muted">{{ (workflow?.states || []).length }} states</p>
+                    <UButton size="sm" icon="i-lucide-plus" @click="openAddState">Add state</UButton>
+                  </div>
+                  <UTable :data="workflow?.states || []" :columns="stateColumns" :get-row-id="(row: WorkflowState) => row.id" class="w-full">
+                    <template #empty>
+                      <div class="py-8 text-center text-muted">No states yet. Add the first state (e.g. draft).</div>
+                    </template>
+                  </UTable>
+                </div>
+                <div>
+                  <div class="flex items-center justify-between pb-2">
+                    <p class="text-sm text-muted">{{ (workflow?.transitions || []).length }} transitions</p>
+                    <UButton size="sm" icon="i-lucide-plus" @click="openAddTransition">Add transition</UButton>
+                  </div>
+                  <UTable :data="workflow?.transitions || []" :columns="transitionColumns" :get-row-id="(row: WorkflowTransition) => row.id" class="w-full">
+                    <template #empty>
+                      <div class="py-8 text-center text-muted">No transitions yet. Connect two states with an action.</div>
+                    </template>
+                  </UTable>
+                </div>
+              </div>
+            </template>
+            <template #permissions>
+              <div v-if="permissionsStatus === 'pending'" class="py-6">
+                <USkeleton v-for="index in 2" :key="index" class="mb-3 h-8 w-full" />
+              </div>
+              <UAlert
+                v-else-if="permissionsStatus === 'error'"
+                color="error"
+                title="Cannot load permissions"
+                :description="permissionsError?.message || 'Check the Rust core connection.'"
+              >
+                <template #actions>
+                  <UButton size="sm" variant="outline" @click="refreshPermissions()">Retry</UButton>
+                </template>
+              </UAlert>
+              <div v-else class="space-y-2 py-3">
+                <h3 class="text-sm font-semibold">Entity access</h3>
+                <div v-for="permission in permissions || []" :key="permission.role" class="flex items-center justify-between gap-4 rounded-lg border border-default px-4 py-3">
+                  <div>
+                    <p class="font-mono text-sm font-medium">{{ permission.role }}</p>
+                    <p class="text-xs text-muted">{{ permission.role === 'admin' ? 'Full access' : 'Limited by toggles' }}</p>
+                  </div>
+                  <div class="flex items-center gap-4">
+                    <UFormField label="View" :ui="{ label: 'text-xs' }">
+                      <USwitch :model-value="permission.can_view" :disabled="savingPermissions" @update:model-value="togglePermission(permission, 'can_view')" />
+                    </UFormField>
+                    <UFormField label="Edit" :ui="{ label: 'text-xs' }">
+                      <USwitch :model-value="permission.can_edit" :disabled="savingPermissions || !permission.can_view" @update:model-value="togglePermission(permission, 'can_edit')" />
+                    </UFormField>
+                  </div>
+                </div>
+                <h3 class="pt-4 text-sm font-semibold">Field access (user role — admin always has full access)</h3>
+                <div v-if="fieldPermissionsStatus === 'pending'" class="py-4">
+                  <USkeleton v-for="index in 2" :key="index" class="mb-2 h-8 w-full" />
+                </div>
+                <UAlert
+                  v-else-if="fieldPermissionsStatus === 'error'"
+                  color="error"
+                  title="Cannot load field permissions"
+                  :description="fieldPermissionsError?.message || 'Check the Rust core connection.'"
+                >
+                  <template #actions>
+                    <UButton size="sm" variant="outline" @click="refreshFieldPermissions()">Retry</UButton>
+                  </template>
+                </UAlert>
+                <div v-else-if="!(detail?.fields || []).length" class="py-4 text-sm text-muted">No fields yet.</div>
+                <div v-else class="space-y-2">
+                  <div v-for="field in detail?.fields || []" :key="field.id" class="flex items-center justify-between gap-4 rounded-lg border border-default px-4 py-2">
+                    <div>
+                      <p class="font-mono text-sm font-medium">{{ field.name }}</p>
+                      <p class="text-xs text-muted">{{ field.type }}{{ field.required ? ' · required' : '' }}{{ field.is_status ? ' · status' : '' }}</p>
+                    </div>
+                    <div class="flex items-center gap-4">
+                      <UFormField label="View" :ui="{ label: 'text-xs' }">
+                        <USwitch :model-value="fieldPermissionFor(field.id)?.can_view ?? true" :disabled="savingFieldPermissions" @update:model-value="toggleFieldPermission(field.id, 'can_view')" />
+                      </UFormField>
+                      <UFormField label="Edit" :ui="{ label: 'text-xs' }">
+                        <USwitch :model-value="fieldPermissionFor(field.id)?.can_edit ?? true" :disabled="savingFieldPermissions || !(fieldPermissionFor(field.id)?.can_view ?? true)" @update:model-value="toggleFieldPermission(field.id, 'can_edit')" />
+                      </UFormField>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+            <template #views>
+              <div v-if="viewsStatus === 'pending'" class="py-6">
+                <USkeleton v-for="index in 2" :key="index" class="mb-3 h-8 w-full" />
+              </div>
+              <UAlert
+                v-else-if="viewsStatus === 'error'"
+                color="error"
+                title="Cannot load views"
+                :description="viewsError?.message || 'Check the Rust core connection.'"
+              >
+                <template #actions>
+                  <UButton size="sm" variant="outline" @click="refreshViews()">Retry</UButton>
+                </template>
+              </UAlert>
+              <div v-else class="py-3">
+                <div class="flex items-center justify-between pb-2">
+                  <p class="text-sm text-muted">{{ (views || []).length }} views</p>
+                  <UButton size="sm" icon="i-lucide-plus" @click="openAddView">Add view</UButton>
+                </div>
+                <div v-if="!(views || []).length" class="py-8 text-center text-sm text-muted">
+                  No views yet. Save the current list filter as a view.
+                </div>
+                <div v-else class="space-y-2">
+                  <div v-for="view in views || []" :key="view.id" class="flex items-center justify-between gap-4 rounded-lg border border-default px-4 py-3">
+                    <div>
+                      <p class="text-sm font-medium">{{ view.name }}</p>
+                      <p class="font-mono text-xs text-muted">{{ view.id }}</p>
+                    </div>
+                    <div class="flex items-center gap-1">
+                      <UButton size="xs" variant="ghost" :to="`/app/${encodeURIComponent(selectedId)}?view=${encodeURIComponent(view.id)}`">Open</UButton>
+                      <UButton size="xs" variant="ghost" color="error" @click="confirmDeleteView(view)">Delete</UButton>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </UTabs>
+        </UCard>
       </div>
 
-      <template v-else>
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="border-b text-left text-gray-500">
-              <th class="py-2 pr-4">ID</th>
-              <th class="py-2 pr-4">Name</th>
-              <th class="py-2">Label</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="entity in entities" :key="entity.id" class="border-b last:border-0">
-              <td class="py-2 pr-4 font-mono">{{ entity.id }}</td>
-              <td class="py-2 pr-4">{{ entity.name }}</td>
-              <td class="py-2">{{ entity.label }}</td>
-            </tr>
-            <tr v-if="!entities?.length">
-              <td colspan="3" class="py-8 text-center text-gray-500">
-                No entities yet. Create one below.
-              </td>
-            </tr>
-          </tbody>
-        </table>
-
-        <UForm class="mt-6 border-t pt-6" @submit="createEntity">
-          <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <UFormField label="ID">
-              <UInput v-model="form.id" placeholder="work_order" />
+      <!-- Create entity modal -->
+      <UModal v-model:open="createOpen" title="New Entity">
+        <template #body>
+          <UForm class="space-y-4" @submit="createEntity">
+            <UFormField label="ID" hint="lowercase, no spaces (e.g. work_order)">
+              <UInput v-model="createForm.id" placeholder="e.g. customer" />
             </UFormField>
             <UFormField label="Name">
-              <UInput v-model="form.name" placeholder="work_order" />
+              <UInput v-model="createForm.name" placeholder="e.g. customer" />
             </UFormField>
             <UFormField label="Label">
-              <UInput v-model="form.label" placeholder="Work Order" />
+              <UInput v-model="createForm.label" placeholder="e.g. Customer" />
             </UFormField>
+            <UAlert v-if="createError" color="error" :title="createError" />
+          </UForm>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="createOpen = false">Cancel</UButton>
+            <UButton :loading="creating" @click="createEntity">Create Entity</UButton>
           </div>
-          <UAlert v-if="error" color="error" :title="error" class="mt-4" />
-          <div class="mt-4">
-            <UButton type="submit" :loading="creating">
-              Create Entity
+        </template>
+      </UModal>
+
+      <!-- Edit entity modal -->
+      <UModal v-model:open="editOpen" title="Edit Entity">
+        <template #body>
+          <UForm class="space-y-4" @submit="saveEntity">
+            <UFormField label="Name">
+              <UInput v-model="editForm.name" />
+            </UFormField>
+            <UFormField label="Label">
+              <UInput v-model="editForm.label" />
+            </UFormField>
+            <UAlert v-if="editError" color="error" :title="editError" />
+          </UForm>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="editOpen = false">Cancel</UButton>
+            <UButton :loading="editing" @click="saveEntity">Save</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <!-- Delete entity modal -->
+      <UModal v-model:open="deleteEntityOpen" :title="`Delete ${detail?.label || 'entity'}`">
+        <template #body>
+          <p class="text-sm text-muted">
+            This will permanently delete this entity and all its fields. This action cannot be undone.
+          </p>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="deleteEntityOpen = false">Cancel</UButton>
+            <UButton color="error" :loading="deletingEntity" @click="removeEntity">Delete</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <!-- Field slideover -->
+      <USlideover v-model:open="fieldOpen" :title="editingField ? 'Edit field' : 'Add field'">
+        <template #body>
+          <UForm class="space-y-4" @submit="saveField">
+            <UFormField label="Name" hint="lowercase, no spaces (e.g. work_order)">
+              <UInput v-model="fieldForm.name" placeholder="title" />
+            </UFormField>
+            <UFormField label="Type">
+              <USelectMenu v-model="fieldForm.type" :items="typeItems" value-key="value" class="w-full" />
+            </UFormField>
+            <UFormField label="Required">
+              <USwitch v-model="fieldForm.required" />
+            </UFormField>
+            <UFormField v-if="fieldForm.type === 'select'" label="Status field" hint="Drives workflow transitions and status badges">
+              <USwitch v-model="fieldForm.is_status" />
+            </UFormField>
+
+            <div v-if="fieldForm.type === 'select'">
+              <div class="mb-2 flex items-center justify-between">
+                <p class="text-sm font-medium">Options</p>
+                <p v-if="editingField" class="text-xs text-muted">{{ editingFieldOptions.length }} options</p>
+              </div>
+              <div v-if="editingField" class="space-y-2">
+                <div v-for="option in editingFieldOptions" :key="option.id" class="flex items-center gap-2">
+                  <span class="w-24 truncate font-mono text-xs text-muted">{{ option.value }}</span>
+                  <span class="flex-1 text-sm">{{ option.label }}</span>
+                  <UButton size="xs" variant="ghost" color="error" icon="i-lucide-x" @click="removeOption(option)" />
+                </div>
+                <p v-if="!editingFieldOptions.length" class="text-sm text-muted">No options yet.</p>
+              </div>
+              <p v-else class="text-sm text-muted">Save the field first, then add options.</p>
+              <div v-if="editingField" class="mt-3 flex items-center gap-2">
+                <UInput v-model="newOption.value" placeholder="value (e.g. open)" class="w-28" />
+                <UInput v-model="newOption.label" placeholder="label (e.g. Open)" class="flex-1" />
+                <UButton size="sm" icon="i-lucide-plus" @click="addOption" />
+              </div>
+              <UAlert v-if="optionError" color="error" :title="optionError" class="mt-2" />
+            </div>
+
+            <UAlert v-if="fieldError" color="error" :title="fieldError" />
+          </UForm>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="fieldOpen = false">Cancel</UButton>
+            <UButton :loading="savingField" @click="saveField">
+              {{ editingField ? 'Save' : 'Create field' }}
             </UButton>
           </div>
-        </UForm>
-      </template>
-    </UCard>
-  </UContainer>
+        </template>
+      </USlideover>
+
+      <!-- Delete field modal -->
+      <UModal v-model:open="deleteFieldOpen" title="Delete field">
+        <template #body>
+          <p class="text-sm text-muted">
+            This will permanently delete the field
+            <span class="font-mono">{{ fieldToDelete?.name }}</span>. This action cannot be undone.
+          </p>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="deleteFieldOpen = false">Cancel</UButton>
+            <UButton color="error" :loading="deletingField" @click="removeField">Delete</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <!-- State modal -->
+      <UModal v-model:open="stateOpen" :title="editingState ? 'Edit state' : 'Add state'">
+        <template #body>
+          <UForm class="space-y-4" @submit="saveState">
+            <UFormField label="Name" hint="lowercase, no spaces (e.g. open)">
+              <UInput v-model="stateForm.name" placeholder="open" :disabled="!!editingState" />
+            </UFormField>
+            <UFormField label="Label">
+              <UInput v-model="stateForm.label" placeholder="Open" />
+            </UFormField>
+            <UAlert v-if="stateError" color="error" :title="stateError" />
+          </UForm>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="stateOpen = false">Cancel</UButton>
+            <UButton :loading="savingState" @click="saveState">{{ editingState ? 'Save' : 'Create state' }}</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <!-- Delete state modal -->
+      <UModal v-model:open="deleteStateOpen" title="Delete state">
+        <template #body>
+          <p class="text-sm text-muted">
+            This will permanently delete the state
+            <span class="font-mono">{{ stateToDelete?.name }}</span>. States used by transitions cannot be deleted.
+          </p>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="deleteStateOpen = false">Cancel</UButton>
+            <UButton color="error" :loading="deletingState" @click="removeState">Delete</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <!-- Transition modal -->
+      <UModal v-model:open="transitionOpen" title="Add transition">
+        <template #body>
+          <UForm class="space-y-4" @submit="saveTransition">
+            <UFormField label="From state">
+              <USelectMenu
+                v-model="transitionForm.from_state"
+                :items="(workflow?.states || []).map(s => ({ label: s.label, value: s.name }))"
+                value-key="value"
+                placeholder="Select…"
+                class="w-full"
+              />
+            </UFormField>
+            <UFormField label="To state">
+              <USelectMenu
+                v-model="transitionForm.to_state"
+                :items="(workflow?.states || []).map(s => ({ label: s.label, value: s.name }))"
+                value-key="value"
+                placeholder="Select…"
+                class="w-full"
+              />
+            </UFormField>
+            <UFormField label="Action" hint="lowercase, no spaces (e.g. submit)">
+              <UInput v-model="transitionForm.action" placeholder="submit" />
+            </UFormField>
+            <UAlert v-if="transitionError" color="error" :title="transitionError" />
+          </UForm>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="transitionOpen = false">Cancel</UButton>
+            <UButton :loading="savingTransition" @click="saveTransition">Create transition</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <!-- Delete transition modal -->
+      <UModal v-model:open="deleteTransitionOpen" title="Delete transition">
+        <template #body>
+          <p class="text-sm text-muted">
+            This will permanently delete the transition
+            <span class="font-mono">{{ transitionToDelete?.from_state }} → {{ transitionToDelete?.to_state }}</span>
+            ({{ transitionToDelete?.action }}). This action cannot be undone.
+          </p>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="deleteTransitionOpen = false">Cancel</UButton>
+            <UButton color="error" :loading="deletingTransition" @click="removeTransition">Delete</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <!-- Add view modal -->
+      <UModal v-model:open="viewOpen" title="Add view">
+        <template #body>
+          <UForm class="space-y-4" @submit="saveView">
+            <UFormField label="Name" hint="e.g. Open only">
+              <UInput v-model="viewForm.name" placeholder="Open only" />
+            </UFormField>
+            <UAlert v-if="viewError" color="error" :title="viewError" />
+          </UForm>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="viewOpen = false">Cancel</UButton>
+            <UButton :loading="savingView" @click="saveView">Create view</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <!-- Delete view modal -->
+      <UModal v-model:open="deleteViewOpen" title="Delete view">
+        <template #body>
+          <p class="text-sm text-muted">
+            This will permanently delete the view
+            <span class="font-mono">{{ viewToDelete?.name }}</span>. This action cannot be undone.
+          </p>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="deleteViewOpen = false">Cancel</UButton>
+            <UButton color="error" :loading="deletingView" @click="removeView">Delete</UButton>
+          </div>
+        </template>
+      </UModal>
+    </template>
+  </UDashboardPanel>
 </template>

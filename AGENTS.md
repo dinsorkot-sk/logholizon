@@ -38,6 +38,13 @@ cargo run -p logholizon-cli -- check
 - Use `pnpm` for Node tasks, `cargo` for Rust tasks. Commit lockfiles.
 - Add one focused test for non-trivial logic. Run relevant gates after changes.
 
+## Working notes
+
+- Read [`docs/plans/2026-09-05-rust-core-erp.md`](docs/plans/2026-09-05-rust-core-erp.md) for scope and [`docs/plans/2026-09-05-ux-ui-fixes.md`](docs/plans/2026-09-05-ux-ui-fixes.md) for UI acceptance criteria.
+- Core dev runs from `packages/core`, therefore defaults to `packages/core/.data/core.db`; root CLI defaults to `.data/core.db`. Set `CORE_DATABASE_URL` when one DB is required.
+- In PowerShell, Cargo progress uses stderr. Judge commands by `$LASTEXITCODE`; stop the running core before a Rust test needs to replace its executable.
+- `sqlx::migrate!("../../migrations")` embeds numbered migrations. Add a new migration; do not change `db.rs`.
+
 ## Generated and local files
 
 Do not commit `target/`, `.data/`, `.nuxt/`, `.output/`, `node_modules/`, `.turbo/`, or `.env*`.
