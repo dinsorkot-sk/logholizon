@@ -114,6 +114,10 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
             get(get_entity_view).delete(delete_entity_view),
         )
         .route(
+            "/v1/meta/entities/{id}/form-layout",
+            get(get_entity_form_layout).put(update_entity_form_layout),
+        )
+        .route(
             "/v1/meta/entities/{id}/workflow/states",
             axum::routing::post(create_workflow_state),
         )
@@ -168,6 +172,10 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
         .route("/v1/entities/{id}/workflow", get(get_workflow_for_user))
         .route("/v1/entities/{id}/views", get(list_entity_views_for_user))
         .route("/v1/views/{id}", get(get_entity_view_for_user))
+        .route(
+            "/v1/entities/{id}/form-layout",
+            get(get_entity_form_layout_for_user),
+        )
         .route("/v1/entities/{id}/export", get(export_documents_for_user))
         .route(
             "/v1/entities/{id}/import/preview",
@@ -548,6 +556,47 @@ async fn delete_entity_view(
     repository::delete_entity_view(&state.pool, &id)
         .await
         .map(|()| StatusCode::NO_CONTENT)
+        .map_err(map_db_error)
+}
+
+async fn get_entity_form_layout(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::FormLayout>, AppError> {
+    repository::get_entity_form_layout(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateFormLayoutRequest {
+    #[serde(default)]
+    pub config: serde_json::Value,
+}
+
+async fn update_entity_form_layout(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<UpdateFormLayoutRequest>,
+) -> Result<Json<repository::FormLayout>, AppError> {
+    repository::update_entity_form_layout(&state.pool, &id, &input.config)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn get_entity_form_layout_for_user(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::FormLayout>, AppError> {
+    repository::check_permission(&state.pool, &id, &current_role(&user), false)
+        .await
+        .map_err(map_db_error)?;
+    repository::get_entity_form_layout(&state.pool, &id)
+        .await
+        .map(Json)
         .map_err(map_db_error)
 }
 

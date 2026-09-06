@@ -80,6 +80,11 @@ export type CoreEntityView = {
   created_at: string
 }
 
+export type CoreFormLayout = {
+  entity_id: string
+  config: Record<string, unknown>
+}
+
 export type CreateDocumentInput = {
   id: string
   entity_id: string
@@ -311,6 +316,15 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       request<CoreEntityView>(`/v1/meta/views/${encodeURIComponent(id)}`),
     deleteEntityView: (id: string): Promise<void> =>
       request<void>(`/v1/meta/views/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    getFormLayout: (entityId: string): Promise<CoreFormLayout> =>
+      request<CoreFormLayout>(`/v1/meta/entities/${encodeURIComponent(entityId)}/form-layout`),
+    updateFormLayout: (entityId: string, config: Record<string, unknown>): Promise<CoreFormLayout> =>
+      request<CoreFormLayout>(`/v1/meta/entities/${encodeURIComponent(entityId)}/form-layout`, {
+        method: 'PUT',
+        body: { config }
+      }),
+    getFormLayoutForUser: (entityId: string): Promise<CoreFormLayout> =>
+      request<CoreFormLayout>(`/v1/entities/${encodeURIComponent(entityId)}/form-layout`),
     deleteWorkflowTransition: (id: string): Promise<void> =>
       request<void>(`/v1/meta/workflow/transitions/${encodeURIComponent(id)}`, {
         method: 'DELETE'

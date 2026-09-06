@@ -17,6 +17,8 @@ type WorkflowDefinition = { states: WorkflowState[]; transitions: WorkflowTransi
 type EntityPermission = { role: string; can_view: boolean; can_edit: boolean }
 type FieldPermission = { field_id: string; role: string; can_view: boolean; can_edit: boolean }
 type EntityView = { id: string; entity_id: string; name: string; config: Record<string, unknown>; created_at: string }
+type FormLayoutSection = { id: string; label: string; fields: string[] }
+type FormLayout = { entity_id: string; config: { sections?: FormLayoutSection[] } }
 
 const toast = useToast()
 const { data: entities, status, refresh } = await useFetch<Entity[]>('/api/meta/entities')
@@ -33,6 +35,8 @@ const fieldPermissionsUrl = computed(() => selectedId.value ? `/api/meta/entitie
 const { data: fieldPermissions, status: fieldPermissionsStatus, error: fieldPermissionsError, refresh: refreshFieldPermissions } = await useFetch<FieldPermission[]>(fieldPermissionsUrl, { immediate: false })
 const viewsUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/views` : '')
 const { data: views, status: viewsStatus, error: viewsError, refresh: refreshViews } = await useFetch<EntityView[]>(viewsUrl, { immediate: false })
+const formLayoutUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/form-layout` : '')
+const { data: formLayout, status: formLayoutStatus, error: formLayoutError, refresh: refreshFormLayout } = await useFetch<FormLayout>(formLayoutUrl, { immediate: false })
 
 const filteredEntities = computed(() => {
   const q = search.value.trim().toLowerCase()
@@ -46,7 +50,8 @@ const tabItems = [
   { label: 'Fields', icon: 'i-lucide-table', slot: 'fields' },
   { label: 'Workflow', icon: 'i-lucide-git-branch', slot: 'workflow' },
   { label: 'Permissions', icon: 'i-lucide-shield', slot: 'permissions' },
-  { label: 'Views', icon: 'i-lucide-eye', slot: 'views' }
+  { label: 'Views', icon: 'i-lucide-eye', slot: 'views' },
+  { label: 'Form Layout', icon: 'i-lucide-layout-dashboard', slot: 'form-layout' }
 ]
 
 const typeItems = [
@@ -72,6 +77,8 @@ function selectEntity(id: string) {
   refreshPermissions()
   refreshFieldPermissions()
   refreshViews()
+  refreshFormLayout()
+  resetLayoutEditor()
 }
 
 // --- Permissions ---
@@ -169,6 +176,144 @@ async function saveView() {
     viewError.value = e?.data?.message || e?.statusMessage || 'Failed to create view'
   } finally {
     savingView.value = false
+  }
+}
+
+// --- Form Layout ---
+const layoutSections = ref<FormLayoutSection[]>([])
+const layoutDirty = ref(false)
+const savingLayout = ref(false)
+const layoutError = ref('')
+const sectionForm = reactive({ label: '' })
+const sectionOpen = ref(false)
+
+function layoutFieldIds(sections: FormLayoutSection[]) {
+  return new Set(sections.flatMap(s => s.fields))
+}
+
+function resetLayoutEditor() {
+  const sections = formLayout.value?.config?.sections
+  layoutSections.value = Array.isArray(sections)
+    ? sections.map(s => ({ id: String(s.id), label: String(s.label || s.id), fields: [...(s.fields || [])] }))
+    : []
+  layoutDirty.value = false
+  layoutError.value = ''
+}
+
+watch(formLayout, () => {
+  if (!layoutDirty.value) resetLayoutEditor()
+})
+
+const unassignedFields = computed(() => {
+  const assigned = layoutFieldIds(layoutSections.value)
+  return (detail.value?.fields || []).filter(f => !f.is_status && !assigned.has(f.id))
+})
+
+const layoutPreview = computed(() => {
+  const byId = new Map((detail.value?.fields || []).map(f => [f.id, f]))
+  const sections = layoutSections.value
+    .map(s => ({ id: s.id, label: s.label, fields: s.fields.map(id => byId.get(id)).filter(Boolean) as Field[] }))
+    .filter(s => s.fields.length > 0)
+  const assigned = new Set(sections.flatMap(s => s.fields.map(f => f.id)))
+  const other = (detail.value?.fields || []).filter(f => !f.is_status && !assigned.has(f.id))
+  if (other.length) sections.push({ id: 'other', label: 'Other', fields: other })
+  return sections
+})
+
+function markLayoutDirty() {
+  layoutDirty.value = true
+}
+
+function openAddSection() {
+  sectionForm.label = ''
+  layoutError.value = ''
+  sectionOpen.value = true
+}
+
+function saveSection() {
+  layoutError.value = ''
+  const label = sectionForm.label.trim()
+  if (!label) {
+    layoutError.value = 'section label is required'
+    return
+  }
+  const id = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || `section_${layoutSections.value.length + 1}`
+  if (layoutSections.value.some(s => s.id === id)) {
+    layoutError.value = `section already exists: ${id}`
+    return
+  }
+  layoutSections.value.push({ id, label, fields: [] })
+  sectionOpen.value = false
+  markLayoutDirty()
+}
+
+function removeSection(index: number) {
+  layoutSections.value.splice(index, 1)
+  markLayoutDirty()
+}
+
+function moveSection(index: number, dir: -1 | 1) {
+  const next = index + dir
+  if (next < 0 || next >= layoutSections.value.length) return
+  const [section] = layoutSections.value.splice(index, 1)
+  if (!section) return
+  layoutSections.value.splice(next, 0, section)
+  markLayoutDirty()
+}
+
+function moveField(sectionIndex: number, fieldIndex: number, dir: -1 | 1) {
+  const fields = layoutSections.value[sectionIndex]?.fields
+  if (!fields) return
+  const next = fieldIndex + dir
+  if (next < 0 || next >= fields.length) return
+  const [field] = fields.splice(fieldIndex, 1)
+  if (field === undefined) return
+  fields.splice(next, 0, field)
+  markLayoutDirty()
+}
+
+function moveFieldToSection(fromSection: number, fieldIndex: number, toSection: number) {
+  if (toSection < 0 || toSection >= layoutSections.value.length || fromSection === toSection) return
+  const from = layoutSections.value[fromSection]?.fields
+  const to = layoutSections.value[toSection]?.fields
+  if (!from || !to) return
+  const [field] = from.splice(fieldIndex, 1)
+  if (field === undefined) return
+  to.push(field)
+  markLayoutDirty()
+}
+
+function removeFieldFromLayout(sectionIndex: number, fieldIndex: number) {
+  layoutSections.value[sectionIndex]?.fields.splice(fieldIndex, 1)
+  markLayoutDirty()
+}
+
+function addFieldToSection(sectionIndex: number, fieldId: string) {
+  if (!fieldId || layoutFieldIds(layoutSections.value).has(fieldId)) return
+  layoutSections.value[sectionIndex]?.fields.push(fieldId)
+  markLayoutDirty()
+}
+
+function fieldName(fieldId: string) {
+  return (detail.value?.fields || []).find(f => f.id === fieldId)?.name || fieldId
+}
+
+async function saveLayout() {
+  if (!selectedId.value) return
+  layoutError.value = ''
+  savingLayout.value = true
+  try {
+    await $fetch(`/api/meta/entities/${encodeURIComponent(selectedId.value)}/form-layout`, {
+      method: 'PUT',
+      body: { config: { sections: layoutSections.value } }
+    })
+    layoutDirty.value = false
+    await refreshFormLayout()
+    toast.add({ title: 'Form layout saved', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    layoutError.value = e?.data?.message || e?.statusMessage || 'Failed to save layout'
+  } finally {
+    savingLayout.value = false
   }
 }
 
@@ -911,6 +1056,95 @@ const fieldColumns: TableColumn<Field>[] = [
                 </div>
               </div>
             </template>
+            <template #form-layout>
+              <div v-if="formLayoutStatus === 'pending'" class="py-6">
+                <USkeleton v-for="index in 2" :key="index" class="mb-3 h-8 w-full" />
+              </div>
+              <UAlert
+                v-else-if="formLayoutStatus === 'error'"
+                color="error"
+                title="Cannot load form layout"
+                :description="formLayoutError?.message || 'Check the Rust core connection.'"
+              >
+                <template #actions>
+                  <UButton size="sm" variant="outline" @click="refreshFormLayout()">Retry</UButton>
+                </template>
+              </UAlert>
+              <div v-else class="space-y-4 py-3">
+                <div class="flex items-center justify-between">
+                  <p class="text-sm text-muted">{{ layoutSections.length }} sections · {{ unassignedFields.length }} unassigned fields</p>
+                  <div class="flex gap-2">
+                    <UButton size="sm" variant="outline" icon="i-lucide-plus" @click="openAddSection">Add section</UButton>
+                    <UButton size="sm" :loading="savingLayout" :disabled="!layoutDirty" @click="saveLayout">Save layout</UButton>
+                  </div>
+                </div>
+                <UAlert v-if="layoutError" color="error" :title="layoutError" />
+                <UBadge v-if="layoutDirty" color="warning" variant="subtle">Unsaved changes</UBadge>
+                <div v-if="!layoutSections.length" class="py-8 text-center text-sm text-muted">
+                  No sections yet. Add a section, then assign fields to it. Unassigned fields render under “Other”.
+                </div>
+                <UCard v-for="(section, sectionIndex) in layoutSections" :key="section.id">
+                  <template #header>
+                    <div class="flex items-center justify-between">
+                      <p class="text-sm font-semibold">{{ section.label }} <span class="font-mono text-xs text-muted">{{ section.id }}</span></p>
+                      <div class="flex gap-1">
+                        <UButton size="xs" variant="ghost" icon="i-lucide-arrow-up" :disabled="sectionIndex === 0" @click="moveSection(sectionIndex, -1)" />
+                        <UButton size="xs" variant="ghost" icon="i-lucide-arrow-down" :disabled="sectionIndex === layoutSections.length - 1" @click="moveSection(sectionIndex, 1)" />
+                        <UButton size="xs" variant="ghost" color="error" @click="removeSection(sectionIndex)">Remove</UButton>
+                      </div>
+                    </div>
+                  </template>
+                  <div v-if="!section.fields.length" class="py-2 text-sm text-muted">No fields in this section yet.</div>
+                  <div v-else class="space-y-1">
+                    <div v-for="(fieldId, fieldIndex) in section.fields" :key="fieldId" class="flex items-center justify-between gap-2 rounded border border-default px-3 py-1.5">
+                      <span class="font-mono text-sm">{{ fieldName(fieldId) }}</span>
+                      <div class="flex gap-1">
+                        <UButton size="xs" variant="ghost" icon="i-lucide-arrow-up" :disabled="fieldIndex === 0" @click="moveField(sectionIndex, fieldIndex, -1)" />
+                        <UButton size="xs" variant="ghost" icon="i-lucide-arrow-down" :disabled="fieldIndex === section.fields.length - 1" @click="moveField(sectionIndex, fieldIndex, 1)" />
+                        <USelectMenu
+                          :model-value="String(sectionIndex)"
+                          :items="layoutSections.map((s, i) => ({ label: s.label, value: String(i) }))"
+                          value-key="value"
+                          size="xs"
+                          class="w-28"
+                          aria-label="Move field to section"
+                          @update:model-value="(value: string) => moveFieldToSection(sectionIndex, fieldIndex, Number(value))"
+                        />
+                        <UButton size="xs" variant="ghost" color="error" @click="removeFieldFromLayout(sectionIndex, fieldIndex)">Remove</UButton>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="mt-2 flex items-center gap-2">
+                    <USelectMenu
+                      :model-value="''"
+                      :items="unassignedFields.map(f => ({ label: f.name, value: f.id }))"
+                      value-key="value"
+                      placeholder="Add field…"
+                      size="xs"
+                      class="w-48"
+                      @update:model-value="(value: string) => addFieldToSection(sectionIndex, value)"
+                    />
+                  </div>
+                </UCard>
+                <UCard>
+                  <template #header>
+                    <p class="text-sm font-semibold">Preview</p>
+                  </template>
+                  <div v-if="!layoutPreview.length" class="py-2 text-sm text-muted">Nothing to preview yet.</div>
+                  <div v-else class="space-y-4">
+                    <div v-for="section in layoutPreview" :key="section.id">
+                      <p class="mb-1 text-xs font-semibold uppercase text-muted">{{ section.label }}</p>
+                      <div class="space-y-2 rounded-lg border border-default p-3">
+                        <div v-for="field in section.fields" :key="field.id" class="flex items-center justify-between gap-2 text-sm">
+                          <span class="font-mono">{{ field.name }}</span>
+                          <span class="text-xs text-muted">{{ field.type }}{{ field.required ? ' · required' : '' }}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </UCard>
+              </div>
+            </template>
           </UTabs>
         </UCard>
       </div>
@@ -1147,6 +1381,24 @@ const fieldColumns: TableColumn<Field>[] = [
           <div class="flex justify-end gap-2">
             <UButton variant="ghost" @click="viewOpen = false">Cancel</UButton>
             <UButton :loading="savingView" @click="saveView">Create view</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <!-- Add section modal -->
+      <UModal v-model:open="sectionOpen" title="Add section">
+        <template #body>
+          <UForm class="space-y-4" @submit="saveSection">
+            <UFormField label="Label" hint="e.g. Main details">
+              <UInput v-model="sectionForm.label" placeholder="Main details" />
+            </UFormField>
+            <UAlert v-if="layoutError" color="error" :title="layoutError" />
+          </UForm>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="sectionOpen = false">Cancel</UButton>
+            <UButton @click="saveSection">Add section</UButton>
           </div>
         </template>
       </UModal>

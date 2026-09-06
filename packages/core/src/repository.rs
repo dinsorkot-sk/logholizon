@@ -164,6 +164,12 @@ pub struct EntityView {
 }
 
 #[derive(Debug, Serialize)]
+pub struct FormLayout {
+    pub entity_id: String,
+    pub config: Value,
+}
+
+#[derive(Debug, Serialize)]
 pub struct StatusCount {
     pub status: String,
     pub count: i64,
@@ -604,6 +610,100 @@ pub async fn delete_entity_view(pool: &SqlitePool, id: &str) -> Result<()> {
         return Err(AppError::NotFound(format!("view not found: {id}")).into());
     }
     Ok(())
+}
+
+/// Form layout designer (Visual Builder Phase 2). The layout is a singleton
+/// config per entity: `{ "sections": [{ "id", "label", "fields": [field_id] }] }`.
+/// Missing layout = default flat render. Unknown field ids are rejected on
+/// write (400) and ignored at render time (tolerant policy).
+pub async fn get_entity_form_layout(pool: &SqlitePool, entity_id: &str) -> Result<FormLayout> {
+    require_entity(pool, entity_id).await?;
+    let config: Option<String> =
+        sqlx::query_scalar("SELECT config FROM _entity_form_layout WHERE entity_id = ?")
+            .bind(entity_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(FormLayout {
+        entity_id: entity_id.to_string(),
+        config: config
+            .map(|raw| serde_json::from_str(&raw))
+            .transpose()?
+            .unwrap_or_else(|| serde_json::json!({})),
+    })
+}
+
+fn validate_form_layout_config(config: &Value, field_ids: &[String]) -> Result<()> {
+    let object = config.as_object().ok_or_else(|| {
+        AppError::BadRequest("form layout config must be a JSON object".to_string())
+    })?;
+    let sections = object.get("sections").ok_or_else(|| {
+        AppError::BadRequest("form layout config requires a sections array".to_string())
+    })?;
+    let sections = sections
+        .as_array()
+        .ok_or_else(|| AppError::BadRequest("sections must be an array".to_string()))?;
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for section in sections {
+        let section = section
+            .as_object()
+            .ok_or_else(|| AppError::BadRequest("each section must be an object".to_string()))?;
+        let id = section
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AppError::BadRequest("each section requires a non-empty id".to_string())
+            })?;
+        if !seen.insert(id) {
+            return Err(AppError::BadRequest(format!("duplicate section id: {id}")).into());
+        }
+        if let Some(label) = section.get("label") {
+            if !label.is_string() {
+                return Err(
+                    AppError::BadRequest(format!("section label must be a string: {id}")).into(),
+                );
+            }
+        }
+        let fields = section.get("fields").ok_or_else(|| {
+            AppError::BadRequest(format!("section requires a fields array: {id}"))
+        })?;
+        let fields = fields.as_array().ok_or_else(|| {
+            AppError::BadRequest(format!("section fields must be an array: {id}"))
+        })?;
+        for field in fields {
+            let field_id = field.as_str().ok_or_else(|| {
+                AppError::BadRequest(format!("section field ids must be strings: {id}"))
+            })?;
+            if !field_ids.iter().any(|known| known == field_id) {
+                return Err(AppError::BadRequest(format!("unknown field: {field_id}")).into());
+            }
+            if !seen.insert(field_id) {
+                return Err(AppError::BadRequest(format!("duplicate field: {field_id}")).into());
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn update_entity_form_layout(
+    pool: &SqlitePool,
+    entity_id: &str,
+    config: &Value,
+) -> Result<FormLayout> {
+    require_entity(pool, entity_id).await?;
+    let fields = list_fields(pool, entity_id).await?;
+    let field_ids: Vec<String> = fields.into_iter().map(|f| f.id).collect();
+    validate_form_layout_config(config, &field_ids)?;
+    sqlx::query(
+        "INSERT INTO _entity_form_layout (entity_id, config) VALUES (?, ?) \
+         ON CONFLICT(entity_id) DO UPDATE SET config = excluded.config",
+    )
+    .bind(entity_id)
+    .bind(config.to_string())
+    .execute(pool)
+    .await?;
+    get_entity_form_layout(pool, entity_id).await
 }
 
 pub async fn list_field_options(pool: &SqlitePool, field_id: &str) -> Result<Vec<FieldOption>> {

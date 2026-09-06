@@ -110,6 +110,7 @@ const bulkDeleteOpen = ref(false)
 const bulkDeleting = ref(false)
 
 type EntityView = { id: string; name: string; config: Record<string, unknown> }
+type FormLayoutSection = { id: string; label: string; fields: string[] }
 
 const { data: entities } = await useFetch<{ id: string; label: string }[]>('/api/entities')
 const { data: entity, status: entityStatus, error: entityError } = await useFetch<Entity>(
@@ -123,6 +124,29 @@ const formFields = computed(() => viewableFields.value.filter(f => !f.is_status)
 function isFieldEditable(name: string) {
   return editableFields.value.some(f => f.name === name)
 }
+// Form layout (Visual Builder Phase 2): sections group formFields by field
+// id. Unknown ids are skipped (tolerant); unassigned fields fall to "Other".
+const { data: formLayout } = await useFetch<{ entity_id: string; config: { sections?: FormLayoutSection[] } }>(
+  () => `/api/entities/${encodeURIComponent(entityId.value)}/form-layout`,
+  { watch: [entityId] }
+)
+const layoutSections = computed(() => {
+  const sections = formLayout.value?.config?.sections
+  if (!Array.isArray(sections) || !sections.length) return null
+  const byId = new Map(formFields.value.map(f => [f.id, f]))
+  const grouped = sections
+    .map(s => ({
+      id: String(s.id),
+      label: String(s.label || s.id),
+      fields: (s.fields || []).map(id => byId.get(String(id))).filter((f): f is Field => !!f)
+    }))
+    .filter(s => s.fields.length > 0)
+  const assigned = new Set(grouped.flatMap(s => s.fields.map(f => f.id)))
+  const other = formFields.value.filter(f => !assigned.has(f.id))
+  if (other.length) grouped.push({ id: 'other', label: 'Other', fields: other })
+  if (!grouped.length) return null
+  return grouped
+})
 const activeViewId = computed(() => {
   const view = route.query.view
   return typeof view === 'string' && view.trim() ? view : ''
@@ -819,25 +843,51 @@ async function confirmImport() {
       <USlideover :open="panelOpen" :title="selected ? `Edit ${entity.label}` : `New ${entity.label}`" @update:open="handlePanelOpenChange">
         <template #body>
           <UForm id="record-form" data-testid="record-form" class="space-y-4" @submit="save">
-            <UFormField
-              v-for="field in formFields"
-              :key="field.id"
-              :label="field.name"
-              :required="field.required"
-              :error="fieldErrors[field.name]"
-              :hint="isFieldEditable(field.name) ? undefined : 'View only'"
-            >
-              <USelectMenu
-                v-if="field.type === 'select' && !field.is_status"
-                v-model="payload[field.name] as string"
-                :items="field.options.map(o => ({ label: o.label, value: o.value }))"
-                value-key="value"
-                placeholder="Select…"
-                class="w-full"
-                :disabled="!isFieldEditable(field.name)"
-              />
-              <UInput v-else v-model="payload[field.name] as string" :disabled="!isFieldEditable(field.name)" :type="field.type === 'date' ? 'date' : field.type === 'number' ? 'number' : 'text'" />
-            </UFormField>
+            <template v-if="layoutSections">
+              <div v-for="section in layoutSections" :key="section.id" class="space-y-3">
+                <p class="text-xs font-semibold uppercase text-muted">{{ section.label }}</p>
+                <UFormField
+                  v-for="field in section.fields"
+                  :key="field.id"
+                  :label="field.name"
+                  :required="field.required"
+                  :error="fieldErrors[field.name]"
+                  :hint="isFieldEditable(field.name) ? undefined : 'View only'"
+                >
+                  <USelectMenu
+                    v-if="field.type === 'select' && !field.is_status"
+                    v-model="payload[field.name] as string"
+                    :items="field.options.map(o => ({ label: o.label, value: o.value }))"
+                    value-key="value"
+                    placeholder="Select…"
+                    class="w-full"
+                    :disabled="!isFieldEditable(field.name)"
+                  />
+                  <UInput v-else v-model="payload[field.name] as string" :disabled="!isFieldEditable(field.name)" :type="field.type === 'date' ? 'date' : field.type === 'number' ? 'number' : 'text'" />
+                </UFormField>
+              </div>
+            </template>
+            <template v-else>
+              <UFormField
+                v-for="field in formFields"
+                :key="field.id"
+                :label="field.name"
+                :required="field.required"
+                :error="fieldErrors[field.name]"
+                :hint="isFieldEditable(field.name) ? undefined : 'View only'"
+              >
+                <USelectMenu
+                  v-if="field.type === 'select' && !field.is_status"
+                  v-model="payload[field.name] as string"
+                  :items="field.options.map(o => ({ label: o.label, value: o.value }))"
+                  value-key="value"
+                  placeholder="Select…"
+                  class="w-full"
+                  :disabled="!isFieldEditable(field.name)"
+                />
+                <UInput v-else v-model="payload[field.name] as string" :disabled="!isFieldEditable(field.name)" :type="field.type === 'date' ? 'date' : field.type === 'number' ? 'number' : 'text'" />
+              </UFormField>
+            </template>
             <UAlert v-if="error" color="error" :title="error" />
             <div v-if="selected" class="border-t pt-4">
               <h2 class="mb-2 text-sm font-semibold">History</h2>

@@ -64,9 +64,10 @@ pnpm --dir packages/app run e2e
 
 ---
 
-## Phase 2 — Visual Builder (Form Layout Designer)
+## Phase 2 — Visual Builder (Form Layout Designer) ✅ Done 2026-09-06
 
 > เป้าหมาย: จัด layout ของ form โดยไม่แตะ code — section/group, ลำดับ field, live preview
+> สถานะ: 2.1–2.3 เสร็จ (migration + core + gateway + test + designer tab + runtime render + browser verify); gates ผ่าน (fmt, clippy, test, build, typecheck, e2e 7 tests)
 
 ### 2.1 Layout metadata
 

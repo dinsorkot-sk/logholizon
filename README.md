@@ -108,6 +108,6 @@ See [`packages/app/design.md`](packages/app/design.md) for the UI spec and [`doc
 Next ([`docs/plans/2026-09-06-next-roadmap.md`](docs/plans/2026-09-06-next-roadmap.md)):
 
 - [x] Quality & debt (E2E tests, helper refactor, API consistency)
-- [ ] Visual builder (form layout designer: sections, field ordering, live preview)
+- [x] Visual builder (form layout designer: sections, field ordering, live preview)
 - [ ] Notifications (webhook-first: rules, outbox, retry, delivery log)
 - [ ] Reporting & analytics (saved reports, charts, aggregation in core)

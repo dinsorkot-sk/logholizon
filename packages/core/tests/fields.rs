@@ -359,6 +359,77 @@ async fn views_crud() {
 }
 
 #[tokio::test]
+async fn form_layout_crud_and_validation() {
+    let pool = setup().await;
+    let title = repository::create_field(&pool, "work_order", "title", "text", true, false)
+        .await
+        .unwrap();
+    let note = repository::create_field(&pool, "work_order", "note", "text", false, false)
+        .await
+        .unwrap();
+
+    // Default: empty config when no layout saved yet.
+    let layout = repository::get_entity_form_layout(&pool, "work_order")
+        .await
+        .unwrap();
+    assert_eq!(layout.entity_id, "work_order");
+    assert_eq!(layout.config, serde_json::json!({}));
+
+    // Valid layout round-trips.
+    let config = serde_json::json!({"sections": [
+        {"id": "main", "label": "Main", "fields": [title.id]},
+        {"id": "extra", "label": "Extra", "fields": [note.id]},
+    ]});
+    let saved = repository::update_entity_form_layout(&pool, "work_order", &config)
+        .await
+        .unwrap();
+    assert_eq!(saved.config, config);
+    let fetched = repository::get_entity_form_layout(&pool, "work_order")
+        .await
+        .unwrap();
+    assert_eq!(fetched.config, config);
+
+    // Unknown field rejected.
+    let err = repository::update_entity_form_layout(
+        &pool,
+        "work_order",
+        &serde_json::json!({"sections": [{"id": "main", "label": "Main", "fields": ["nope"]}]}),
+    )
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("unknown field"));
+
+    // Duplicate field across sections rejected.
+    assert!(repository::update_entity_form_layout(
+        &pool,
+        "work_order",
+        &serde_json::json!({"sections": [
+            {"id": "a", "label": "A", "fields": [title.id]},
+            {"id": "b", "label": "B", "fields": [title.id]},
+        ]}),
+    )
+    .await
+    .is_err());
+
+    // Missing sections array rejected.
+    assert!(
+        repository::update_entity_form_layout(&pool, "work_order", &serde_json::json!({}))
+            .await
+            .is_err()
+    );
+
+    // Missing entity rejected.
+    assert!(repository::get_entity_form_layout(&pool, "missing")
+        .await
+        .is_err());
+    assert!(
+        repository::update_entity_form_layout(&pool, "missing", &config)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
 async fn field_validation_rejects_bad_input() {
     let pool = setup().await;
     // invalid type
