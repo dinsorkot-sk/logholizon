@@ -1,41 +1,32 @@
-# Nuxt Minimal Starter
+# LOGHOLIZON App
 
-Look at the [Nuxt documentation](https://nuxt.com/docs/getting-started/introduction) to learn more.
+Nuxt 4 + Nuxt UI frontend and thin Nitro gateway for the LOGHOLIZON ERP platform.
 
-## Setup
+See the [root README](../../README.md) for full setup, commands, and architecture.
 
-Make sure to install dependencies:
+## Development
 
 ```bash
-# npm
-npm install
-
-# pnpm
 pnpm install
-
-# yarn
-yarn install
-
-# bun
-bun install
+pnpm dev
 ```
 
-## Development Server
+The app expects the Rust core on `http://127.0.0.1:8787` (override with `CORE_URL`).
 
-Start the development server on `http://localhost:3000`:
+## Structure
+
+- `app/pages/` — UI pages (dashboard, entity lists, admin)
+- `app/composables/` — shared state (auth)
+- `app/utils/` — shared helpers (validation, audit time)
+- `server/api/` — thin Nitro gateway routes (parse → validate → call core)
+- `server/core/client.ts` — single HTTP client to the Rust core
+
+## Gates
 
 ```bash
-# npm
-npm run dev
-
-# pnpm
-pnpm dev
-
-# yarn
-yarn dev
-
-# bun
-bun run dev
+pnpm run build
+pnpm run test
+pnpm run check
 ```
 
 ## Production
