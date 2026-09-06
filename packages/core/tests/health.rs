@@ -11,6 +11,8 @@ fn test_config() -> Config {
         host: "127.0.0.1".into(),
         port: 0,
         database_url: "sqlite://:memory:".into(),
+        backup_interval_hours: 24,
+        backup_keep: 7,
     }
 }
 
@@ -37,6 +39,8 @@ async fn authed_app() -> (axum::Router, String, sqlx::SqlitePool, std::path::Pat
         host: "127.0.0.1".into(),
         port: 0,
         database_url: url,
+        backup_interval_hours: 24,
+        backup_keep: 7,
     };
     let app = http::router(&config, pool.clone());
     (app, session.token, pool, dir)

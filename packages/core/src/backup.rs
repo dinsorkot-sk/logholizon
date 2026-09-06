@@ -71,3 +71,57 @@ pub async fn apply_staged_restore(database_url: &str) -> Result<bool> {
     tokio::fs::remove_file(&staging).await?;
     Ok(true)
 }
+
+/// Directory holding `core-<timestamp>.db` backups next to the database file.
+pub fn backups_dir_for(database_url: &str) -> Result<std::path::PathBuf> {
+    let db_path = crate::db::database_path(database_url)?;
+    Ok(db_path
+        .parent()
+        .map(|p| p.join("backups"))
+        .unwrap_or_else(|| Path::new("backups").to_path_buf()))
+}
+
+/// Remove oldest `core-*.db` files so at most `keep` remain.
+/// Returns the number of files removed.
+pub async fn prune_backups(dir: &Path, keep: usize) -> Result<usize> {
+    if !dir.is_dir() {
+        return Ok(0);
+    }
+    let mut names: Vec<String> = Vec::new();
+    let mut entries = tokio::fs::read_dir(dir).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if name.starts_with("core-") && name.ends_with(".db") {
+            names.push(name.to_string());
+        }
+    }
+    names.sort();
+    if names.len() <= keep {
+        return Ok(0);
+    }
+    let remove = names.len() - keep;
+    for name in names.iter().take(remove) {
+        tokio::fs::remove_file(dir.join(name)).await?;
+    }
+    Ok(remove)
+}
+
+/// Create a timestamped backup and prune old ones. Returns the new file path.
+pub async fn scheduled_backup(
+    pool: &SqlitePool,
+    database_url: &str,
+    keep: usize,
+) -> Result<std::path::PathBuf> {
+    let dir = backups_dir_for(database_url)?;
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let destination = dir.join(format!("core-{timestamp}.db"));
+    backup(pool, &destination).await?;
+    prune_backups(&dir, keep).await?;
+    Ok(destination)
+}

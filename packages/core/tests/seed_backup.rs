@@ -36,6 +36,30 @@ async fn seed_is_idempotent() {
 }
 
 #[tokio::test]
+async fn prune_backups_keeps_newest() {
+    let dir = temp_path("prunedir");
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+    for name in ["core-1.db", "core-2.db", "core-3.db", "other.txt"] {
+        tokio::fs::write(dir.join(name), b"x").await.unwrap();
+    }
+    let removed = backup::prune_backups(&dir, 2).await.unwrap();
+    assert_eq!(removed, 1);
+    assert!(!dir.join("core-1.db").exists());
+    assert!(dir.join("core-2.db").exists());
+    assert!(dir.join("core-3.db").exists());
+    // Non-backup files are untouched.
+    assert!(dir.join("other.txt").exists());
+    // Missing dir is a no-op.
+    assert_eq!(
+        backup::prune_backups(&dir.join("missing"), 2)
+            .await
+            .unwrap(),
+        0
+    );
+    tokio::fs::remove_dir_all(&dir).await.ok();
+}
+
+#[tokio::test]
 async fn backup_creates_valid_snapshot() {
     // File-backed source: VACUUM INTO from a shared-cache in-memory DB
     // silently produces no file.

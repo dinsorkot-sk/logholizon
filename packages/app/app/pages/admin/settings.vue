@@ -3,7 +3,7 @@ import { h, resolveComponent } from 'vue'
 
 definePageMeta({ middleware: 'auth' })
 
-type AdminStatus = { version: string; database_path: string; integrity: boolean; entities: number; documents: number }
+type AdminStatus = { version: string; database_path: string; integrity: boolean; entities: number; documents: number; backup_interval_hours: number; backup_keep: number }
 type BackupInfo = { name: string; size: number; modified: number }
 
 const toast = useToast()
@@ -150,8 +150,11 @@ async function restartCore() {
           <UCard>
             <template #header>
               <div class="flex items-center justify-between">
-                <h2 class="text-sm font-semibold">Backups</h2>
-                <UButton size="sm" icon="i-lucide-database-backup" :loading="creating" @click="createBackup">Create backup</UButton>
+                <div>
+                  <h2 class="text-sm font-semibold">Backups</h2>
+                  <p class="text-xs text-muted">Automatic backup every {{ status.backup_interval_hours }}h, keep {{ status.backup_keep }} newest</p>
+                </div>
+                <UButton size="sm" icon="i-lucide-database-backup" :loading="creating" @click="createBackup">Backup now</UButton>
               </div>
             </template>
             <div v-if="!backups?.items?.length" class="py-8 text-center text-sm text-muted">

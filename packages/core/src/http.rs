@@ -1012,6 +1012,8 @@ async fn admin_status(State(state): State<AppState>) -> Result<Json<serde_json::
         "integrity": integrity,
         "entities": entities,
         "documents": documents,
+        "backup_interval_hours": state.config.backup_interval_hours,
+        "backup_keep": state.config.backup_keep,
     })))
 }
 

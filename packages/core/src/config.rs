@@ -5,6 +5,8 @@ pub struct Config {
     pub host: String,
     pub port: u16,
     pub database_url: String,
+    pub backup_interval_hours: u64,
+    pub backup_keep: usize,
 }
 
 impl Config {
@@ -16,6 +18,14 @@ impl Config {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(8787),
             database_url: env::var("CORE_DATABASE_URL").unwrap_or_else(|_| default_database_url()),
+            backup_interval_hours: env::var("CORE_BACKUP_INTERVAL_HOURS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(24),
+            backup_keep: env::var("CORE_BACKUP_KEEP")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(7),
         }
     }
 }
