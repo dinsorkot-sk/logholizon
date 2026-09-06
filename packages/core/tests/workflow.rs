@@ -269,6 +269,46 @@ async fn seed_provides_pm_schedule_workflow() {
 }
 
 #[tokio::test]
+async fn pm_summary_counts_open_overdue_done() {
+    let pool = db::connect("sqlite::memory:").await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    seed::seed(&pool).await.unwrap();
+    // open + overdue (due yesterday)
+    repository::create_document(
+        &pool,
+        "pm-1",
+        "pm_schedule",
+        &json!({"title": "Overdue", "due_date": "2020-01-01", "status": "scheduled"}),
+    )
+    .await
+    .unwrap();
+    // open + not overdue (due tomorrow)
+    repository::create_document(
+        &pool,
+        "pm-2",
+        "pm_schedule",
+        &json!({"title": "Future", "due_date": "2099-01-01", "status": "draft"}),
+    )
+    .await
+    .unwrap();
+    // done
+    repository::create_document(
+        &pool,
+        "pm-3",
+        "pm_schedule",
+        &json!({"title": "Done", "due_date": "2020-01-01", "status": "done"}),
+    )
+    .await
+    .unwrap();
+
+    let summary = repository::pm_summary(&pool, "pm_schedule").await.unwrap();
+    assert_eq!(summary.total, 3);
+    assert_eq!(summary.open, 2);
+    assert_eq!(summary.overdue, 1);
+    assert_eq!(summary.done_this_week, 1);
+}
+
+#[tokio::test]
 async fn entity_without_status_field_rejects_transition() {
     let pool = db::connect("sqlite::memory:").await.unwrap();
     db::migrate(&pool).await.unwrap();

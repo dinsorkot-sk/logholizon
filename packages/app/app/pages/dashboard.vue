@@ -1,4 +1,6 @@
 <script setup lang="ts">
+definePageMeta({ middleware: 'auth' })
+
 type Count = { status: string; count: number }
 type Entity = { id: string; label: string }
 

@@ -1,6 +1,6 @@
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::get,
     Json, Router,
@@ -10,6 +10,7 @@ use serde_json::json;
 use sqlx::SqlitePool;
 
 use crate::{
+    auth, backup,
     error::AppError,
     repository::{self, CreateDocument, UpdateDocument},
     Config,
@@ -18,12 +19,40 @@ use crate::{
 #[derive(Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
+    pub config: Config,
 }
 
-pub fn router(_config: &Config, pool: SqlitePool) -> Router {
+fn bearer_token(headers: &HeaderMap) -> Result<String, AppError> {
+    headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(|token| token.trim().to_string())
+        .filter(|token| !token.is_empty())
+        .ok_or_else(|| AppError::Unauthorized("missing bearer token".into()))
+}
+
+async fn require_user(state: &AppState, headers: &HeaderMap) -> Result<auth::User, AppError> {
+    let token = bearer_token(headers)?;
+    auth::user_for_token(&state.pool, &token)
+        .await
+        .map_err(AppError::from)
+}
+
+pub fn router(config: &Config, pool: SqlitePool) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/v1/version", get(version))
+        .route("/v1/auth/register", axum::routing::post(auth_register))
+        .route("/v1/auth/login", axum::routing::post(auth_login))
+        .route("/v1/auth/logout", axum::routing::post(auth_logout))
+        .route("/v1/auth/me", get(auth_me))
+        .route("/v1/admin/status", get(admin_status))
+        .route("/v1/admin/backup", axum::routing::post(admin_backup))
+        .route("/v1/admin/backups", get(admin_list_backups))
+        .route("/v1/admin/backups/{name}", get(admin_download_backup))
+        .route("/v1/admin/restore", axum::routing::post(admin_restore))
+        .route("/v1/admin/restart", axum::routing::post(admin_restart))
         .route("/v1/meta/entities", get(list_entities).post(create_entity))
         .route(
             "/v1/meta/entities/{id}",
@@ -84,7 +113,11 @@ pub fn router(_config: &Config, pool: SqlitePool) -> Router {
             axum::routing::post(transition_document),
         )
         .route("/v1/dashboard/counts", get(dashboard_counts))
-        .with_state(AppState { pool })
+        .route("/v1/dashboard/pm", get(dashboard_pm))
+        .with_state(AppState {
+            pool,
+            config: config.clone(),
+        })
 }
 
 #[derive(Debug, Deserialize)]
@@ -444,6 +477,19 @@ async fn dashboard_counts(
         .map_err(map_db_error)
 }
 
+async fn dashboard_pm(
+    State(state): State<AppState>,
+    Query(query): Query<DashboardQuery>,
+) -> Result<Json<repository::PmSummary>, AppError> {
+    if query.entity_id.trim().is_empty() {
+        return Err(AppError::BadRequest("entity_id is required".into()));
+    }
+    repository::pm_summary(&state.pool, &query.entity_id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
 async fn list_documents(
     State(state): State<AppState>,
     Query(query): Query<ListDocumentsQuery>,
@@ -551,6 +597,8 @@ fn map_db_error(error: anyhow::Error) -> AppError {
             AppError::BadRequest(msg) => AppError::BadRequest(msg.clone()),
             AppError::NotFound(msg) => AppError::NotFound(msg.clone()),
             AppError::Conflict(msg) => AppError::Conflict(msg.clone()),
+            AppError::Unauthorized(msg) => AppError::Unauthorized(msg.clone()),
+            AppError::Forbidden(msg) => AppError::Forbidden(msg.clone()),
             AppError::Internal(_) => AppError::Internal(anyhow::anyhow!("internal error")),
         };
     }
@@ -570,4 +618,201 @@ async fn health() -> axum::Json<serde_json::Value> {
 
 async fn version() -> axum::Json<serde_json::Value> {
     axum::Json(json!({ "name": "logholizon-core", "version": env!("CARGO_PKG_VERSION") }))
+}
+
+// --- Auth ---
+
+#[derive(Debug, Deserialize)]
+pub struct RegisterRequest {
+    pub username: String,
+    pub password: String,
+}
+
+async fn auth_register(
+    State(state): State<AppState>,
+    Json(input): Json<RegisterRequest>,
+) -> Result<(StatusCode, Json<auth::User>), AppError> {
+    auth::register(&state.pool, &input.username, &input.password)
+        .await
+        .map(|user| (StatusCode::CREATED, Json(user)))
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LoginRequest {
+    pub username: String,
+    pub password: String,
+}
+
+async fn auth_login(
+    State(state): State<AppState>,
+    Json(input): Json<LoginRequest>,
+) -> Result<Json<auth::Session>, AppError> {
+    auth::login(&state.pool, &input.username, &input.password)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn auth_logout(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let token = bearer_token(&headers)?;
+    auth::logout(&state.pool, &token)
+        .await
+        .map_err(AppError::from)?;
+    Ok(Json(json!({ "message": "logged out" })))
+}
+
+async fn auth_me(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<auth::User>, AppError> {
+    require_user(&state, &headers).await.map(Json)
+}
+
+// --- Admin: status / backup / restore ---
+
+fn database_path(state: &AppState) -> Result<std::path::PathBuf, AppError> {
+    crate::db::database_path(&state.config.database_url)
+        .map(std::path::Path::to_path_buf)
+        .map_err(AppError::Internal)
+}
+
+fn backups_dir(state: &AppState) -> Result<std::path::PathBuf, AppError> {
+    let db_path = database_path(state)?;
+    Ok(db_path
+        .parent()
+        .map(|p| p.join("backups"))
+        .unwrap_or_else(|| std::path::PathBuf::from("backups")))
+}
+
+async fn admin_status(State(state): State<AppState>) -> Result<Json<serde_json::Value>, AppError> {
+    let integrity = crate::db::integrity_check(&state.pool)
+        .await
+        .map_err(AppError::from)?;
+    let entities: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _meta_entity")
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|error| AppError::Internal(error.into()))?;
+    let documents: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _doc")
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|error| AppError::Internal(error.into()))?;
+    Ok(Json(json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "database_path": database_path(&state)?.to_string_lossy(),
+        "integrity": integrity,
+        "entities": entities,
+        "documents": documents,
+    })))
+}
+
+async fn admin_backup(State(state): State<AppState>) -> Result<Json<serde_json::Value>, AppError> {
+    let dir = backups_dir(&state)?;
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let destination = dir.join(format!("core-{timestamp}.db"));
+    backup::backup(&state.pool, &destination)
+        .await
+        .map_err(AppError::from)?;
+    Ok(Json(json!({ "path": destination.to_string_lossy() })))
+}
+
+async fn admin_list_backups(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let dir = backups_dir(&state)?;
+    let mut items = Vec::new();
+    if dir.is_dir() {
+        let mut entries = tokio::fs::read_dir(&dir)
+            .await
+            .map_err(|error| AppError::Internal(error.into()))?;
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|error| AppError::Internal(error.into()))?
+        {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("db") {
+                continue;
+            }
+            let metadata = entry
+                .metadata()
+                .await
+                .map_err(|error| AppError::Internal(error.into()))?;
+            items.push(json!({
+                "name": path.file_name().and_then(|n| n.to_str()).unwrap_or_default(),
+                "size": metadata.len(),
+                "modified": metadata
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0),
+            }));
+        }
+    }
+    items.sort_by(|a, b| b["name"].as_str().cmp(&a["name"].as_str()));
+    Ok(Json(json!({ "items": items })))
+}
+
+async fn admin_download_backup(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<axum::response::Response, AppError> {
+    if name.contains(['/', '\\', '.', ':']) || !name.ends_with(".db") {
+        return Err(AppError::BadRequest("invalid backup name".into()));
+    }
+    let path = backups_dir(&state)?.join(&name);
+    if !path.is_file() {
+        return Err(AppError::NotFound(format!("backup not found: {name}")));
+    }
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|error| AppError::Internal(error.into()))?;
+    Ok(([("content-type", "application/octet-stream")], bytes).into_response())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RestoreRequest {
+    pub path: String,
+    #[serde(default)]
+    pub force: bool,
+}
+
+async fn admin_restore(
+    State(state): State<AppState>,
+    Json(input): Json<RestoreRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if !input.force {
+        return Err(AppError::BadRequest("restore requires force=true".into()));
+    }
+    let source = std::path::PathBuf::from(&input.path);
+    backup::validate(&source).await.map_err(AppError::from)?;
+    let db_path = database_path(&state)?;
+    let staging = db_path
+        .parent()
+        .map(|p| p.join("restore-pending.db"))
+        .unwrap_or_else(|| std::path::PathBuf::from("restore-pending.db"));
+    tokio::fs::copy(&source, &staging)
+        .await
+        .map_err(|error| AppError::Internal(error.into()))?;
+    Ok(Json(json!({
+        "message": "Restore staged. Restart core to apply.",
+        "staged": staging.to_string_lossy(),
+    })))
+}
+
+async fn admin_restart(
+    State(_state): State<AppState>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        std::process::exit(0);
+    });
+    Ok(Json(json!({ "message": "Core is restarting." })))
 }

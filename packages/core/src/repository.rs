@@ -97,6 +97,14 @@ pub struct StatusCount {
     pub count: i64,
 }
 
+#[derive(Debug, Serialize)]
+pub struct PmSummary {
+    pub open: i64,
+    pub overdue: i64,
+    pub done_this_week: i64,
+    pub total: i64,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateDocument {
     pub payload: Value,
@@ -1176,6 +1184,61 @@ pub async fn count_documents_by_status(
         .into_iter()
         .map(|(status, count)| StatusCount { status, count })
         .collect())
+}
+
+/// PM summary: open (not done), overdue (not done and due_date < today),
+/// done this week (done and updated_at >= start of current UTC week).
+pub async fn pm_summary(pool: &SqlitePool, entity_id: &str) -> Result<PmSummary> {
+    let fields = list_fields(pool, entity_id).await?;
+    let Some(status_field) = fields.iter().find(|f| f.is_status) else {
+        return Ok(PmSummary {
+            open: 0,
+            overdue: 0,
+            done_this_week: 0,
+            total: 0,
+        });
+    };
+    let status_col = format!("json_extract(payload, '$.{}')", status_field.name);
+    let due_col = fields
+        .iter()
+        .find(|f| f.name == "due_date")
+        .map(|_| "json_extract(payload, '$.due_date')".to_string());
+
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _doc WHERE entity_id = ?")
+        .bind(entity_id)
+        .fetch_one(pool)
+        .await?;
+
+    let open: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM _doc WHERE entity_id = ? AND {status_col} != 'done'"
+    ))
+    .bind(entity_id)
+    .fetch_one(pool)
+    .await?;
+
+    let overdue: i64 = match &due_col {
+        Some(due) => sqlx::query_scalar(&format!(
+            "SELECT COUNT(*) FROM _doc WHERE entity_id = ? AND {status_col} != 'done' AND {due} IS NOT NULL AND {due} < date('now')"
+        ))
+        .bind(entity_id)
+        .fetch_one(pool)
+        .await?,
+        None => 0,
+    };
+
+    let done_this_week: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM _doc WHERE entity_id = ? AND {status_col} = 'done' AND updated_at >= datetime('now', '-6 days', 'start of day')"
+    ))
+    .bind(entity_id)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(PmSummary {
+        open,
+        overdue,
+        done_this_week,
+        total,
+    })
 }
 
 pub async fn delete_document(pool: &SqlitePool, id: &str) -> Result<()> {

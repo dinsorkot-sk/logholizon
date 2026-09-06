@@ -1,4 +1,4 @@
-use logholizon_core::{http, Config};
+use logholizon_core::{backup, http, Config};
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::EnvFilter;
@@ -10,6 +10,9 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let config = Config::from_env();
+    if backup::apply_staged_restore(&config.database_url).await? {
+        tracing::info!("staged restore applied");
+    }
     let pool = logholizon_core::db::connect(&config.database_url).await?;
     logholizon_core::db::migrate(&pool).await?;
     let app = http::router(&config, pool).layer(CorsLayer::permissive());
