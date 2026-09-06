@@ -119,9 +119,10 @@ pnpm --dir packages/app run e2e
 
 ---
 
-## Phase 4 — Reporting & Analytics
+## Phase 4 — Reporting & Analytics ✅ Done 2026-09-06
 
 > เป้าหมาย: saved reports + charts ต่อยอดจาก `dashboard/pm` — ไม่สร้าง engine ใหม่
+> สถานะ: 4.1–4.3 เสร็จ (aggregation + report CRUD + reports page + browser verify); gates ผ่าน (fmt, clippy, test, build, typecheck, e2e 7 tests)
 
 ### 4.1 Core aggregation
 

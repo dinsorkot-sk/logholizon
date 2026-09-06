@@ -77,9 +77,13 @@ test('demo user can create, edit, transition, and delete a work order', async ({
   await dialog.getByRole('button', { name: 'Submit' }).click()
   await expect(page.getByText('Record transitioned', { exact: true })).toBeVisible()
 
-  // Delete the record.
+  // Delete the record. The confirm modal animates in; wait for it to
+  // stabilize before clicking (headless "element is not stable" flake).
   await dialog.getByRole('button', { name: 'Delete' }).click()
-  await page.getByRole('button', { name: 'Delete', exact: true }).last().click()
+  const confirmDelete = page.getByRole('dialog').getByRole('button', { name: 'Delete', exact: true })
+  await confirmDelete.waitFor({ timeout: 15_000 })
+  await page.waitForTimeout(500)
+  await confirmDelete.click()
   await expect(page.getByText('Record deleted', { exact: true })).toBeVisible()
   await expect(page.getByText(updatedTitle)).toHaveCount(0)
 })

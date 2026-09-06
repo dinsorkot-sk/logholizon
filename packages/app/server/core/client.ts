@@ -111,6 +111,20 @@ export type CoreNotificationDeliveryList = {
   total: number
 }
 
+export type CoreReport = {
+  id: string
+  entity_id: string
+  name: string
+  config: Record<string, unknown>
+  created_by: string | null
+  created_at: string
+}
+
+export type CoreReportBucket = {
+  status: string
+  count: number
+}
+
 export type CreateDocumentInput = {
   id: string
   entity_id: string
@@ -375,6 +389,28 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       request<CoreNotificationDeliveryList>('/v1/admin/notification-deliveries', {
         query: { limit, offset }
       }),
+    getReportAggregate: (entityId: string, groupBy: string): Promise<CoreReportBucket[]> =>
+      request<CoreReportBucket[]>('/v1/reports/aggregate', {
+        query: { entity_id: entityId, group_by: groupBy }
+      }),
+    listReports: (entityId: string): Promise<CoreReport[]> =>
+      request<CoreReport[]>(`/v1/meta/entities/${encodeURIComponent(entityId)}/reports`),
+    createReport: (
+      entityId: string,
+      report: { name: string; config: Record<string, unknown> }
+    ): Promise<CoreReport> =>
+      request<CoreReport>(`/v1/meta/entities/${encodeURIComponent(entityId)}/reports`, {
+        method: 'POST',
+        body: report
+      }),
+    getReport: (id: string): Promise<CoreReport> =>
+      request<CoreReport>(`/v1/meta/reports/${encodeURIComponent(id)}`),
+    deleteReport: (id: string): Promise<void> =>
+      request<void>(`/v1/meta/reports/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    listReportsForUser: (entityId: string): Promise<CoreReport[]> =>
+      request<CoreReport[]>(`/v1/entities/${encodeURIComponent(entityId)}/reports`),
+    getReportForUser: (id: string): Promise<CoreReport> =>
+      request<CoreReport>(`/v1/reports/${encodeURIComponent(id)}`),
     deleteWorkflowTransition: (id: string): Promise<void> =>
       request<void>(`/v1/meta/workflow/transitions/${encodeURIComponent(id)}`, {
         method: 'DELETE'

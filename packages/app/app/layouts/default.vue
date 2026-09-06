@@ -12,7 +12,8 @@ const isAdmin = computed(() => user.value?.role === 'admin')
 const mainLinks = computed<NavigationMenuItem[]>(() => {
   const links: NavigationMenuItem[] = [
     { label: 'Dashboard', icon: 'i-lucide-house', to: '/dashboard' },
-    { label: 'PM Dashboard', icon: 'i-lucide-clipboard-list', to: '/app/pm' }
+    { label: 'PM Dashboard', icon: 'i-lucide-clipboard-list', to: '/app/pm' },
+    { label: 'Reports', icon: 'i-lucide-chart-bar', to: '/app/reports' }
   ]
   if (isAdmin.value) {
     links.push(
@@ -36,7 +37,8 @@ const entityLinks = computed<NavigationMenuItem[]>(() => (entities.value || []).
 const commandGroups = computed<CommandPaletteGroup[]>(() => {
   const nav: CommandPaletteGroup['items'] = [
     { label: 'Dashboard', icon: 'i-lucide-house', to: '/dashboard', kbds: ['g', 'd'] },
-    { label: 'PM Dashboard', icon: 'i-lucide-clipboard-list', to: '/app/pm', kbds: ['g', 'p'] }
+    { label: 'PM Dashboard', icon: 'i-lucide-clipboard-list', to: '/app/pm', kbds: ['g', 'p'] },
+    { label: 'Reports', icon: 'i-lucide-chart-bar', to: '/app/reports', kbds: ['g', 'r'] }
   ]
   if (isAdmin.value) {
     nav.push(

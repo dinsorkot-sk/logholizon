@@ -386,6 +386,89 @@ async fn audit_records_actor_per_user() {
 }
 
 #[tokio::test]
+async fn report_crud_and_aggregation() {
+    use logholizon_core::seed;
+    let pool = db::connect("sqlite::memory:").await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    seed::seed(&pool).await.unwrap();
+    for (id, status) in [("r1", "draft"), ("r2", "draft"), ("r3", "open")] {
+        repository::create_document(
+            &pool,
+            id,
+            "work_order",
+            &json!({"title": id, "status": status, "priority": "low"}),
+            None,
+        )
+        .await
+        .unwrap();
+    }
+
+    // Aggregation groups by select field.
+    let buckets = repository::report_aggregate_as_role(&pool, "work_order", "status", "admin")
+        .await
+        .unwrap();
+    let by_status: std::collections::HashMap<&str, i64> = buckets
+        .iter()
+        .map(|b| (b.status.as_str(), b.count))
+        .collect();
+    assert_eq!(by_status.get("draft"), Some(&2));
+    assert_eq!(by_status.get("open"), Some(&1));
+
+    // Non-select field rejected.
+    assert!(
+        repository::report_aggregate_as_role(&pool, "work_order", "title", "admin")
+            .await
+            .is_err()
+    );
+    // Unknown field rejected.
+    assert!(
+        repository::report_aggregate_as_role(&pool, "work_order", "nope", "admin")
+            .await
+            .is_err()
+    );
+
+    // Report CRUD.
+    let report = repository::create_report(
+        &pool,
+        "work_order",
+        "By status",
+        &json!({"group_by": "status", "chart_type": "bar"}),
+        Some("admin"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.name, "By status");
+    assert_eq!(report.config["group_by"], "status");
+
+    // Invalid config rejected.
+    assert!(repository::create_report(
+        &pool,
+        "work_order",
+        "Bad",
+        &json!({"chart_type": "bar"}),
+        None,
+    )
+    .await
+    .is_err());
+    assert!(repository::create_report(
+        &pool,
+        "work_order",
+        "Bad chart",
+        &json!({"group_by": "status", "chart_type": "3d"}),
+        None,
+    )
+    .await
+    .is_err());
+
+    let reports = repository::list_reports(&pool, "work_order").await.unwrap();
+    assert_eq!(reports.len(), 1);
+    repository::delete_report(&pool, &report.id).await.unwrap();
+    assert!(repository::delete_report(&pool, &report.id).await.is_err());
+    let reports = repository::list_reports(&pool, "work_order").await.unwrap();
+    assert!(reports.is_empty());
+}
+
+#[tokio::test]
 async fn update_rejects_stale_expected_updated_at() {
     let pool = seeded_pool().await;
     repository::create_document(&pool, "d1", "ticket", &json!({"title": "Fix pump"}), None)

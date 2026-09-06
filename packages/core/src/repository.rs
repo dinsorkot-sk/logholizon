@@ -199,6 +199,16 @@ pub struct NotificationDeliveryList {
 }
 
 #[derive(Debug, Serialize)]
+pub struct Report {
+    pub id: String,
+    pub entity_id: String,
+    pub name: String,
+    pub config: Value,
+    pub created_by: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct StatusCount {
     pub status: String,
     pub count: i64,
@@ -763,6 +773,114 @@ pub async fn delete_notification_rule(pool: &SqlitePool, id: &str) -> Result<()>
         .await?;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("notification rule not found: {id}")).into());
+    }
+    Ok(())
+}
+
+/// Saved reports (Phase 4). Config shape: `{ "group_by": "<field>", "chart_type": "bar|pie" }`.
+/// Admin-managed; users read reports for entities they can view.
+fn validate_report_config(config: &Value) -> Result<()> {
+    let object = config
+        .as_object()
+        .ok_or_else(|| AppError::BadRequest("report config must be a JSON object".to_string()))?;
+    let group_by = object
+        .get("group_by")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            AppError::BadRequest("report config requires a group_by field".to_string())
+        })?;
+    let _ = group_by;
+    if let Some(chart_type) = object.get("chart_type") {
+        let chart_type = chart_type
+            .as_str()
+            .ok_or_else(|| AppError::BadRequest("chart_type must be a string".to_string()))?;
+        if chart_type != "bar" && chart_type != "pie" {
+            return Err(AppError::BadRequest(format!("unknown chart_type: {chart_type}")).into());
+        }
+    }
+    Ok(())
+}
+
+fn report_row(
+    id: String,
+    entity_id: String,
+    name: String,
+    config: String,
+    created_by: Option<String>,
+    created_at: String,
+) -> Result<Report> {
+    Ok(Report {
+        id,
+        entity_id,
+        name,
+        config: serde_json::from_str(&config)?,
+        created_by,
+        created_at,
+    })
+}
+
+pub async fn list_reports(pool: &SqlitePool, entity_id: &str) -> Result<Vec<Report>> {
+    require_entity(pool, entity_id).await?;
+    let rows = sqlx::query_as::<_, (String, String, String, String, Option<String>, String)>(
+        "SELECT id, entity_id, name, config, created_by, created_at FROM _report WHERE entity_id = ? ORDER BY name",
+    )
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter()
+        .map(|(id, entity_id, name, config, created_by, created_at)| {
+            report_row(id, entity_id, name, config, created_by, created_at)
+        })
+        .collect()
+}
+
+pub async fn create_report(
+    pool: &SqlitePool,
+    entity_id: &str,
+    name: &str,
+    config: &Value,
+    created_by: Option<&str>,
+) -> Result<Report> {
+    require_entity(pool, entity_id).await?;
+    if name.trim().is_empty() {
+        anyhow::bail!("report name is required");
+    }
+    validate_report_config(config)?;
+    let id = format!("{entity_id}_report_{}", chrono_nanos());
+    sqlx::query(
+        "INSERT INTO _report (id, entity_id, name, config, created_by) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(entity_id)
+    .bind(name.trim())
+    .bind(config.to_string())
+    .bind(created_by)
+    .execute(pool)
+    .await?;
+    get_report(pool, &id).await
+}
+
+pub async fn get_report(pool: &SqlitePool, id: &str) -> Result<Report> {
+    let row = sqlx::query_as::<_, (String, String, String, String, Option<String>, String)>(
+        "SELECT id, entity_id, name, config, created_by, created_at FROM _report WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("report not found: {id}")))?;
+    let (id, entity_id, name, config, created_by, created_at) = row;
+    report_row(id, entity_id, name, config, created_by, created_at)
+}
+
+pub async fn delete_report(pool: &SqlitePool, id: &str) -> Result<()> {
+    let result = sqlx::query("DELETE FROM _report WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("report not found: {id}")).into());
     }
     Ok(())
 }
@@ -2522,6 +2640,44 @@ pub async fn count_documents_by_status_as_role(
     Ok(rows
         .into_iter()
         .map(|(status, count)| StatusCount { status, count })
+        .collect())
+}
+
+/// Report aggregation: count documents grouped by a select/status field.
+/// Only `select` fields (including the status field) are allowed, keeping
+/// bucket cardinality low. Hidden fields are rejected (400) rather than
+/// leaking existence.
+pub async fn report_aggregate_as_role(
+    pool: &SqlitePool,
+    entity_id: &str,
+    group_by: &str,
+    role: &str,
+) -> Result<Vec<StatusCount>> {
+    let fields = list_fields(pool, entity_id).await?;
+    let Some(field) = fields.iter().find(|f| f.name == group_by) else {
+        return Err(AppError::BadRequest(format!("unknown field: {group_by}")).into());
+    };
+    if field.r#type != "select" {
+        return Err(AppError::BadRequest(format!(
+            "group-by field must be a select field: {group_by}"
+        ))
+        .into());
+    }
+    check_field_permission(pool, entity_id, &field.name, role, false).await?;
+    let query = format!(
+        "SELECT json_extract(payload, '$.{}'), COUNT(*) FROM _doc WHERE entity_id = ? GROUP BY json_extract(payload, '$.{}') ORDER BY 1",
+        field.name, field.name
+    );
+    let rows = sqlx::query_as::<_, (Option<String>, i64)>(&query)
+        .bind(entity_id)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(status, count)| StatusCount {
+            status: status.unwrap_or_default(),
+            count,
+        })
         .collect())
 }
 

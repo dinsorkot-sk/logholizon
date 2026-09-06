@@ -130,6 +130,16 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
             get(list_notification_deliveries),
         )
         .route(
+            "/v1/meta/entities/{id}/reports",
+            get(list_reports).post(create_report),
+        )
+        .route(
+            "/v1/meta/reports/{id}",
+            get(get_report).delete(delete_report),
+        )
+        .route("/v1/entities/{id}/reports", get(list_reports_for_user))
+        .route("/v1/reports/{id}", get(get_report_for_user))
+        .route(
             "/v1/meta/entities/{id}/workflow/states",
             axum::routing::post(create_workflow_state),
         )
@@ -212,6 +222,7 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
         )
         .route("/v1/dashboard/counts", get(dashboard_counts))
         .route("/v1/dashboard/pm", get(dashboard_pm))
+        .route("/v1/reports/aggregate", get(report_aggregate))
         .layer(middleware::from_fn_with_state(
             AppState {
                 pool: pool.clone(),
@@ -649,6 +660,89 @@ async fn delete_notification_rule(
         .map_err(map_db_error)
 }
 
+async fn list_reports(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<repository::Report>>, AppError> {
+    repository::list_reports(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateReportRequest {
+    pub name: String,
+    #[serde(default)]
+    pub config: serde_json::Value,
+}
+
+async fn create_report(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+    Json(input): Json<CreateReportRequest>,
+) -> Result<(StatusCode, Json<repository::Report>), AppError> {
+    repository::create_report(
+        &state.pool,
+        &id,
+        &input.name,
+        &input.config,
+        current_actor(&user).as_deref(),
+    )
+    .await
+    .map(|report| (StatusCode::CREATED, Json(report)))
+    .map_err(map_db_error)
+}
+
+async fn get_report(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::Report>, AppError> {
+    repository::get_report(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn delete_report(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    repository::delete_report(&state.pool, &id)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(map_db_error)
+}
+
+async fn list_reports_for_user(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<repository::Report>>, AppError> {
+    repository::check_permission(&state.pool, &id, &current_role(&user), false)
+        .await
+        .map_err(map_db_error)?;
+    repository::list_reports(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn get_report_for_user(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::Report>, AppError> {
+    let report = repository::get_report(&state.pool, &id)
+        .await
+        .map_err(map_db_error)?;
+    repository::check_permission(&state.pool, &report.entity_id, &current_role(&user), false)
+        .await
+        .map_err(map_db_error)?;
+    Ok(Json(report))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ListDeliveriesQuery {
     #[serde(default = "default_limit")]
@@ -897,6 +991,36 @@ async fn dashboard_pm(
         .await
         .map(Json)
         .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReportAggregateQuery {
+    pub entity_id: String,
+    pub group_by: String,
+}
+
+async fn report_aggregate(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Query(query): Query<ReportAggregateQuery>,
+) -> Result<Json<Vec<repository::StatusCount>>, AppError> {
+    if query.entity_id.trim().is_empty() || query.group_by.trim().is_empty() {
+        return Err(AppError::BadRequest(
+            "entity_id and group_by are required".into(),
+        ));
+    }
+    repository::check_permission(&state.pool, &query.entity_id, &current_role(&user), false)
+        .await
+        .map_err(map_db_error)?;
+    repository::report_aggregate_as_role(
+        &state.pool,
+        &query.entity_id,
+        &query.group_by,
+        &current_role(&user),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
 }
 
 fn current_role(user: &Option<axum::extract::Extension<auth::User>>) -> String {
