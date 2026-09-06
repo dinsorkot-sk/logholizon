@@ -145,6 +145,82 @@ async fn documents_routes_allow_regular_user() {
 }
 
 #[tokio::test]
+async fn user_entity_routes_expose_detail_and_workflow() {
+    let (app, token) = authed_user_app().await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/entities/work_order")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["id"], "work_order");
+    assert_eq!(json["permission"]["can_view"], true);
+    assert_eq!(json["permission"]["can_edit"], true);
+    assert!(json["fields"].as_array().is_some());
+}
+
+#[tokio::test]
+async fn user_entity_routes_enforce_can_edit() {
+    let (app, user_token, pool, _dir) = {
+        let (app, _admin_token, pool, dir) = authed_app().await;
+        logholizon_core::auth::register(&pool, "alice", "password123")
+            .await
+            .unwrap();
+        let session = logholizon_core::auth::login(&pool, "alice", "password123")
+            .await
+            .unwrap();
+        (app, session.token, pool, dir)
+    };
+    // Revoke edit access for the user role.
+    logholizon_core::repository::update_entity_permissions(
+        &pool,
+        "work_order",
+        &[("user".to_string(), true, false)],
+    )
+    .await
+    .unwrap();
+
+    // Detail still readable, reports can_edit=false.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/entities/work_order")
+                .header("authorization", format!("Bearer {user_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["permission"]["can_edit"], false);
+
+    // Import confirm requires edit access.
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/entities/work_order/import/confirm")
+                .header("authorization", format!("Bearer {user_token}"))
+                .header("content-type", "text/csv")
+                .body(Body::from("id,title,status,priority\nx1,t,draft,low\n"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn health_returns_ok() {
     let pool = db::connect("sqlite::memory:").await.unwrap();
     db::migrate(&pool).await.unwrap();

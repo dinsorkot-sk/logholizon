@@ -284,6 +284,7 @@ async fn entity_update_and_delete_guards() {
         "doc-1",
         "work_order",
         &serde_json::json!({ "title": "Fix pump" }),
+        None,
     )
     .await
     .unwrap();

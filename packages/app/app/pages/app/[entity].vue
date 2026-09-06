@@ -3,6 +3,7 @@ definePageMeta({ middleware: 'auth' })
 
 import { h, resolveComponent } from 'vue'
 import type { TableColumn } from '@nuxt/ui'
+import { absoluteTime, actionLabel, relativeTime } from '../../utils/audit-time'
 
 const UButton = resolveComponent('UButton')
 const UCheckbox = resolveComponent('UCheckbox')
@@ -10,10 +11,11 @@ const UBadge = resolveComponent('UBadge')
 
 type FieldOption = { id: string; value: string; label: string }
 type Field = { id: string; name: string; type: string; required: boolean; is_status: boolean; options: FieldOption[] }
-type Entity = { id: string; name: string; label: string; fields: Field[] }
-type Document = { id: string; entity_id: string; payload: Record<string, unknown> }
+type EntityPermission = { role: string; can_view: boolean; can_edit: boolean }
+type Entity = { id: string; name: string; label: string; fields: Field[]; permission?: EntityPermission }
+type Document = { id: string; entity_id: string; payload: Record<string, unknown>; created_at: string; updated_at: string }
 type DocumentList = { items: Document[]; total: number }
-type AuditEntry = { id: string; action: string; payload: Record<string, unknown>; created_at: string }
+type AuditEntry = { id: string; action: string; payload: Record<string, unknown>; created_at: string; actor?: string | null }
 type AuditList = { items: AuditEntry[]; total: number }
 
 const route = useRoute()
@@ -36,6 +38,8 @@ const importCsv = ref('')
 const importInput = ref<HTMLInputElement | null>(null)
 const toast = useToast()
 const deleteOpen = ref(false)
+const conflictOpen = ref(false)
+const selectedUpdatedAt = ref('')
 
 // --- Breadcrumb ---
 const breadcrumbItems = computed(() => [
@@ -53,8 +57,16 @@ function onKeydown(event: KeyboardEvent) {
   }
 }
 
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown)
+  window.addEventListener('focus', refetchOnFocus)
+  document.addEventListener('visibilitychange', onVisibilityChange)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('focus', refetchOnFocus)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+})
 
 // --- Dirty-state protection ---
 const dirty = computed(() => JSON.stringify(payload) !== JSON.stringify(initialPayload.value))
@@ -94,17 +106,18 @@ const bulkDeleting = ref(false)
 
 type EntityView = { id: string; name: string; config: Record<string, unknown> }
 
-const { data: entities } = await useFetch<{ id: string; label: string }[]>('/api/meta/entities')
+const { data: entities } = await useFetch<{ id: string; label: string }[]>('/api/entities')
 const { data: entity, status: entityStatus, error: entityError } = await useFetch<Entity>(
-  () => `/api/meta/entities/${encodeURIComponent(entityId.value)}`,
+  () => `/api/entities/${encodeURIComponent(entityId.value)}`,
   { watch: [entityId] }
 )
+const canEdit = computed(() => entity.value?.permission?.can_edit ?? true)
 const activeViewId = computed(() => {
   const view = route.query.view
   return typeof view === 'string' && view.trim() ? view : ''
 })
 const { data: activeView } = await useFetch<EntityView>(
-  () => activeViewId.value ? `/api/meta/views/${encodeURIComponent(activeViewId.value)}` : '',
+  () => activeViewId.value ? `/api/views/${encodeURIComponent(activeViewId.value)}` : '',
   { watch: [activeViewId], immediate: false }
 )
 const documentsUrl = computed(() => {
@@ -129,7 +142,7 @@ const { data: documents, status: documentsStatus, error: documentsError, refresh
   { watch: [documentsUrl] }
 )
 const { data: workflow, status: workflowStatus, error: workflowError, refresh: refreshWorkflow } = await useFetch<{ states: { id: string; name: string; label: string }[]; transitions: { id: string; action: string; from_state: string; to_state: string }[] }>(
-  () => `/api/meta/entities/${encodeURIComponent(entityId.value)}/workflow`,
+  () => `/api/entities/${encodeURIComponent(entityId.value)}/workflow`,
   { watch: [entityId] }
 )
 const auditId = computed(() => selected.value?.id || '')
@@ -156,6 +169,7 @@ function openCreate() {
 
 function openEdit(document: Document) {
   selected.value = document
+  selectedUpdatedAt.value = document.updated_at
   Object.keys(payload).forEach(key => delete payload[key])
   Object.assign(payload, emptyPayload(), document.payload)
   initialPayload.value = { ...payload }
@@ -163,6 +177,28 @@ function openEdit(document: Document) {
   error.value = ''
   panelOpen.value = true
   refreshAudit()
+}
+
+function isConflict(cause: any) {
+  return cause?.statusCode === 409 || cause?.data?.code === 'conflict'
+}
+
+async function reloadLatest() {
+  if (!selected.value) return
+  try {
+    const fresh = await $fetch<Document>(`/api/documents/${encodeURIComponent(selected.value.id)}`)
+    selected.value = fresh
+    selectedUpdatedAt.value = fresh.updated_at
+    Object.keys(payload).forEach(key => delete payload[key])
+    Object.assign(payload, emptyPayload(), fresh.payload)
+    initialPayload.value = { ...payload }
+    conflictOpen.value = false
+    await refresh()
+    await refreshAudit()
+    toast.add({ title: 'Reloaded latest version', color: 'info', icon: 'i-lucide-refresh-cw' })
+  } catch (cause: any) {
+    toast.add({ title: 'Unable to reload', description: cause?.data?.message || cause?.statusMessage || 'Reload failed', color: 'error', icon: 'i-lucide-alert-circle' })
+  }
 }
 
 function validate() {
@@ -183,10 +219,12 @@ async function save() {
   try {
     const nextPayload = normalizedPayload()
     if (isEdit && selected.value) {
-      await $fetch(`/api/documents/${encodeURIComponent(selected.value.id)}`, {
+      const updated = await $fetch<Document>(`/api/documents/${encodeURIComponent(selected.value.id)}`, {
         method: 'PUT',
-        body: { payload: nextPayload }
+        body: { payload: nextPayload, expected_updated_at: selectedUpdatedAt.value || undefined }
       })
+      selected.value = updated
+      selectedUpdatedAt.value = updated.updated_at
     } else {
       await $fetch('/api/documents', {
         method: 'POST',
@@ -198,6 +236,10 @@ async function save() {
     await refresh()
     toast.add({ title: isEdit ? 'Record updated' : 'Record created', color: 'success', icon: 'i-lucide-check' })
   } catch (cause: any) {
+    if (isConflict(cause)) {
+      conflictOpen.value = true
+      return
+    }
     error.value = cause?.data?.message || cause?.statusMessage || 'Unable to save record'
     toast.add({ title: 'Unable to save record', description: error.value, color: 'error', icon: 'i-lucide-alert-circle' })
   } finally {
@@ -210,12 +252,17 @@ async function transition(action: string) {
   transitioningAction.value = action
   error.value = ''
   try {
-    const updated = await $fetch<Document>(`/api/documents/${encodeURIComponent(selected.value.id)}/transition`, { method: 'POST', body: { action } })
+    const updated = await $fetch<Document>(`/api/documents/${encodeURIComponent(selected.value.id)}/transition`, { method: 'POST', body: { action, expected_updated_at: selectedUpdatedAt.value || undefined } })
     selected.value = updated
+    selectedUpdatedAt.value = updated.updated_at
     await refresh()
     await refreshAudit()
     toast.add({ title: 'Record transitioned', color: 'success', icon: 'i-lucide-check' })
   } catch (cause: any) {
+    if (isConflict(cause)) {
+      conflictOpen.value = true
+      return
+    }
     error.value = cause?.data?.message || cause?.statusMessage || 'Unable to transition record'
     toast.add({ title: 'Unable to transition record', description: error.value, color: 'error', icon: 'i-lucide-alert-circle' })
   } finally {
@@ -262,42 +309,24 @@ function fieldLabel(field: Field, value: unknown) {
   return String(value)
 }
 
-const transitionLabels: Record<string, string> = {
-  submit: 'Submit',
-  approve: 'Approve',
-  reject: 'Reject',
-  done: 'Mark Done',
-  complete: 'Complete',
-  transition: 'Status changed',
-  create: 'Created',
-  update: 'Updated',
-  delete: 'Deleted',
-  import: 'Imported'
-}
-
 function transitionLabel(action: string) {
-  return transitionLabels[action] || action
+  return actionLabel(action)
 }
 
-function parseDate(iso: string) {
-  // SQLite CURRENT_TIMESTAMP is UTC without a timezone suffix; treat it as UTC.
-  const normalized = iso.replace(' ', 'T')
-  const withTz = /Z$|[+-]\d{2}:?\d{2}$/.test(normalized) ? normalized : `${normalized}Z`
-  return new Date(withTz)
+function snapshotKey() {
+  return (documents.value?.items || []).map(d => `${d.id}@${d.updated_at}`).join(',')
 }
 
-function relativeTime(iso: string) {
-  const date = parseDate(iso)
-  if (Number.isNaN(date.getTime())) return iso
-  const diff = Date.now() - date.getTime()
-  const minutes = Math.floor(diff / 60000)
-  if (minutes < 1) return 'just now'
-  if (minutes < 60) return `${minutes} min ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`
-  const days = Math.floor(hours / 24)
-  if (days < 30) return `${days} day${days > 1 ? 's' : ''} ago`
-  return date.toLocaleDateString()
+async function refetchOnFocus() {
+  const before = snapshotKey()
+  await refresh()
+  if (before && before !== snapshotKey()) {
+    toast.add({ title: 'Records updated by another user', color: 'info', icon: 'i-lucide-refresh-cw' })
+  }
+}
+
+function onVisibilityChange() {
+  if (!document.hidden) void refetchOnFocus()
 }
 
 // --- Pagination ---
@@ -357,12 +386,6 @@ function statusLabel(value: unknown) {
   if (value === undefined || value === null || value === '') return null
   const option = statusField.value?.options.find(o => o.value === value)
   return option?.label || String(value)
-}
-
-function absoluteTime(iso: string) {
-  const date = parseDate(iso)
-  if (Number.isNaN(date.getTime())) return iso
-  return date.toLocaleString()
 }
 
 const auditItems = computed(() => {
@@ -511,7 +534,7 @@ const tableColumns = computed<TableColumn<Document>[]>(() => {
 async function exportCsv() {
   exporting.value = true
   try {
-    const csv = await $fetch<string>(`/api/meta/entities/${encodeURIComponent(entityId.value)}/export`)
+    const csv = await $fetch<string>(`/api/entities/${encodeURIComponent(entityId.value)}/export`)
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
     const link = document.createElement('a')
     link.href = url
@@ -535,7 +558,7 @@ async function previewImport(event: Event) {
   try {
     importCsv.value = await file.text()
     importPreview.value = await $fetch<{ rows: { id: string; payload: Record<string, unknown> }[]; errors: string[] }>(
-      `/api/meta/entities/${encodeURIComponent(entityId.value)}/import-preview` as '/api/meta/entities/[id]/import-preview',
+      `/api/entities/${encodeURIComponent(entityId.value)}/import-preview`,
       { method: 'POST', body: importCsv.value, headers: { 'content-type': 'text/csv' } }
     )
   } catch (cause: any) {
@@ -552,7 +575,7 @@ async function confirmImport() {
   importing.value = true
   error.value = ''
   try {
-    const result = await $fetch<{ created: number; updated: number }>(`/api/meta/entities/${encodeURIComponent(entityId.value)}/import-confirm`, { method: 'POST', body: importCsv.value, headers: { 'content-type': 'text/csv' } })
+    const result = await $fetch<{ created: number; updated: number }>(`/api/entities/${encodeURIComponent(entityId.value)}/import-confirm`, { method: 'POST', body: importCsv.value, headers: { 'content-type': 'text/csv' } })
     importPreview.value = null
     importCsv.value = ''
     await refresh()
@@ -577,7 +600,7 @@ async function confirmImport() {
           <UBreadcrumb :items="breadcrumbItems" />
         </template>
         <template #right>
-          <UButton icon="i-lucide-plus" @click="openCreate">New record</UButton>
+          <UButton icon="i-lucide-plus" :disabled="!canEdit" @click="openCreate">New record</UButton>
         </template>
       </UDashboardNavbar>
     </template>
@@ -633,7 +656,8 @@ async function confirmImport() {
           </UPopover>
           <UButton variant="outline" icon="i-lucide-download" :loading="exporting" @click="exportCsv">Export CSV</UButton>
           <input ref="importInput" type="file" accept=".csv,text/csv" class="hidden" @change="previewImport">
-          <UButton variant="outline" icon="i-lucide-upload" :loading="importing" @click="importInput?.click()">Import CSV</UButton>
+          <UButton variant="outline" icon="i-lucide-upload" :loading="importing" :disabled="!canEdit" @click="importInput?.click()">Import CSV</UButton>
+          <UBadge v-if="!canEdit" color="neutral" variant="subtle">Read-only</UBadge>
       </div>
       <div v-if="activeViewId" class="mb-3 flex items-center gap-2">
         <UBadge color="primary" variant="subtle" icon="i-lucide-eye">View: {{ activeView?.name || activeViewId }}</UBadge>
@@ -741,7 +765,7 @@ async function confirmImport() {
                   <div class="min-w-0">
                     <p class="text-sm font-medium">{{ transitionLabel(entry.action) }}</p>
                     <UTooltip :text="absoluteTime(entry.created_at)">
-                      <p class="text-xs text-muted">{{ relativeTime(entry.created_at) }}</p>
+                      <p class="text-xs text-muted">by {{ entry.actor || 'system' }} · {{ relativeTime(entry.created_at) }}</p>
                     </UTooltip>
                     <p v-if="entry.fromLabel || entry.toLabel" class="text-xs text-muted">
                       {{ entry.fromLabel || '—' }} → {{ entry.toLabel || '—' }}
@@ -771,13 +795,13 @@ async function confirmImport() {
                   v-for="item in availableActions()"
                   :key="item.action"
                   :loading="transitioningAction === item.action"
-                  :disabled="transitioningAction !== null && transitioningAction !== item.action"
+                  :disabled="!canEdit || (transitioningAction !== null && transitioningAction !== item.action)"
                   @click="transition(item.action)"
                 >{{ transitionLabel(item.action) }}</UButton>
                 <p v-if="selected && !availableActions().length && workflowStatus === 'success'" class="self-center text-xs text-muted">No actions available for this status.</p>
-                <UButton v-if="selected" color="error" variant="ghost" @click="deleteOpen = true">Delete</UButton>
+                <UButton v-if="selected" color="error" variant="ghost" :disabled="!canEdit" @click="deleteOpen = true">Delete</UButton>
               </div>
-              <div class="ml-auto flex gap-2"><UButton variant="ghost" @click="requestClose">Cancel</UButton><UButton type="submit" form="record-form" :loading="saving">Save</UButton></div>
+              <div class="ml-auto flex gap-2"><UButton variant="ghost" @click="requestClose">Cancel</UButton><UButton type="submit" form="record-form" :loading="saving" :disabled="!canEdit">Save</UButton></div>
             </div>
           </div>
         </template>
@@ -807,6 +831,20 @@ async function confirmImport() {
           <div class="flex justify-end gap-2">
             <UButton variant="ghost" @click="bulkDeleteOpen = false">Cancel</UButton>
             <UButton color="error" :loading="bulkDeleting" @click="bulkDelete">Delete</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <UModal v-model:open="conflictOpen" title="Record changed by another user">
+        <template #body>
+          <p class="text-sm text-muted">
+            Someone else saved this record while you were editing. Reload to see their changes, or discard your edits.
+          </p>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="conflictOpen = false; discardChanges()">Discard my edits</UButton>
+            <UButton @click="reloadLatest">Reload latest</UButton>
           </div>
         </template>
       </UModal>

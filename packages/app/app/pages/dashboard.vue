@@ -4,7 +4,7 @@ definePageMeta({ middleware: 'auth' })
 type Count = { status: string; count: number }
 type Entity = { id: string; label: string }
 
-const { data: entities } = await useFetch<Entity[]>('/api/meta/entities')
+const { data: entities } = await useFetch<Entity[]>('/api/entities')
 const entityId = ref('work_order')
 watch(entities, (list) => {
   const first = list?.[0]

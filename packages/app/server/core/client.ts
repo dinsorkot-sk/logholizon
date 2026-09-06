@@ -18,6 +18,8 @@ export type CoreField = {
 
 export type CoreEntityDetail = CoreEntity & { fields: CoreField[] }
 
+export type CoreEntityWithPermission = CoreEntityDetail & { permission: CoreEntityPermission }
+
 export type CoreDocument = {
   id: string
   entity_id: string
@@ -38,6 +40,7 @@ export type CoreAuditEntry = {
   action: string
   payload: Record<string, unknown>
   created_at: string
+  actor?: string | null
 }
 
 export type CoreAuditList = {
@@ -53,6 +56,7 @@ export type CoreGlobalAuditEntry = {
   action: string
   payload: Record<string, unknown>
   created_at: string
+  actor?: string | null
 }
 
 export type CoreGlobalAuditList = {
@@ -138,6 +142,7 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
         body: { password }
       }),
     listEntities: (): Promise<CoreEntity[]> => request<CoreEntity[]>('/v1/meta/entities'),
+    listEntitiesForUser: (): Promise<CoreEntity[]> => request<CoreEntity[]>('/v1/entities'),
     getEntity: (id: string): Promise<CoreEntityDetail> =>
       request<CoreEntityDetail>(`/v1/meta/entities/${encodeURIComponent(id)}`),
     createEntity: (entity: CoreEntity): Promise<CoreEntity> =>
@@ -202,11 +207,12 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       request<CoreDocument>(`/v1/documents/${encodeURIComponent(id)}`),
     updateDocument: (
       id: string,
-      payload: Record<string, unknown>
+      payload: Record<string, unknown>,
+      expectedUpdatedAt?: string
     ): Promise<CoreDocument> =>
       request<CoreDocument>(`/v1/documents/${encodeURIComponent(id)}`, {
         method: 'PUT',
-        body: { payload }
+        body: { payload, ...(expectedUpdatedAt ? { expected_updated_at: expectedUpdatedAt } : {}) }
       }),
     deleteDocument: async (id: string): Promise<void> => {
       await request<void>(`/v1/documents/${encodeURIComponent(id)}`, {
@@ -290,11 +296,25 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       request(`/v1/meta/entities/${encodeURIComponent(entityId)}/import/preview`, { method: 'POST', body: csv, headers: { 'content-type': 'text/csv' } }),
     confirmImport: (entityId: string, csv: string) =>
       request(`/v1/meta/entities/${encodeURIComponent(entityId)}/import/confirm`, { method: 'POST', body: csv, headers: { 'content-type': 'text/csv' } }),
-    transitionDocument: (id: string, action: string): Promise<CoreDocument> =>
+    transitionDocument: (id: string, action: string, expectedUpdatedAt?: string): Promise<CoreDocument> =>
       request<CoreDocument>(`/v1/documents/${encodeURIComponent(id)}/transition`, {
         method: 'POST',
-        body: { action }
+        body: { action, ...(expectedUpdatedAt ? { expected_updated_at: expectedUpdatedAt } : {}) }
       }),
+    getEntityForUser: (id: string): Promise<CoreEntityWithPermission> =>
+      request<CoreEntityWithPermission>(`/v1/entities/${encodeURIComponent(id)}`),
+    getWorkflowForUser: (entityId: string): Promise<CoreWorkflowDefinition> =>
+      request<CoreWorkflowDefinition>(`/v1/entities/${encodeURIComponent(entityId)}/workflow`),
+    listEntityViewsForUser: (entityId: string): Promise<CoreEntityView[]> =>
+      request<CoreEntityView[]>(`/v1/entities/${encodeURIComponent(entityId)}/views`),
+    getEntityViewForUser: (id: string): Promise<CoreEntityView> =>
+      request<CoreEntityView>(`/v1/views/${encodeURIComponent(id)}`),
+    exportDocumentsForUser: (entityId: string): Promise<string> =>
+      request<string>(`/v1/entities/${encodeURIComponent(entityId)}/export`),
+    previewImportForUser: (entityId: string, csv: string) =>
+      request(`/v1/entities/${encodeURIComponent(entityId)}/import/preview`, { method: 'POST', body: csv, headers: { 'content-type': 'text/csv' } }),
+    confirmImportForUser: (entityId: string, csv: string) =>
+      request(`/v1/entities/${encodeURIComponent(entityId)}/import/confirm`, { method: 'POST', body: csv, headers: { 'content-type': 'text/csv' } }),
     getDashboardCounts: (entityId: string): Promise<CoreStatusCount[]> =>
       request<CoreStatusCount[]>('/v1/dashboard/counts', { query: { entity_id: entityId } }),
     getPmSummary: (entityId: string): Promise<CorePmSummary> =>

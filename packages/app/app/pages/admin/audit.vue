@@ -17,6 +17,7 @@ type AuditEntry = {
   action: string
   payload: Record<string, unknown>
   created_at: string
+  actor?: string | null
 }
 type AuditList = { items: AuditEntry[]; total: number }
 
@@ -96,6 +97,11 @@ const auditColumns: TableColumn<AuditEntry>[] = [
     accessorKey: 'action',
     header: 'Action',
     cell: ({ row }) => h(UBadge, { color: actionColor(row.original.action), variant: 'subtle' }, () => actionLabel(row.original.action))
+  },
+  {
+    accessorKey: 'actor',
+    header: 'By',
+    cell: ({ row }) => h('span', { class: 'text-sm' }, row.original.actor || 'system')
   },
   {
     accessorKey: 'created_at',

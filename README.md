@@ -101,6 +101,6 @@ See [`packages/app/design.md`](packages/app/design.md) for the UI spec and [`doc
 - [x] Permissions + saved views
 - [x] Scheduled backups + demo seed
 - [x] Docker + CI
-- [ ] Multi-user collaboration polish
+- [x] Multi-user collaboration polish (audit actor, stale-write guard, user entity access)
 - [ ] Field-level permissions
 - [ ] Multi-sheet Excel

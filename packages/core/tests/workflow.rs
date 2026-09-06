@@ -11,17 +11,18 @@ async fn transition_follows_workflow_and_audits() {
         "wo-1",
         "work_order",
         &json!({"title": "Fix pump", "status": "draft", "priority": "high"}),
+        None,
     )
     .await
     .unwrap();
     assert_eq!(doc.payload["status"], "draft");
 
-    let submitted = repository::transition_document(&pool, "wo-1", "submit")
+    let submitted = repository::transition_document(&pool, "wo-1", "submit", None, None)
         .await
         .unwrap();
     assert_eq!(submitted.payload["status"], "open");
 
-    let done = repository::transition_document(&pool, "wo-1", "done")
+    let done = repository::transition_document(&pool, "wo-1", "done", None, None)
         .await
         .unwrap();
     assert_eq!(done.payload["status"], "done");
@@ -47,10 +48,11 @@ async fn invalid_transition_is_rejected() {
         "wo-2",
         "work_order",
         &json!({"title": "Skip", "status": "draft", "priority": "low"}),
+        None,
     )
     .await
     .unwrap();
-    let err = repository::transition_document(&pool, "wo-2", "done")
+    let err = repository::transition_document(&pool, "wo-2", "done", None, None)
         .await
         .unwrap_err();
     assert!(err.to_string().contains("invalid transition"));
@@ -74,6 +76,7 @@ async fn dashboard_counts_group_by_status() {
             id,
             "work_order",
             &json!({"title": id, "status": status, "priority": "low"}),
+            None,
         )
         .await
         .unwrap();
@@ -125,12 +128,13 @@ async fn status_field_name_is_metadata_driven() {
         "t-1",
         "ticket",
         &json!({"title": "Login broken", "state": "new"}),
+        None,
     )
     .await
     .unwrap();
 
     // transition uses the metadata-driven status field name
-    let opened = repository::transition_document(&pool, "t-1", "open")
+    let opened = repository::transition_document(&pool, "t-1", "open", None, None)
         .await
         .unwrap();
     assert_eq!(opened.payload["state"], "open");
@@ -255,14 +259,15 @@ async fn seed_provides_pm_schedule_workflow() {
         "pm-1",
         "pm_schedule",
         &json!({"title": "Check pump", "due_date": "2026-09-06", "status": "draft"}),
+        None,
     )
     .await
     .unwrap();
-    let scheduled = repository::transition_document(&pool, "pm-1", "schedule")
+    let scheduled = repository::transition_document(&pool, "pm-1", "schedule", None, None)
         .await
         .unwrap();
     assert_eq!(scheduled.payload["status"], "scheduled");
-    let done = repository::transition_document(&pool, "pm-1", "complete")
+    let done = repository::transition_document(&pool, "pm-1", "complete", None, None)
         .await
         .unwrap();
     assert_eq!(done.payload["status"], "done");
@@ -279,6 +284,7 @@ async fn pm_summary_counts_open_overdue_done() {
         "pm-1",
         "pm_schedule",
         &json!({"title": "Overdue", "due_date": "2020-01-01", "status": "scheduled"}),
+        None,
     )
     .await
     .unwrap();
@@ -288,6 +294,7 @@ async fn pm_summary_counts_open_overdue_done() {
         "pm-2",
         "pm_schedule",
         &json!({"title": "Future", "due_date": "2099-01-01", "status": "draft"}),
+        None,
     )
     .await
     .unwrap();
@@ -297,6 +304,7 @@ async fn pm_summary_counts_open_overdue_done() {
         "pm-3",
         "pm_schedule",
         &json!({"title": "Done", "due_date": "2020-01-01", "status": "done"}),
+        None,
     )
     .await
     .unwrap();
@@ -318,10 +326,10 @@ async fn entity_without_status_field_rejects_transition() {
     repository::create_field(&pool, "note", "body", "text", false, false)
         .await
         .unwrap();
-    repository::create_document(&pool, "n-1", "note", &json!({"body": "hello"}))
+    repository::create_document(&pool, "n-1", "note", &json!({"body": "hello"}), None)
         .await
         .unwrap();
-    let err = repository::transition_document(&pool, "n-1", "submit")
+    let err = repository::transition_document(&pool, "n-1", "submit", None, None)
         .await
         .unwrap_err();
     assert!(err.to_string().contains("no status field"));

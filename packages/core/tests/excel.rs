@@ -24,6 +24,7 @@ async fn export_round_trip_matches_fields() {
         "d1",
         "ticket",
         &json!({"title": "Fix pump", "priority": 1}),
+        None,
     )
     .await
     .unwrap();
@@ -32,6 +33,7 @@ async fn export_round_trip_matches_fields() {
         "d2",
         "ticket",
         &json!({"title": "Quote, \"comma\"", "priority": 2}),
+        None,
     )
     .await
     .unwrap();
@@ -56,6 +58,7 @@ async fn export_rejects_over_1000_rows() {
             &format!("d{index}"),
             "ticket",
             &json!({"title": "t"}),
+            None,
         )
         .await
         .unwrap();
@@ -100,11 +103,12 @@ async fn confirm_import_creates_and_updates_with_audit() {
         "x1",
         "ticket",
         &json!({"title": "old", "priority": 1}),
+        None,
     )
     .await
     .unwrap();
     let csv = "id,title,priority\nx1,new,2\nx2,added,3\n";
-    let result = repository::confirm_documents_csv(&pool, "ticket", csv)
+    let result = repository::confirm_documents_csv(&pool, "ticket", csv, None)
         .await
         .unwrap();
     assert_eq!(result.created, 1);
@@ -141,12 +145,18 @@ async fn confirm_import_rolls_back_on_error() {
         .await
         .unwrap();
     // x1 belongs to beta
-    repository::create_document(&pool, "x1", "beta", &json!({"title": "owned by beta"}))
-        .await
-        .unwrap();
+    repository::create_document(
+        &pool,
+        "x1",
+        "beta",
+        &json!({"title": "owned by beta"}),
+        None,
+    )
+    .await
+    .unwrap();
 
     let csv = "id,title\nx2,new\nx1,hijack\n";
-    let err = repository::confirm_documents_csv(&pool, "alpha", csv)
+    let err = repository::confirm_documents_csv(&pool, "alpha", csv, None)
         .await
         .unwrap_err();
     assert!(

@@ -39,6 +39,15 @@ pub struct EntityDetail {
 }
 
 #[derive(Debug, Serialize)]
+pub struct EntityWithPermission {
+    pub id: String,
+    pub name: String,
+    pub label: String,
+    pub fields: Vec<Field>,
+    pub permission: EntityPermission,
+}
+
+#[derive(Debug, Serialize)]
 pub struct Document {
     pub id: String,
     pub entity_id: String,
@@ -61,6 +70,7 @@ pub struct AuditEntry {
     pub action: String,
     pub payload: Value,
     pub created_at: String,
+    pub actor: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -78,6 +88,7 @@ pub struct GlobalAuditEntry {
     pub action: String,
     pub payload: Value,
     pub created_at: String,
+    pub actor: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -153,12 +164,23 @@ pub struct CreateDocument {
 #[derive(Debug, Deserialize)]
 pub struct UpdateDocument {
     pub payload: Value,
+    #[serde(default)]
+    pub expected_updated_at: Option<String>,
 }
 
 pub async fn list_entities(pool: &SqlitePool) -> Result<Vec<Entity>> {
-    let rows = sqlx::query("SELECT id, name, label FROM _meta_entity ORDER BY name")
-        .fetch_all(pool)
-        .await?;
+    list_entities_for_role(pool, "admin").await
+}
+
+pub async fn list_entities_for_role(pool: &SqlitePool, role: &str) -> Result<Vec<Entity>> {
+    let rows = sqlx::query(
+        "SELECT e.id, e.name, e.label FROM _meta_entity e \
+         LEFT JOIN _entity_permission p ON p.entity_id = e.id AND p.role = ? \
+         WHERE COALESCE(p.can_view, 1) != 0 ORDER BY e.name",
+    )
+    .bind(role)
+    .fetch_all(pool)
+    .await?;
     let mut entities = Vec::new();
     for row in rows {
         use sqlx::Row;
@@ -310,6 +332,47 @@ pub async fn check_permission(
         return Err(AppError::Forbidden(format!("no edit access to entity: {entity_id}")).into());
     }
     Ok(())
+}
+
+pub async fn get_entity_permission_for_role(
+    pool: &SqlitePool,
+    entity_id: &str,
+    role: &str,
+) -> Result<EntityPermission> {
+    require_entity(pool, entity_id).await?;
+    let row: Option<(i64, i64)> = sqlx::query_as(
+        "SELECT can_view, can_edit FROM _entity_permission WHERE entity_id = ? AND role = ?",
+    )
+    .bind(entity_id)
+    .bind(role)
+    .fetch_optional(pool)
+    .await?;
+    // Missing row = default allow (entities created before the migration).
+    let (can_view, can_edit) = row.unwrap_or((1, 1));
+    Ok(EntityPermission {
+        role: role.to_string(),
+        can_view: can_view != 0,
+        can_edit: can_edit != 0,
+    })
+}
+
+pub async fn get_entity_with_permission(
+    pool: &SqlitePool,
+    entity_id: &str,
+    role: &str,
+) -> Result<EntityWithPermission> {
+    let detail = get_entity_detail(pool, entity_id).await?;
+    let permission = get_entity_permission_for_role(pool, entity_id, role).await?;
+    if !permission.can_view {
+        return Err(AppError::Forbidden(format!("no view access to entity: {entity_id}")).into());
+    }
+    Ok(EntityWithPermission {
+        id: detail.id,
+        name: detail.name,
+        label: detail.label,
+        fields: detail.fields,
+        permission,
+    })
 }
 
 pub async fn list_entity_views(pool: &SqlitePool, entity_id: &str) -> Result<Vec<EntityView>> {
@@ -718,6 +781,7 @@ pub async fn create_document(
     id: &str,
     entity_id: &str,
     payload: &Value,
+    actor: Option<&str>,
 ) -> Result<Document> {
     if id.trim().is_empty() {
         bail!("id is required");
@@ -731,12 +795,13 @@ pub async fn create_document(
         .execute(&mut *tx)
         .await?;
     sqlx::query(
-        "INSERT INTO _audit_log (id, entity_id, doc_id, action, payload) VALUES (?, ?, ?, 'create', ?)",
+        "INSERT INTO _audit_log (id, entity_id, doc_id, action, payload, actor) VALUES (?, ?, ?, 'create', ?, ?)",
     )
     .bind(audit_id(id, "create"))
     .bind(entity_id)
     .bind(id)
     .bind(payload.to_string())
+    .bind(actor)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -901,6 +966,7 @@ pub async fn confirm_documents_csv(
     pool: &SqlitePool,
     entity_id: &str,
     input: &str,
+    actor: Option<&str>,
 ) -> Result<ImportResult> {
     let preview = preview_documents_csv(pool, entity_id, input).await?;
     if !preview.errors.is_empty() {
@@ -926,7 +992,7 @@ pub async fn confirm_documents_csv(
                     AppError::Conflict(format!("id belongs to another entity: {id}")).into(),
                 );
             }
-            sqlx::query("UPDATE _doc SET payload = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+            sqlx::query("UPDATE _doc SET payload = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ?")
                 .bind(payload.to_string())
                 .bind(id)
                 .execute(&mut *transaction)
@@ -942,12 +1008,13 @@ pub async fn confirm_documents_csv(
             created += 1;
         }
         sqlx::query(
-            "INSERT INTO _audit_log (id, entity_id, doc_id, action, payload) VALUES (?, ?, ?, 'import', ?)",
+            "INSERT INTO _audit_log (id, entity_id, doc_id, action, payload, actor) VALUES (?, ?, ?, 'import', ?, ?)",
         )
         .bind(audit_id(id, "import"))
         .bind(entity_id)
         .bind(id)
         .bind(payload.to_string())
+        .bind(actor)
         .execute(&mut *transaction)
         .await?;
     }
@@ -1112,29 +1179,51 @@ pub async fn list_documents(
     Ok(DocumentList { items, total })
 }
 
-pub async fn update_document(pool: &SqlitePool, id: &str, payload: &Value) -> Result<Document> {
+pub async fn update_document(
+    pool: &SqlitePool,
+    id: &str,
+    payload: &Value,
+    actor: Option<&str>,
+    expected_updated_at: Option<&str>,
+) -> Result<Document> {
     let existing = get_document(pool, id).await?;
     validate_payload(pool, &existing.entity_id, payload).await?;
     let mut tx = pool.begin().await?;
-    sqlx::query("UPDATE _doc SET payload = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-        .bind(payload.to_string())
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
+    let result = sqlx::query(
+        "UPDATE _doc SET payload = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ? AND (? IS NULL OR updated_at = ?)",
+    )
+    .bind(payload.to_string())
+    .bind(id)
+    .bind(expected_updated_at)
+    .bind(expected_updated_at)
+    .execute(&mut *tx)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(
+            AppError::Conflict(format!("stale record: {id} was modified by another user")).into(),
+        );
+    }
     sqlx::query(
-        "INSERT INTO _audit_log (id, entity_id, doc_id, action, payload) VALUES (?, ?, ?, 'update', ?)",
+        "INSERT INTO _audit_log (id, entity_id, doc_id, action, payload, actor) VALUES (?, ?, ?, 'update', ?, ?)",
     )
     .bind(audit_id(id, "update"))
     .bind(&existing.entity_id)
     .bind(id)
     .bind(payload.to_string())
+    .bind(actor)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
     get_document(pool, id).await
 }
 
-pub async fn transition_document(pool: &SqlitePool, id: &str, action: &str) -> Result<Document> {
+pub async fn transition_document(
+    pool: &SqlitePool,
+    id: &str,
+    action: &str,
+    actor: Option<&str>,
+    expected_updated_at: Option<&str>,
+) -> Result<Document> {
     let existing = get_document(pool, id).await?;
     let fields = list_fields(pool, &existing.entity_id).await?;
     let status_field = fields
@@ -1161,18 +1250,28 @@ pub async fn transition_document(pool: &SqlitePool, id: &str, action: &str) -> R
     next[status_field.name.as_str()] = Value::String(target);
     validate_payload(pool, &existing.entity_id, &next).await?;
     let mut tx = pool.begin().await?;
-    sqlx::query("UPDATE _doc SET payload = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-        .bind(next.to_string())
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
+    let result = sqlx::query(
+        "UPDATE _doc SET payload = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ? AND (? IS NULL OR updated_at = ?)",
+    )
+    .bind(next.to_string())
+    .bind(id)
+    .bind(expected_updated_at)
+    .bind(expected_updated_at)
+    .execute(&mut *tx)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(
+            AppError::Conflict(format!("stale record: {id} was modified by another user")).into(),
+        );
+    }
     sqlx::query(
-        "INSERT INTO _audit_log (id, entity_id, doc_id, action, payload) VALUES (?, ?, ?, 'transition', ?)",
+        "INSERT INTO _audit_log (id, entity_id, doc_id, action, payload, actor) VALUES (?, ?, ?, 'transition', ?, ?)",
     )
     .bind(audit_id(id, "transition"))
     .bind(&existing.entity_id)
     .bind(id)
     .bind(next.to_string())
+    .bind(actor)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -1475,7 +1574,7 @@ pub async fn pm_summary(pool: &SqlitePool, entity_id: &str) -> Result<PmSummary>
     })
 }
 
-pub async fn delete_document(pool: &SqlitePool, id: &str) -> Result<()> {
+pub async fn delete_document(pool: &SqlitePool, id: &str, actor: Option<&str>) -> Result<()> {
     let existing = get_document(pool, id).await?;
     let mut tx = pool.begin().await?;
     sqlx::query("DELETE FROM _doc WHERE id = ?")
@@ -1483,12 +1582,13 @@ pub async fn delete_document(pool: &SqlitePool, id: &str) -> Result<()> {
         .execute(&mut *tx)
         .await?;
     sqlx::query(
-        "INSERT INTO _audit_log (id, entity_id, doc_id, action, payload) VALUES (?, ?, ?, 'delete', ?)",
+        "INSERT INTO _audit_log (id, entity_id, doc_id, action, payload, actor) VALUES (?, ?, ?, 'delete', ?, ?)",
     )
     .bind(audit_id(id, "delete"))
     .bind(&existing.entity_id)
     .bind(id)
     .bind(existing.payload.to_string())
+    .bind(actor)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -1515,7 +1615,7 @@ pub async fn list_document_audit(
         .fetch_one(pool)
         .await?;
     let rows = sqlx::query(
-        "SELECT id, entity_id, doc_id, action, payload, created_at FROM _audit_log WHERE doc_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+        "SELECT id, entity_id, doc_id, action, payload, created_at, actor FROM _audit_log WHERE doc_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
     )
     .bind(doc_id)
     .bind(limit)
@@ -1532,6 +1632,7 @@ pub async fn list_document_audit(
             action: row.try_get("action")?,
             payload: serde_json::from_str(&row.try_get::<String, _>("payload")?)?,
             created_at: row.try_get("created_at")?,
+            actor: row.try_get("actor")?,
         });
     }
     Ok(AuditList { items, total })
@@ -1570,7 +1671,7 @@ pub async fn list_global_audit(
     };
 
     let query = format!(
-        "SELECT a.id, a.entity_id, e.label, a.doc_id, a.action, a.payload, a.created_at \
+        "SELECT a.id, a.entity_id, e.label, a.doc_id, a.action, a.payload, a.created_at, a.actor \
          FROM _audit_log a JOIN _meta_entity e ON e.id = a.entity_id \
          WHERE {where_sql} ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?"
     );
@@ -1589,6 +1690,7 @@ pub async fn list_global_audit(
             action: row.try_get("action")?,
             payload: serde_json::from_str(&row.try_get::<String, _>("payload")?)?,
             created_at: row.try_get("created_at")?,
+            actor: row.try_get("actor")?,
         });
     }
     Ok(GlobalAuditList { items, total })

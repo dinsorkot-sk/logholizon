@@ -138,6 +138,7 @@ async fn staged_restore_applies_on_startup() {
         "wo-1",
         "work_order",
         &json!({"title": "Fix pump", "status": "draft", "priority": "high"}),
+        None,
     )
     .await
     .unwrap();

@@ -5,7 +5,7 @@ const open = ref(false)
 const commandOpen = ref(false)
 const { user, logout } = useAuth()
 const router = useRouter()
-const { data: entities, status, error, refresh } = await useFetch<{ id: string; label: string }[]>('/api/meta/entities')
+const { data: entities, status, error, refresh } = await useFetch<{ id: string; label: string }[]>('/api/entities')
 
 const isAdmin = computed(() => user.value?.role === 'admin')
 

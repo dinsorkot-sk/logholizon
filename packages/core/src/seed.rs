@@ -214,6 +214,7 @@ pub async fn seed_demo(pool: &SqlitePool) -> Result<()> {
                 id,
                 "work_order",
                 &json!({"title": title, "status": status, "priority": priority}),
+                None,
             )
             .await?;
         }
@@ -257,6 +258,7 @@ pub async fn seed_demo(pool: &SqlitePool) -> Result<()> {
                 id,
                 "pm_schedule",
                 &json!({"title": title, "due_date": due_date, "status": status}),
+                None,
             )
             .await?;
         }
