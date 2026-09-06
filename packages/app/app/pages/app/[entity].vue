@@ -17,6 +17,9 @@ type Document = { id: string; entity_id: string; payload: Record<string, unknown
 type DocumentList = { items: Document[]; total: number }
 type AuditEntry = { id: string; action: string; payload: Record<string, unknown>; created_at: string; actor?: string | null }
 type AuditList = { items: AuditEntry[]; total: number }
+type WorkbookSheet = { entity_id: string; rows: { id: string; payload: Record<string, unknown> }[]; errors: string[] }
+type WorkbookPreview = { sheets: WorkbookSheet[] }
+type WorkbookResult = { sheets: { entity_id: string; created: number; updated: number }[] }
 
 const route = useRoute()
 const router = useRouter()
@@ -36,6 +39,8 @@ const importing = ref(false)
 const importPreview = ref<{ rows: { id: string; payload: Record<string, unknown> }[]; errors: string[] } | null>(null)
 const importCsv = ref('')
 const importInput = ref<HTMLInputElement | null>(null)
+const workbookPreview = ref<WorkbookPreview | null>(null)
+const workbookBytes = ref<ArrayBuffer | null>(null)
 const toast = useToast()
 const deleteOpen = ref(false)
 const conflictOpen = ref(false)
@@ -562,16 +567,75 @@ async function previewImport(event: Event) {
   importing.value = true
   error.value = ''
   try {
-    importCsv.value = await file.text()
-    importPreview.value = await $fetch<{ rows: { id: string; payload: Record<string, unknown> }[]; errors: string[] }>(
-      `/api/entities/${encodeURIComponent(entityId.value)}/import-preview`,
-      { method: 'POST', body: importCsv.value, headers: { 'content-type': 'text/csv' } }
-    )
+    if (file.name.toLowerCase().endsWith('.xlsx')) {
+      workbookBytes.value = await file.arrayBuffer()
+      workbookPreview.value = await $fetch<WorkbookPreview>('/api/entities/import-preview', {
+        method: 'POST',
+        body: new Uint8Array(workbookBytes.value),
+        headers: { 'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
+      })
+      importPreview.value = null
+      importCsv.value = ''
+    } else {
+      importCsv.value = await file.text()
+      importPreview.value = await $fetch<{ rows: { id: string; payload: Record<string, unknown> }[]; errors: string[] }>(
+        `/api/entities/${encodeURIComponent(entityId.value)}/import-preview`,
+        { method: 'POST', body: importCsv.value, headers: { 'content-type': 'text/csv' } }
+      )
+      workbookPreview.value = null
+      workbookBytes.value = null
+    }
   } catch (cause: any) {
     importPreview.value = null
-    error.value = cause?.data?.message || cause?.statusMessage || 'Unable to preview CSV'
+    workbookPreview.value = null
+    workbookBytes.value = null
+    error.value = cause?.data?.message || cause?.statusMessage || 'Unable to preview import'
   } finally {
     input.value = ''
+    importing.value = false
+  }
+}
+
+const workbookErrors = computed(() => (workbookPreview.value?.sheets || []).flatMap(sheet => sheet.errors))
+const workbookRowCount = computed(() => (workbookPreview.value?.sheets || []).reduce((total, sheet) => total + sheet.rows.length, 0))
+
+async function exportWorkbook() {
+  exporting.value = true
+  try {
+    const bytes = await $fetch<Blob>('/api/entities/export', { responseType: 'blob' })
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'logholizon.xlsx'
+    link.click()
+    URL.revokeObjectURL(url)
+    toast.add({ title: 'Export complete', description: 'logholizon.xlsx downloaded', color: 'success', icon: 'i-lucide-download' })
+  } catch (cause: any) {
+    toast.add({ title: 'Unable to export', description: cause?.data?.message || cause?.statusMessage || 'Export failed', color: 'error', icon: 'i-lucide-alert-circle' })
+  } finally {
+    exporting.value = false
+  }
+}
+
+async function confirmWorkbookImport() {
+  if (!workbookBytes.value || workbookErrors.value.length) return
+  importing.value = true
+  error.value = ''
+  try {
+    const result = await $fetch<WorkbookResult>('/api/entities/import-confirm', {
+      method: 'POST',
+      body: new Uint8Array(workbookBytes.value),
+      headers: { 'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
+    })
+    workbookPreview.value = null
+    workbookBytes.value = null
+    await refresh()
+    const summary = result.sheets.map(sheet => `${sheet.entity_id}: ${sheet.created} created, ${sheet.updated} updated`).join('; ')
+    toast.add({ title: 'Import complete', description: summary, color: 'success', icon: 'i-lucide-check' })
+  } catch (cause: any) {
+    error.value = cause?.data?.message || cause?.statusMessage || 'Unable to import workbook'
+    toast.add({ title: 'Unable to import workbook', description: error.value, color: 'error', icon: 'i-lucide-alert-circle' })
+  } finally {
     importing.value = false
   }
 }
@@ -661,8 +725,9 @@ async function confirmImport() {
             </template>
           </UPopover>
           <UButton variant="outline" icon="i-lucide-download" :loading="exporting" @click="exportCsv">Export CSV</UButton>
-          <input ref="importInput" type="file" accept=".csv,text/csv" class="hidden" @change="previewImport">
-          <UButton variant="outline" icon="i-lucide-upload" :loading="importing" :disabled="!canEdit" @click="importInput?.click()">Import CSV</UButton>
+          <UButton variant="outline" icon="i-lucide-file-spreadsheet" :loading="exporting" @click="exportWorkbook">Export Excel</UButton>
+          <input ref="importInput" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" class="hidden" @change="previewImport">
+          <UButton variant="outline" icon="i-lucide-upload" :loading="importing" :disabled="!canEdit" @click="importInput?.click()">Import CSV/Excel</UButton>
           <UBadge v-if="!canEdit" color="neutral" variant="subtle">Read-only</UBadge>
       </div>
       <div v-if="activeViewId" class="mb-3 flex items-center gap-2">
@@ -677,6 +742,17 @@ async function confirmImport() {
             <p v-else class="text-sm">Ready to import.</p>
           </template>
           <template #actions><UButton :disabled="!!importPreview.errors.length" :loading="importing" size="sm" @click="confirmImport">Confirm import</UButton></template>
+        </UAlert>
+        <UAlert v-if="workbookPreview" class="w-full" :color="workbookErrors.length ? 'error' : 'success'" :title="`${workbookRowCount} rows previewed across ${workbookPreview.sheets.length} sheets`">
+          <template #description>
+            <ul v-if="workbookErrors.length" class="list-disc space-y-1 pl-4">
+              <li v-for="(message, index) in workbookErrors" :key="index" class="text-sm">{{ message }}</li>
+            </ul>
+            <ul v-else class="list-disc space-y-1 pl-4">
+              <li v-for="sheet in workbookPreview.sheets" :key="sheet.entity_id" class="font-mono text-sm">{{ sheet.entity_id }}: {{ sheet.rows.length }} rows</li>
+            </ul>
+          </template>
+          <template #actions><UButton :disabled="!!workbookErrors.length" :loading="importing" size="sm" @click="confirmWorkbookImport">Confirm import</UButton></template>
         </UAlert>
 
       <UAlert

@@ -24,7 +24,7 @@ Metadata-driven ERP platform. Define entities and fields in the UI, then manage 
 - **Permissions** — per-entity view/edit toggles by role (admin/user)
 - **Auth** — login, first-run admin setup, user management, role-based UI
 - **Audit Log** — global history with entity/action/search filters
-- **Excel/CSV** — one-sheet export/import with preview and atomic rollback
+- **Excel/CSV** — single-entity CSV export/import plus multi-sheet `.xlsx` workbook (one sheet per entity) with preview and atomic rollback
 - **Backups** — manual + scheduled (`VACUUM INTO`), staged restore, download
 - **PM Dashboard** — open/overdue/done-this-week summary cards
 
@@ -103,4 +103,4 @@ See [`packages/app/design.md`](packages/app/design.md) for the UI spec and [`doc
 - [x] Docker + CI
 - [x] Multi-user collaboration polish (audit actor, stale-write guard, user entity access)
 - [x] Field-level permissions (per-field view/edit by role, hidden-field redaction)
-- [ ] Multi-sheet Excel
+- [x] Multi-sheet Excel (one sheet per entity workbook export/import)

@@ -93,6 +93,14 @@ export type CoreStatusCount = { status: string; count: number }
 export type CorePmSummary = { open: number; overdue: number; done_this_week: number; total: number }
 export type CoreAdminStatus = { version: string; database_path: string; integrity: boolean; entities: number; documents: number }
 export type CoreBackupInfo = { name: string; size: number; modified: number }
+export type CoreMultiImportSheet = {
+  entity_id: string
+  rows: { id: string; payload: Record<string, unknown> }[]
+  errors: string[]
+}
+export type CoreMultiImportPreview = { sheets: CoreMultiImportSheet[] }
+export type CoreMultiImportSheetResult = { entity_id: string; created: number; updated: number }
+export type CoreMultiImportResult = { sheets: CoreMultiImportSheetResult[] }
 
 type CoreError = { code?: string; message?: string }
 
@@ -332,6 +340,20 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       request(`/v1/entities/${encodeURIComponent(entityId)}/import/preview`, { method: 'POST', body: csv, headers: { 'content-type': 'text/csv' } }),
     confirmImportForUser: (entityId: string, csv: string) =>
       request(`/v1/entities/${encodeURIComponent(entityId)}/import/confirm`, { method: 'POST', body: csv, headers: { 'content-type': 'text/csv' } }),
+    exportWorkbook: (): Promise<ArrayBuffer> =>
+      request<ArrayBuffer>('/v1/entities/export', { responseType: 'arrayBuffer' }),
+    previewWorkbookImport: (bytes: ArrayBuffer | Uint8Array): Promise<CoreMultiImportPreview> =>
+      request<CoreMultiImportPreview>('/v1/entities/import/preview', {
+        method: 'POST',
+        body: bytes as BodyInit,
+        headers: { 'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
+      }),
+    confirmWorkbookImport: (bytes: ArrayBuffer | Uint8Array): Promise<CoreMultiImportResult> =>
+      request<CoreMultiImportResult>('/v1/entities/import/confirm', {
+        method: 'POST',
+        body: bytes as BodyInit,
+        headers: { 'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
+      }),
     getDashboardCounts: (entityId: string): Promise<CoreStatusCount[]> =>
       request<CoreStatusCount[]>('/v1/dashboard/counts', { query: { entity_id: entityId } }),
     getPmSummary: (entityId: string): Promise<CorePmSummary> =>

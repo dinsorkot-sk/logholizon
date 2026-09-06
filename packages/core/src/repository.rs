@@ -1068,6 +1068,395 @@ fn csv_cell(value: &str) -> String {
     }
 }
 
+/// One sheet of a multi-sheet workbook import preview.
+#[derive(Debug, Serialize)]
+pub struct MultiImportSheet {
+    pub entity_id: String,
+    pub rows: Vec<Value>,
+    pub errors: Vec<String>,
+}
+
+/// Preview of a whole-workbook import: one entry per sheet.
+#[derive(Debug, Serialize)]
+pub struct MultiImportPreview {
+    pub sheets: Vec<MultiImportSheet>,
+}
+
+/// Per-entity result of a whole-workbook import confirm.
+#[derive(Debug, Serialize)]
+pub struct MultiImportSheetResult {
+    pub entity_id: String,
+    pub created: usize,
+    pub updated: usize,
+}
+
+/// Result of a whole-workbook import confirm.
+#[derive(Debug, Serialize)]
+pub struct MultiImportResult {
+    pub sheets: Vec<MultiImportSheetResult>,
+}
+
+/// Export every entity visible to `role` as one `.xlsx` workbook,
+/// one sheet per entity. Typed cells (number/bool/string) are written
+/// so spreadsheet apps treat values natively; there is no formula
+/// injection risk because no cell is written as a formula.
+pub async fn export_workbook_xlsx(pool: &SqlitePool, role: &str) -> Result<Vec<u8>> {
+    let entities = list_entities_for_role(pool, role).await?;
+    if entities.is_empty() {
+        return Err(AppError::BadRequest("no visible entities to export".into()).into());
+    }
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let mut used_names = std::collections::HashSet::new();
+    for entity in &entities {
+        let fields = list_fields(pool, &entity.id).await?;
+        let viewable = viewable_field_names(pool, &entity.id, role).await?;
+        let fields: Vec<Field> = fields
+            .into_iter()
+            .filter(|f| viewable.contains(&f.name))
+            .collect();
+        if fields.is_empty() {
+            continue;
+        }
+        let rows = sqlx::query("SELECT id, payload FROM _doc WHERE entity_id = ? ORDER BY created_at DESC, id DESC LIMIT 1001")
+            .bind(&entity.id)
+            .fetch_all(pool)
+            .await?;
+        if rows.len() > 1000 {
+            return Err(
+                AppError::BadRequest(format!("export exceeds 1000 rows: {}", entity.id)).into(),
+            );
+        }
+        let sheet = workbook.add_worksheet();
+        sheet
+            .set_name(xlsx_sheet_name(&entity.id, &mut used_names))
+            .map_err(|e| AppError::BadRequest(format!("invalid sheet name: {e}")))?;
+        sheet
+            .write_string(0, 0, "id")
+            .map_err(|e| AppError::Internal(e.into()))?;
+        for (col, field) in fields.iter().enumerate() {
+            sheet
+                .write_string(0, (col + 1) as u16, &field.name)
+                .map_err(|e| AppError::Internal(e.into()))?;
+        }
+        for (row_index, row) in rows.iter().enumerate() {
+            use sqlx::Row;
+            let excel_row = (row_index + 1) as u32;
+            sheet
+                .write_string(excel_row, 0, row.try_get::<String, _>("id")?)
+                .map_err(|e| AppError::Internal(e.into()))?;
+            let payload: Value = serde_json::from_str(&row.try_get::<String, _>("payload")?)?;
+            for (col, field) in fields.iter().enumerate() {
+                let excel_col = (col + 1) as u16;
+                match payload.get(&field.name) {
+                    // Skip empty cells: an unwritten cell reads back as Empty.
+                    None | Some(Value::Null) => {}
+                    Some(Value::Number(number)) => {
+                        if let Some(value) = number.as_f64() {
+                            sheet
+                                .write_number(excel_row, excel_col, value)
+                                .map_err(|e| AppError::Internal(e.into()))?;
+                        } else {
+                            sheet
+                                .write_string(excel_row, excel_col, number.to_string())
+                                .map_err(|e| AppError::Internal(e.into()))?;
+                        }
+                    }
+                    Some(Value::Bool(flag)) => {
+                        sheet
+                            .write_boolean(excel_row, excel_col, *flag)
+                            .map_err(|e| AppError::Internal(e.into()))?;
+                    }
+                    Some(Value::String(text)) => {
+                        sheet
+                            .write_string(excel_row, excel_col, text)
+                            .map_err(|e| AppError::Internal(e.into()))?;
+                    }
+                    Some(other) => {
+                        sheet
+                            .write_string(excel_row, excel_col, other.to_string())
+                            .map_err(|e| AppError::Internal(e.into()))?;
+                    }
+                }
+            }
+        }
+    }
+    workbook
+        .save_to_buffer()
+        .map_err(|e| AppError::Internal(e.into()).into())
+}
+
+/// Excel sheet names are limited to 31 chars and must be unique.
+/// Entity ids are snake_case so they are safe; truncate + dedupe.
+fn xlsx_sheet_name(entity_id: &str, used: &mut std::collections::HashSet<String>) -> String {
+    let base: String = entity_id.chars().take(31).collect();
+    if !used.contains(&base) {
+        used.insert(base.clone());
+        return base;
+    }
+    let mut suffix = 2;
+    loop {
+        let tail = format!("_{suffix}");
+        let head: String = base.chars().take(31 - tail.len()).collect();
+        let candidate = format!("{head}{tail}");
+        if !used.contains(&candidate) {
+            used.insert(candidate.clone());
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
+
+/// Preview a whole-workbook `.xlsx` import: one entry per sheet.
+/// Each sheet name maps to an entity id; the header must match that
+/// entity's editable fields. Row validation mirrors the CSV preview.
+pub async fn preview_workbook_xlsx(
+    pool: &SqlitePool,
+    input: &[u8],
+    role: &str,
+) -> Result<MultiImportPreview> {
+    use calamine::{Reader, Xlsx};
+    let mut workbook: Xlsx<_> = calamine::open_workbook_from_rs(std::io::Cursor::new(input))
+        .map_err(|e| AppError::BadRequest(format!("invalid xlsx workbook: {e}")))?;
+    let names = workbook.sheet_names();
+    if names.is_empty() {
+        return Err(AppError::BadRequest("workbook has no sheets".into()).into());
+    }
+    let mut sheets = Vec::new();
+    for name in names {
+        let range = workbook
+            .worksheet_range(&name)
+            .map_err(|e| AppError::BadRequest(format!("cannot read sheet {name}: {e}")))?;
+        sheets.push(preview_workbook_sheet(pool, &name, range.rows(), role).await?);
+    }
+    Ok(MultiImportPreview { sheets })
+}
+
+async fn preview_workbook_sheet(
+    pool: &SqlitePool,
+    sheet_name: &str,
+    rows: calamine::Rows<'_, calamine::Data>,
+    role: &str,
+) -> Result<MultiImportSheet> {
+    let entity_id = sheet_name.to_string();
+    require_entity(pool, &entity_id)
+        .await
+        .map_err(|_| AppError::BadRequest(format!("unknown entity for sheet: {sheet_name}")))?;
+    check_permission(pool, &entity_id, role, true)
+        .await
+        .map_err(|_| AppError::Forbidden(format!("no edit access to entity: {entity_id}")))?;
+    let all_fields = list_fields(pool, &entity_id).await?;
+    let field_map = field_permission_map(pool, &entity_id, role).await?;
+    let fields: Vec<Field> = all_fields
+        .into_iter()
+        .filter(|f| field_map.get(&f.name).copied().unwrap_or((true, true)).1)
+        .collect();
+    let expected: Vec<String> = std::iter::once("id".to_string())
+        .chain(fields.iter().map(|f| f.name.clone()))
+        .collect();
+    let records: Vec<Vec<String>> = rows
+        .map(|row| row.iter().map(xlsx_cell_text).collect())
+        .collect();
+    if records.is_empty() {
+        return Err(AppError::BadRequest(format!("sheet {sheet_name} is empty")).into());
+    }
+    if records[0] != expected {
+        return Err(AppError::BadRequest(format!(
+            "sheet {sheet_name} header does not match entity fields"
+        ))
+        .into());
+    }
+    if records.len() > 1001 {
+        return Err(AppError::BadRequest(format!("sheet {sheet_name} exceeds 1000 rows")).into());
+    }
+    let mut sheet_rows = Vec::new();
+    let mut errors = Vec::new();
+    let mut ids = std::collections::HashSet::new();
+    for (index, record) in records.iter().skip(1).enumerate() {
+        if record.len() != expected.len() {
+            errors.push(format!(
+                "{sheet_name} row {}: wrong column count",
+                index + 2
+            ));
+            continue;
+        }
+        let id = &record[0];
+        if id.trim().is_empty() {
+            errors.push(format!("{sheet_name} row {}: id is required", index + 2));
+            continue;
+        }
+        if !ids.insert(id.clone()) {
+            errors.push(format!("{sheet_name} row {}: duplicate id", index + 2));
+        }
+        let mut payload = serde_json::Map::new();
+        for (field, value) in fields.iter().zip(record.iter().skip(1)) {
+            let parsed = match field.r#type.as_str() {
+                "number" => value
+                    .parse::<f64>()
+                    .ok()
+                    .and_then(|n| serde_json::Number::from_f64(n).map(Value::Number)),
+                "boolean" => match value.to_ascii_lowercase().as_str() {
+                    "true" => Some(Value::Bool(true)),
+                    "false" => Some(Value::Bool(false)),
+                    _ => None,
+                },
+                _ => Some(Value::String(value.clone())),
+            };
+            if let Some(value) = parsed {
+                payload.insert(field.name.clone(), value);
+            }
+        }
+        let value = Value::Object(payload);
+        if let Err(error) = validate_payload_for_role(pool, &entity_id, &value, role).await {
+            errors.push(format!("{sheet_name} row {}: {error}", index + 2));
+        }
+        sheet_rows.push(serde_json::json!({ "id": id, "payload": value }));
+    }
+    Ok(MultiImportSheet {
+        entity_id,
+        rows: sheet_rows,
+        errors,
+    })
+}
+
+/// Confirm a whole-workbook `.xlsx` import atomically: every sheet is
+/// previewed first, and all sheets are applied in a single transaction.
+pub async fn confirm_workbook_xlsx(
+    pool: &SqlitePool,
+    input: &[u8],
+    actor: Option<&str>,
+    role: &str,
+) -> Result<MultiImportResult> {
+    let preview = preview_workbook_xlsx(pool, input, role).await?;
+    let blocked: Vec<String> = preview
+        .sheets
+        .iter()
+        .flat_map(|sheet| sheet.errors.iter().cloned())
+        .collect();
+    if !blocked.is_empty() {
+        return Err(AppError::BadRequest(blocked.join("; ")).into());
+    }
+    let mut transaction = pool.begin().await?;
+    let mut sheets = Vec::new();
+    for sheet in preview.sheets {
+        let mut created = 0;
+        let mut updated = 0;
+        for row in sheet.rows {
+            let id = row["id"].as_str().unwrap().to_string();
+            let payload = row["payload"].clone();
+            if upsert_document_in_tx(&mut transaction, &sheet.entity_id, &id, &payload, actor)
+                .await?
+            {
+                updated += 1;
+            } else {
+                created += 1;
+            }
+        }
+        sheets.push(MultiImportSheetResult {
+            entity_id: sheet.entity_id,
+            created,
+            updated,
+        });
+    }
+    transaction.commit().await?;
+    Ok(MultiImportResult { sheets })
+}
+
+/// Insert or update one document inside an open transaction.
+/// Returns `true` when the document already existed (updated).
+async fn upsert_document_in_tx(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    entity_id: &str,
+    id: &str,
+    payload: &Value,
+    actor: Option<&str>,
+) -> Result<bool> {
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _doc WHERE id = ?)")
+        .bind(id)
+        .fetch_one(&mut **transaction)
+        .await?;
+    if exists {
+        let owner: String = sqlx::query_scalar("SELECT entity_id FROM _doc WHERE id = ?")
+            .bind(id)
+            .fetch_one(&mut **transaction)
+            .await?;
+        if owner != entity_id {
+            return Err(AppError::Conflict(format!("id belongs to another entity: {id}")).into());
+        }
+        sqlx::query("UPDATE _doc SET payload = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ?")
+            .bind(payload.to_string())
+            .bind(id)
+            .execute(&mut **transaction)
+            .await?;
+    } else {
+        sqlx::query("INSERT INTO _doc (id, entity_id, payload) VALUES (?, ?, ?)")
+            .bind(id)
+            .bind(entity_id)
+            .bind(payload.to_string())
+            .execute(&mut **transaction)
+            .await?;
+    }
+    sqlx::query(
+        "INSERT INTO _audit_log (id, entity_id, doc_id, action, payload, actor) VALUES (?, ?, ?, 'import', ?, ?)",
+    )
+    .bind(audit_id(id, "import"))
+    .bind(entity_id)
+    .bind(id)
+    .bind(payload.to_string())
+    .bind(actor)
+    .execute(&mut **transaction)
+    .await?;
+    Ok(exists)
+}
+
+/// Render a calamine cell as plain text for import parsing.
+/// DateTime cells become `YYYY-MM-DD`; numbers keep full precision.
+fn xlsx_cell_text(cell: &calamine::Data) -> String {
+    match cell {
+        calamine::Data::Empty => String::new(),
+        calamine::Data::String(text) => text.clone(),
+        calamine::Data::Float(value) => {
+            if value.fract() == 0.0 && value.is_finite() {
+                format!("{}", *value as i64)
+            } else {
+                value.to_string()
+            }
+        }
+        calamine::Data::Int(value) => value.to_string(),
+        calamine::Data::Bool(flag) => flag.to_string(),
+        calamine::Data::DateTime(value) => excel_serial_to_date(value.as_f64()),
+        calamine::Data::DateTimeIso(text) | calamine::Data::DurationIso(text) => {
+            text.chars().take(10).collect()
+        }
+        calamine::Data::Error(_) => String::new(),
+    }
+}
+
+/// Convert an Excel serial date (days since 1899-12-30) to `YYYY-MM-DD`.
+fn excel_serial_to_date(serial: f64) -> String {
+    let days = serial.floor() as i64;
+    // Days between 1899-12-30 (Excel epoch) and 1970-01-01 (Unix epoch).
+    const EXCEL_TO_UNIX_DAYS: i64 = 25569;
+    let unix_days = days - EXCEL_TO_UNIX_DAYS;
+    let seconds = unix_days.saturating_mul(86_400);
+    chrono_date_from_unix_days(seconds)
+}
+
+fn chrono_date_from_unix_days(seconds: i64) -> String {
+    // Civil-from-days (Howard Hinnant's algorithm), no extra dependency.
+    let days = seconds.div_euclid(86_400);
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let mut year = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    year += i64::from(month <= 2);
+    format!("{year:04}-{:02}-{:02}", month, day)
+}
+
 #[derive(Debug, Serialize)]
 pub struct ImportPreview {
     pub rows: Vec<Value>,
@@ -1195,47 +1584,13 @@ pub async fn confirm_documents_csv_as_role(
     let mut created = 0;
     let mut updated = 0;
     for row in preview.rows {
-        let id = row["id"].as_str().unwrap();
-        let payload = &row["payload"];
-        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _doc WHERE id = ?)")
-            .bind(id)
-            .fetch_one(&mut *transaction)
-            .await?;
-        if exists {
-            let owner: String = sqlx::query_scalar("SELECT entity_id FROM _doc WHERE id = ?")
-                .bind(id)
-                .fetch_one(&mut *transaction)
-                .await?;
-            if owner != entity_id {
-                return Err(
-                    AppError::Conflict(format!("id belongs to another entity: {id}")).into(),
-                );
-            }
-            sqlx::query("UPDATE _doc SET payload = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ?")
-                .bind(payload.to_string())
-                .bind(id)
-                .execute(&mut *transaction)
-                .await?;
+        let id = row["id"].as_str().unwrap().to_string();
+        let payload = row["payload"].clone();
+        if upsert_document_in_tx(&mut transaction, entity_id, &id, &payload, actor).await? {
             updated += 1;
         } else {
-            sqlx::query("INSERT INTO _doc (id, entity_id, payload) VALUES (?, ?, ?)")
-                .bind(id)
-                .bind(entity_id)
-                .bind(payload.to_string())
-                .execute(&mut *transaction)
-                .await?;
             created += 1;
         }
-        sqlx::query(
-            "INSERT INTO _audit_log (id, entity_id, doc_id, action, payload, actor) VALUES (?, ?, ?, 'import', ?, ?)",
-        )
-        .bind(audit_id(id, "import"))
-        .bind(entity_id)
-        .bind(id)
-        .bind(payload.to_string())
-        .bind(actor)
-        .execute(&mut *transaction)
-        .await?;
     }
     transaction.commit().await?;
     Ok(ImportResult { created, updated })

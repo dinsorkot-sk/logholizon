@@ -155,6 +155,15 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
             axum::routing::put(update_field_option).delete(delete_field_option),
         )
         .route("/v1/entities", get(list_entities_for_user))
+        .route("/v1/entities/export", get(export_workbook_for_user))
+        .route(
+            "/v1/entities/import/preview",
+            axum::routing::post(preview_workbook_import_for_user),
+        )
+        .route(
+            "/v1/entities/import/confirm",
+            axum::routing::post(confirm_workbook_import_for_user),
+        )
         .route("/v1/entities/{id}", get(get_entity_for_user))
         .route("/v1/entities/{id}/workflow", get(get_workflow_for_user))
         .route("/v1/entities/{id}/views", get(list_entity_views_for_user))
@@ -846,6 +855,48 @@ async fn confirm_import_for_user(
     repository::confirm_documents_csv_as_role(
         &state.pool,
         &id,
+        &body,
+        current_actor(&user).as_deref(),
+        &current_role(&user),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
+
+const XLSX_CONTENT_TYPE: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+/// Export every entity visible to the caller as one `.xlsx` workbook.
+async fn export_workbook_for_user(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+) -> Result<axum::response::Response, AppError> {
+    let bytes = repository::export_workbook_xlsx(&state.pool, &current_role(&user))
+        .await
+        .map_err(map_db_error)?;
+    Ok(([("content-type", XLSX_CONTENT_TYPE)], bytes).into_response())
+}
+
+/// Preview a whole-workbook `.xlsx` import: one entry per sheet.
+async fn preview_workbook_import_for_user(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    body: axum::body::Bytes,
+) -> Result<Json<repository::MultiImportPreview>, AppError> {
+    repository::preview_workbook_xlsx(&state.pool, &body, &current_role(&user))
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+/// Confirm a whole-workbook `.xlsx` import atomically.
+async fn confirm_workbook_import_for_user(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    body: axum::body::Bytes,
+) -> Result<Json<repository::MultiImportResult>, AppError> {
+    repository::confirm_workbook_xlsx(
+        &state.pool,
         &body,
         current_actor(&user).as_deref(),
         &current_role(&user),
