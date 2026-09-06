@@ -19,6 +19,7 @@ const mainLinks = computed<NavigationMenuItem[]>(() => {
       { label: 'Entity Manager', icon: 'i-lucide-layout-grid', to: '/admin/meta/entity' },
       { label: 'Workflow Builder', icon: 'i-lucide-git-branch', to: '/admin/meta/workflow' },
       { label: 'Users', icon: 'i-lucide-users', to: '/admin/users' },
+      { label: 'Audit Log', icon: 'i-lucide-history', to: '/admin/audit' },
       { label: 'Settings', icon: 'i-lucide-settings', to: '/admin/settings' }
     )
   }
@@ -42,6 +43,7 @@ const commandGroups = computed<CommandPaletteGroup[]>(() => {
       { label: 'Entity Manager', icon: 'i-lucide-layout-grid', to: '/admin/meta/entity', kbds: ['g', 'e'] },
       { label: 'Workflow Builder', icon: 'i-lucide-git-branch', to: '/admin/meta/workflow', kbds: ['g', 'w'] },
       { label: 'Users', icon: 'i-lucide-users', to: '/admin/users', kbds: ['g', 'u'] },
+      { label: 'Audit Log', icon: 'i-lucide-history', to: '/admin/audit', kbds: ['g', 'a'] },
       { label: 'Settings', icon: 'i-lucide-settings', to: '/admin/settings', kbds: ['g', 's'] }
     )
   }

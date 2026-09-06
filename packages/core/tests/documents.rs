@@ -71,6 +71,93 @@ async fn document_crud_validates_payload() {
 }
 
 #[tokio::test]
+async fn global_audit_lists_filters_and_paginates() {
+    let pool = seeded_pool().await;
+    repository::create_document(&pool, "d1", "ticket", &json!({"title": "Fix pump"}))
+        .await
+        .unwrap();
+    repository::update_document(&pool, "d1", &json!({"title": "Fixed"}))
+        .await
+        .unwrap();
+    repository::create_document(&pool, "d2", "ticket", &json!({"title": "Replace belt"}))
+        .await
+        .unwrap();
+
+    // No filter: all entries with entity label.
+    let all = repository::list_global_audit(&pool, 50, 0, &Default::default())
+        .await
+        .unwrap();
+    assert_eq!(all.total, 3);
+    assert!(all.items.iter().all(|e| e.entity_label == "Ticket"));
+
+    // Filter by action.
+    let updates = repository::list_global_audit(
+        &pool,
+        50,
+        0,
+        &repository::GlobalAuditFilter {
+            action: Some("update".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(updates.total, 1);
+    assert_eq!(updates.items[0].doc_id, "d1");
+
+    // Filter by entity_id.
+    let by_entity = repository::list_global_audit(
+        &pool,
+        50,
+        0,
+        &repository::GlobalAuditFilter {
+            entity_id: Some("ticket".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(by_entity.total, 3);
+    let missing = repository::list_global_audit(
+        &pool,
+        50,
+        0,
+        &repository::GlobalAuditFilter {
+            entity_id: Some("missing".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(missing.total, 0);
+
+    // Search by doc_id.
+    let searched = repository::list_global_audit(
+        &pool,
+        50,
+        0,
+        &repository::GlobalAuditFilter {
+            search: Some("d1".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(searched.total, 2);
+
+    // Pagination.
+    let page = repository::list_global_audit(&pool, 2, 0, &Default::default())
+        .await
+        .unwrap();
+    assert_eq!(page.total, 3);
+    assert_eq!(page.items.len(), 2);
+    let page2 = repository::list_global_audit(&pool, 2, 2, &Default::default())
+        .await
+        .unwrap();
+    assert_eq!(page2.items.len(), 1);
+}
+
+#[tokio::test]
 async fn list_documents_supports_search_filter_sort() {
     let pool = seeded_pool().await;
     repository::create_document(

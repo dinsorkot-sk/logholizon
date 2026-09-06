@@ -146,6 +146,7 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
                 .delete(delete_document),
         )
         .route("/v1/documents/{id}/audit", get(list_document_audit))
+        .route("/v1/audit", get(list_global_audit))
         .route(
             "/v1/documents/{id}/transition",
             axum::routing::post(transition_document),
@@ -634,6 +635,45 @@ async fn list_document_audit(
         .await
         .map(Json)
         .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GlobalAuditQuery {
+    #[serde(default = "default_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
+    #[serde(default)]
+    pub entity_id: Option<String>,
+    #[serde(default)]
+    pub action: Option<String>,
+    #[serde(default)]
+    pub search: Option<String>,
+}
+
+async fn list_global_audit(
+    State(state): State<AppState>,
+    Query(query): Query<GlobalAuditQuery>,
+) -> Result<Json<repository::GlobalAuditList>, AppError> {
+    if query.limit < 1 || query.limit > 100 {
+        return Err(AppError::BadRequest("limit must be 1..=100".into()));
+    }
+    if query.offset < 0 {
+        return Err(AppError::BadRequest("offset must be >= 0".into()));
+    }
+    repository::list_global_audit(
+        &state.pool,
+        query.limit,
+        query.offset,
+        &repository::GlobalAuditFilter {
+            entity_id: query.entity_id,
+            action: query.action,
+            search: query.search,
+        },
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
 }
 
 fn map_db_error(error: anyhow::Error) -> AppError {

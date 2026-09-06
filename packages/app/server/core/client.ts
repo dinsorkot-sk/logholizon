@@ -45,6 +45,21 @@ export type CoreAuditList = {
   total: number
 }
 
+export type CoreGlobalAuditEntry = {
+  id: string
+  entity_id: string
+  entity_label: string
+  doc_id: string
+  action: string
+  payload: Record<string, unknown>
+  created_at: string
+}
+
+export type CoreGlobalAuditList = {
+  items: CoreGlobalAuditEntry[]
+  total: number
+}
+
 export type CreateDocumentInput = {
   id: string
   entity_id: string
@@ -194,6 +209,20 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
     ): Promise<CoreAuditList> =>
       request<CoreAuditList>(`/v1/documents/${encodeURIComponent(id)}/audit`, {
         query: { limit, offset }
+      }),
+    listGlobalAudit: (
+      limit = 50,
+      offset = 0,
+      options: { entityId?: string; action?: string; search?: string } = {}
+    ): Promise<CoreGlobalAuditList> =>
+      request<CoreGlobalAuditList>('/v1/audit', {
+        query: {
+          limit,
+          offset,
+          entity_id: options.entityId,
+          action: options.action,
+          search: options.search
+        }
       }),
     getWorkflow: (entityId: string): Promise<CoreWorkflowDefinition> =>
       request<CoreWorkflowDefinition>(`/v1/meta/entities/${encodeURIComponent(entityId)}/workflow`),

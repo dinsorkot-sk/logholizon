@@ -70,6 +70,30 @@ pub struct AuditList {
 }
 
 #[derive(Debug, Serialize)]
+pub struct GlobalAuditEntry {
+    pub id: String,
+    pub entity_id: String,
+    pub entity_label: String,
+    pub doc_id: String,
+    pub action: String,
+    pub payload: Value,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GlobalAuditList {
+    pub items: Vec<GlobalAuditEntry>,
+    pub total: i64,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct GlobalAuditFilter {
+    pub entity_id: Option<String>,
+    pub action: Option<String>,
+    pub search: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct WorkflowState {
     pub id: String,
     pub name: String,
@@ -1301,6 +1325,63 @@ pub async fn list_document_audit(
         });
     }
     Ok(AuditList { items, total })
+}
+
+pub async fn list_global_audit(
+    pool: &SqlitePool,
+    limit: i64,
+    offset: i64,
+    filter: &GlobalAuditFilter,
+) -> Result<GlobalAuditList> {
+    use sqlx::Row;
+    let mut where_sql = String::from("1 = 1");
+    let mut params: Vec<String> = Vec::new();
+
+    if let Some(entity_id) = filter.entity_id.as_deref().filter(|s| !s.trim().is_empty()) {
+        where_sql.push_str(" AND a.entity_id = ?");
+        params.push(entity_id.to_string());
+    }
+    if let Some(action) = filter.action.as_deref().filter(|s| !s.trim().is_empty()) {
+        where_sql.push_str(" AND a.action = ?");
+        params.push(action.to_string());
+    }
+    if let Some(search) = filter.search.as_deref().filter(|s| !s.trim().is_empty()) {
+        where_sql.push_str(" AND a.doc_id LIKE ?");
+        params.push(format!("%{}%", search.trim()));
+    }
+
+    let total: i64 = {
+        let query = format!("SELECT COUNT(*) FROM _audit_log a WHERE {where_sql}");
+        let mut q = sqlx::query(&query);
+        for p in &params {
+            q = q.bind(p);
+        }
+        q.fetch_one(pool).await?.try_get(0)?
+    };
+
+    let query = format!(
+        "SELECT a.id, a.entity_id, e.label, a.doc_id, a.action, a.payload, a.created_at \
+         FROM _audit_log a JOIN _meta_entity e ON e.id = a.entity_id \
+         WHERE {where_sql} ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?"
+    );
+    let mut q = sqlx::query(&query);
+    for p in &params {
+        q = q.bind(p);
+    }
+    let rows = q.bind(limit).bind(offset).fetch_all(pool).await?;
+    let mut items = Vec::new();
+    for row in rows {
+        items.push(GlobalAuditEntry {
+            id: row.try_get("id")?,
+            entity_id: row.try_get("entity_id")?,
+            entity_label: row.try_get("label")?,
+            doc_id: row.try_get("doc_id")?,
+            action: row.try_get("action")?,
+            payload: serde_json::from_str(&row.try_get::<String, _>("payload")?)?,
+            created_at: row.try_get("created_at")?,
+        });
+    }
+    Ok(GlobalAuditList { items, total })
 }
 
 fn audit_id(doc_id: &str, action: &str) -> String {
