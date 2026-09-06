@@ -19,6 +19,7 @@ type FieldPermission = { field_id: string; role: string; can_view: boolean; can_
 type EntityView = { id: string; entity_id: string; name: string; config: Record<string, unknown>; created_at: string }
 type FormLayoutSection = { id: string; label: string; fields: string[] }
 type FormLayout = { entity_id: string; config: { sections?: FormLayoutSection[] } }
+type NotificationRule = { id: string; entity_id: string; trigger: string; target_url: string; active: boolean; created_at: string }
 
 const toast = useToast()
 const { data: entities, status, refresh } = await useFetch<Entity[]>('/api/meta/entities')
@@ -37,6 +38,8 @@ const viewsUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeU
 const { data: views, status: viewsStatus, error: viewsError, refresh: refreshViews } = await useFetch<EntityView[]>(viewsUrl, { immediate: false })
 const formLayoutUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/form-layout` : '')
 const { data: formLayout, status: formLayoutStatus, error: formLayoutError, refresh: refreshFormLayout } = await useFetch<FormLayout>(formLayoutUrl, { immediate: false })
+const notifyRulesUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/notification-rules` : '')
+const { data: notifyRules, status: notifyRulesStatus, error: notifyRulesError, refresh: refreshNotifyRules } = await useFetch<NotificationRule[]>(notifyRulesUrl, { immediate: false })
 
 const filteredEntities = computed(() => {
   const q = search.value.trim().toLowerCase()
@@ -51,7 +54,8 @@ const tabItems = [
   { label: 'Workflow', icon: 'i-lucide-git-branch', slot: 'workflow' },
   { label: 'Permissions', icon: 'i-lucide-shield', slot: 'permissions' },
   { label: 'Views', icon: 'i-lucide-eye', slot: 'views' },
-  { label: 'Form Layout', icon: 'i-lucide-layout-dashboard', slot: 'form-layout' }
+  { label: 'Form Layout', icon: 'i-lucide-layout-dashboard', slot: 'form-layout' },
+  { label: 'Notifications', icon: 'i-lucide-bell', slot: 'notifications' }
 ]
 
 const typeItems = [
@@ -79,6 +83,7 @@ function selectEntity(id: string) {
   refreshViews()
   refreshFormLayout()
   resetLayoutEditor()
+  refreshNotifyRules()
 }
 
 // --- Permissions ---
@@ -314,6 +319,93 @@ async function saveLayout() {
     layoutError.value = e?.data?.message || e?.statusMessage || 'Failed to save layout'
   } finally {
     savingLayout.value = false
+  }
+}
+
+// --- Notifications ---
+const ruleOpen = ref(false)
+const ruleForm = reactive({ target_url: '', active: true })
+const ruleError = ref('')
+const savingRule = ref(false)
+const deleteRuleOpen = ref(false)
+const ruleToDelete = ref<NotificationRule | null>(null)
+const deletingRule = ref(false)
+const togglingRuleId = ref('')
+
+function openAddRule() {
+  ruleForm.target_url = ''
+  ruleForm.active = true
+  ruleError.value = ''
+  ruleOpen.value = true
+}
+
+async function saveRule() {
+  if (!selectedId.value) return
+  ruleError.value = ''
+  if (!ruleForm.target_url.trim()) {
+    ruleError.value = 'target_url is required'
+    return
+  }
+  savingRule.value = true
+  try {
+    await $fetch(`/api/meta/entities/${encodeURIComponent(selectedId.value)}/notification-rules`, {
+      method: 'POST',
+      body: { trigger: 'transition', target_url: ruleForm.target_url, active: ruleForm.active }
+    })
+    ruleOpen.value = false
+    await refreshNotifyRules()
+    toast.add({ title: 'Notification rule created', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    ruleError.value = e?.data?.message || e?.statusMessage || 'Failed to create rule'
+  } finally {
+    savingRule.value = false
+  }
+}
+
+async function toggleRule(rule: NotificationRule) {
+  togglingRuleId.value = rule.id
+  try {
+    await $fetch(`/api/meta/notification-rules/${encodeURIComponent(rule.id)}`, {
+      method: 'PUT',
+      body: { active: !rule.active }
+    })
+    await refreshNotifyRules()
+    toast.add({ title: rule.active ? 'Rule disabled' : 'Rule enabled', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    toast.add({
+      title: 'Unable to update rule',
+      description: e?.data?.message || e?.statusMessage || 'Update failed',
+      color: 'error',
+      icon: 'i-lucide-alert-circle'
+    })
+  } finally {
+    togglingRuleId.value = ''
+  }
+}
+
+function confirmDeleteRule(rule: NotificationRule) {
+  ruleToDelete.value = rule
+  deleteRuleOpen.value = true
+}
+
+async function removeRule() {
+  if (!ruleToDelete.value) return
+  deletingRule.value = true
+  try {
+    await $fetch(`/api/meta/notification-rules/${encodeURIComponent(ruleToDelete.value.id)}`, { method: 'DELETE' })
+    deleteRuleOpen.value = false
+    ruleToDelete.value = null
+    await refreshNotifyRules()
+    toast.add({ title: 'Rule deleted', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    toast.add({
+      title: 'Unable to delete rule',
+      description: e?.data?.message || e?.statusMessage || 'Delete failed',
+      color: 'error',
+      icon: 'i-lucide-alert-circle'
+    })
+  } finally {
+    deletingRule.value = false
   }
 }
 
@@ -1145,6 +1237,47 @@ const fieldColumns: TableColumn<Field>[] = [
                 </UCard>
               </div>
             </template>
+            <template #notifications>
+              <div v-if="notifyRulesStatus === 'pending'" class="py-6">
+                <USkeleton v-for="index in 2" :key="index" class="mb-3 h-8 w-full" />
+              </div>
+              <UAlert
+                v-else-if="notifyRulesStatus === 'error'"
+                color="error"
+                title="Cannot load notification rules"
+                :description="notifyRulesError?.message || 'Check the Rust core connection.'"
+              >
+                <template #actions>
+                  <UButton size="sm" variant="outline" @click="refreshNotifyRules()">Retry</UButton>
+                </template>
+              </UAlert>
+              <div v-else class="py-3">
+                <div class="flex items-center justify-between pb-2">
+                  <p class="text-sm text-muted">{{ (notifyRules || []).length }} rules · fires on workflow transition</p>
+                  <UButton size="sm" icon="i-lucide-plus" @click="openAddRule">Add rule</UButton>
+                </div>
+                <div v-if="!(notifyRules || []).length" class="py-8 text-center text-sm text-muted">
+                  No rules yet. Add a webhook URL to notify on every transition.
+                </div>
+                <div v-else class="space-y-2">
+                  <div v-for="rule in notifyRules || []" :key="rule.id" class="flex items-center justify-between gap-4 rounded-lg border border-default px-4 py-3">
+                    <div class="min-w-0">
+                      <p class="truncate font-mono text-sm font-medium">{{ rule.target_url }}</p>
+                      <p class="text-xs text-muted">{{ rule.trigger }} · {{ rule.active ? 'active' : 'disabled' }}</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <USwitch
+                        :model-value="rule.active"
+                        :disabled="togglingRuleId === rule.id"
+                        aria-label="Toggle rule active"
+                        @update:model-value="toggleRule(rule)"
+                      />
+                      <UButton size="xs" variant="ghost" color="error" @click="confirmDeleteRule(rule)">Delete</UButton>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
           </UTabs>
         </UCard>
       </div>
@@ -1399,6 +1532,43 @@ const fieldColumns: TableColumn<Field>[] = [
           <div class="flex justify-end gap-2">
             <UButton variant="ghost" @click="sectionOpen = false">Cancel</UButton>
             <UButton @click="saveSection">Add section</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <!-- Add notification rule modal -->
+      <UModal v-model:open="ruleOpen" title="Add notification rule">
+        <template #body>
+          <UForm class="space-y-4" @submit="saveRule">
+            <UFormField label="Webhook URL" hint="https://… — POSTed on every transition">
+              <UInput v-model="ruleForm.target_url" placeholder="https://example.com/hook" />
+            </UFormField>
+            <UFormField label="Active">
+              <USwitch v-model="ruleForm.active" />
+            </UFormField>
+            <UAlert v-if="ruleError" color="error" :title="ruleError" />
+          </UForm>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="ruleOpen = false">Cancel</UButton>
+            <UButton :loading="savingRule" @click="saveRule">Create rule</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <!-- Delete notification rule modal -->
+      <UModal v-model:open="deleteRuleOpen" title="Delete rule">
+        <template #body>
+          <p class="text-sm text-muted">
+            This will permanently delete the webhook rule
+            <span class="font-mono">{{ ruleToDelete?.target_url }}</span>. This action cannot be undone.
+          </p>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="deleteRuleOpen = false">Cancel</UButton>
+            <UButton color="error" :loading="deletingRule" @click="removeRule">Delete</UButton>
           </div>
         </template>
       </UModal>

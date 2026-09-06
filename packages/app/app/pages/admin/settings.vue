@@ -3,12 +3,16 @@ import { h, resolveComponent } from 'vue'
 
 definePageMeta({ middleware: 'auth' })
 
+const UBadge = resolveComponent('UBadge')
+
 type AdminStatus = { version: string; database_path: string; integrity: boolean; entities: number; documents: number; backup_interval_hours: number; backup_keep: number }
 type BackupInfo = { name: string; size: number; modified: number }
+type Delivery = { id: string; rule_id: string; document_id: string; action: string; status: string; attempts: number; last_error: string | null; created_at: string }
 
 const toast = useToast()
 const { data: status, status: statusState, error, refresh } = await useFetch<AdminStatus>('/api/admin/status')
 const { data: backups, refresh: refreshBackups } = await useFetch<{ items: BackupInfo[] }>('/api/admin/backups')
+const { data: deliveries, status: deliveriesStatus, refresh: refreshDeliveries } = await useFetch<{ items: Delivery[]; total: number }>('/api/admin/notification-deliveries')
 
 const creating = ref(false)
 const restoring = ref(false)
@@ -27,6 +31,14 @@ function formatSize(bytes: number) {
 function formatTime(seconds: number) {
   if (!seconds) return '—'
   return new Date(seconds * 1000).toLocaleString()
+}
+
+function deliveryColor(deliveryStatus: string) {
+  switch (deliveryStatus) {
+    case 'delivered': return 'success'
+    case 'failed': return 'error'
+    default: return 'warning'
+  }
 }
 
 async function createBackup() {
@@ -169,6 +181,32 @@ async function restartCore() {
                 h(resolveComponent('UButton'), { size: 'xs', variant: 'ghost', color: 'error', onClick: () => openRestore(row.original) }, () => 'Restore')
               ]) }
             ]" :get-row-id="(row: BackupInfo) => row.name" class="w-full" />
+          </UCard>
+
+          <UCard>
+            <template #header>
+              <div class="flex items-center justify-between">
+                <div>
+                  <h2 class="text-sm font-semibold">Webhook deliveries</h2>
+                  <p class="text-xs text-muted">Latest notification attempts (transition triggers)</p>
+                </div>
+                <UButton size="sm" variant="ghost" icon="i-lucide-refresh-cw" :loading="deliveriesStatus === 'pending'" @click="refreshDeliveries()">Refresh</UButton>
+              </div>
+            </template>
+            <div v-if="deliveriesStatus === 'pending'" class="space-y-2">
+              <USkeleton v-for="index in 3" :key="index" class="h-8 w-full" />
+            </div>
+            <div v-else-if="!deliveries?.items?.length" class="py-8 text-center text-sm text-muted">
+              No deliveries yet. Add a webhook rule, then transition a record.
+            </div>
+            <UTable v-else :data="deliveries.items" :columns="[
+              { accessorKey: 'document_id', header: 'Document', cell: ({ row }) => h('span', { class: 'font-mono' }, row.original.document_id) },
+              { accessorKey: 'action', header: 'Action', cell: ({ row }) => h('span', { class: 'font-mono' }, row.original.action) },
+              { accessorKey: 'status', header: 'Status', cell: ({ row }) => h(resolveComponent('UBadge'), { color: deliveryColor(row.original.status), variant: 'subtle' }, () => row.original.status) },
+              { accessorKey: 'attempts', header: 'Attempts' },
+              { accessorKey: 'last_error', header: 'Last error', cell: ({ row }) => h('span', { class: 'truncate text-xs text-muted', title: row.original.last_error || '' }, row.original.last_error || '—') },
+              { accessorKey: 'created_at', header: 'When', cell: ({ row }) => h('span', { class: 'text-xs' }, row.original.created_at) }
+            ]" :get-row-id="(row: Delivery) => row.id" class="w-full" />
           </UCard>
 
           <UCard>

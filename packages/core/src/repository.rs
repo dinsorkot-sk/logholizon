@@ -170,6 +170,35 @@ pub struct FormLayout {
 }
 
 #[derive(Debug, Serialize)]
+pub struct NotificationRule {
+    pub id: String,
+    pub entity_id: String,
+    pub trigger: String,
+    pub target_url: String,
+    pub active: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NotificationDelivery {
+    pub id: String,
+    pub rule_id: String,
+    pub document_id: String,
+    pub action: String,
+    pub payload: Value,
+    pub status: String,
+    pub attempts: i64,
+    pub last_error: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NotificationDeliveryList {
+    pub items: Vec<NotificationDelivery>,
+    pub total: i64,
+}
+
+#[derive(Debug, Serialize)]
 pub struct StatusCount {
     pub status: String,
     pub count: i64,
@@ -610,6 +639,178 @@ pub async fn delete_entity_view(pool: &SqlitePool, id: &str) -> Result<()> {
         return Err(AppError::NotFound(format!("view not found: {id}")).into());
     }
     Ok(())
+}
+
+/// Webhook notifications (Phase 3, transition-only). Rules are admin-managed
+/// per entity; deliveries are enqueued atomically with the transition audit
+/// row and sent by a background worker with retry.
+fn validate_notification_rule(trigger: &str, target_url: &str) -> Result<()> {
+    if trigger != "transition" {
+        return Err(AppError::BadRequest(format!("unknown trigger: {trigger}")).into());
+    }
+    let url = target_url.trim();
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err(
+            AppError::BadRequest("target_url must start with http:// or https://".into()).into(),
+        );
+    }
+    Ok(())
+}
+
+fn notification_rule_row(
+    id: String,
+    entity_id: String,
+    trigger: String,
+    target_url: String,
+    active: i64,
+    created_at: String,
+) -> NotificationRule {
+    NotificationRule {
+        id,
+        entity_id,
+        trigger,
+        target_url,
+        active: active != 0,
+        created_at,
+    }
+}
+
+pub async fn list_notification_rules(
+    pool: &SqlitePool,
+    entity_id: &str,
+) -> Result<Vec<NotificationRule>> {
+    require_entity(pool, entity_id).await?;
+    let rows = sqlx::query_as::<_, (String, String, String, String, i64, String)>(
+        "SELECT id, entity_id, trigger, target_url, active, created_at FROM _notification_rule WHERE entity_id = ? ORDER BY created_at",
+    )
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, entity_id, trigger, target_url, active, created_at)| {
+            notification_rule_row(id, entity_id, trigger, target_url, active, created_at)
+        })
+        .collect())
+}
+
+pub async fn create_notification_rule(
+    pool: &SqlitePool,
+    entity_id: &str,
+    trigger: &str,
+    target_url: &str,
+    active: bool,
+) -> Result<NotificationRule> {
+    require_entity(pool, entity_id).await?;
+    validate_notification_rule(trigger, target_url)?;
+    let id = format!("{entity_id}_rule_{}", chrono_nanos());
+    sqlx::query(
+        "INSERT INTO _notification_rule (id, entity_id, trigger, target_url, active) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(entity_id)
+    .bind(trigger)
+    .bind(target_url.trim())
+    .bind(i64::from(active))
+    .execute(pool)
+    .await?;
+    get_notification_rule(pool, &id).await
+}
+
+pub async fn get_notification_rule(pool: &SqlitePool, id: &str) -> Result<NotificationRule> {
+    let row = sqlx::query_as::<_, (String, String, String, String, i64, String)>(
+        "SELECT id, entity_id, trigger, target_url, active, created_at FROM _notification_rule WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("notification rule not found: {id}")))?;
+    let (id, entity_id, trigger, target_url, active, created_at) = row;
+    Ok(notification_rule_row(
+        id, entity_id, trigger, target_url, active, created_at,
+    ))
+}
+
+pub async fn update_notification_rule(
+    pool: &SqlitePool,
+    id: &str,
+    trigger: Option<&str>,
+    target_url: Option<&str>,
+    active: Option<bool>,
+) -> Result<NotificationRule> {
+    let existing = get_notification_rule(pool, id).await?;
+    let next_trigger = trigger.unwrap_or(&existing.trigger).to_string();
+    let next_url = target_url.unwrap_or(&existing.target_url).to_string();
+    let next_active = active.unwrap_or(existing.active);
+    validate_notification_rule(&next_trigger, &next_url)?;
+    let result = sqlx::query(
+        "UPDATE _notification_rule SET trigger = ?, target_url = ?, active = ? WHERE id = ?",
+    )
+    .bind(&next_trigger)
+    .bind(next_url.trim())
+    .bind(i64::from(next_active))
+    .bind(id)
+    .execute(pool)
+    .await?;
+    debug_assert_eq!(result.rows_affected(), 1);
+    get_notification_rule(pool, id).await
+}
+
+pub async fn delete_notification_rule(pool: &SqlitePool, id: &str) -> Result<()> {
+    let result = sqlx::query("DELETE FROM _notification_rule WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("notification rule not found: {id}")).into());
+    }
+    Ok(())
+}
+
+fn chrono_nanos() -> i64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    // Monotonic suffix: parallel tests on coarse Windows clocks can
+    // otherwise generate duplicate ids within the same tick.
+    (millis * 1_000_000 + COUNTER.fetch_add(1, Ordering::Relaxed) % 1_000_000) as i64
+}
+
+pub async fn list_notification_deliveries(
+    pool: &SqlitePool,
+    limit: i64,
+    offset: i64,
+) -> Result<NotificationDeliveryList> {
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _notification_delivery")
+        .fetch_one(pool)
+        .await?;
+    let rows = sqlx::query_as::<_, (String, String, String, String, String, String, i64, Option<String>, String)>(
+        "SELECT id, rule_id, document_id, action, payload, status, attempts, last_error, created_at FROM _notification_delivery ORDER BY created_at DESC LIMIT ? OFFSET ?",
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    let mut items = Vec::new();
+    for (id, rule_id, document_id, action, payload, status, attempts, last_error, created_at) in
+        rows
+    {
+        items.push(NotificationDelivery {
+            id,
+            rule_id,
+            document_id,
+            action,
+            payload: serde_json::from_str(&payload)?,
+            status,
+            attempts,
+            last_error,
+            created_at,
+        });
+    }
+    Ok(NotificationDeliveryList { items, total })
 }
 
 /// Form layout designer (Visual Builder Phase 2). The layout is a singleton
@@ -1958,12 +2159,13 @@ pub async fn transition_document_as_role(
         .payload
         .get(&status_field.name)
         .and_then(Value::as_str)
-        .ok_or_else(|| AppError::BadRequest("document has no status".into()))?;
+        .ok_or_else(|| AppError::BadRequest("document has no status".into()))?
+        .to_string();
     let target: Option<String> = sqlx::query_scalar(
         "SELECT to_state FROM _workflow_transition WHERE entity_id = ? AND from_state = ? AND action = ?",
     )
     .bind(&existing.entity_id)
-    .bind(current)
+    .bind(&current)
     .bind(action)
     .fetch_optional(pool)
     .await?;
@@ -1972,7 +2174,7 @@ pub async fn transition_document_as_role(
     })?;
     check_field_permission(pool, &existing.entity_id, &status_field.name, role, true).await?;
     let mut next = existing.payload;
-    next[status_field.name.as_str()] = Value::String(target);
+    next[status_field.name.as_str()] = Value::String(target.clone());
     validate_payload_for_role(pool, &existing.entity_id, &next, role).await?;
     let mut tx = pool.begin().await?;
     let result = sqlx::query(
@@ -1999,8 +2201,78 @@ pub async fn transition_document_as_role(
     .bind(actor)
     .execute(&mut *tx)
     .await?;
+    enqueue_transition_deliveries(
+        &mut tx,
+        &existing.entity_id,
+        id,
+        action,
+        &current,
+        &target,
+        &next,
+        actor,
+    )
+    .await?;
     tx.commit().await?;
     get_document(pool, id).await
+}
+
+/// Enqueue one pending webhook delivery per active transition rule. Runs
+/// inside the transition transaction so a delivery row always matches its
+/// audit row. Never performs network I/O; the worker sends later.
+#[allow(clippy::too_many_arguments)]
+async fn enqueue_transition_deliveries(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    entity_id: &str,
+    doc_id: &str,
+    action: &str,
+    from_state: &str,
+    to_state: &str,
+    payload: &Value,
+    actor: Option<&str>,
+) -> Result<()> {
+    let rules: Vec<(String,)> = sqlx::query_as(
+        "SELECT id FROM _notification_rule WHERE entity_id = ? AND trigger = 'transition' AND active != 0",
+    )
+    .bind(entity_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    for (rule_id,) in rules {
+        let body = serde_json::json!({
+            "entity_id": entity_id,
+            "document_id": doc_id,
+            "action": action,
+            "from_state": from_state,
+            "to_state": to_state,
+            "actor": actor,
+            "payload": payload,
+        });
+        let body_string = body.to_string();
+        let body_string = if body_string.len() > 1_000_000 {
+            serde_json::json!({
+                "entity_id": entity_id,
+                "document_id": doc_id,
+                "action": action,
+                "from_state": from_state,
+                "to_state": to_state,
+                "actor": actor,
+                "truncated": true,
+            })
+            .to_string()
+        } else {
+            body_string
+        };
+        sqlx::query(
+            "INSERT INTO _notification_delivery (id, rule_id, document_id, action, payload) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(format!("{doc_id}-{action}-{}", chrono_nanos()))
+        .bind(rule_id)
+        .bind(doc_id)
+        .bind(action)
+        .bind(body_string)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
 }
 
 pub async fn get_workflow(pool: &SqlitePool, entity_id: &str) -> Result<WorkflowDefinition> {

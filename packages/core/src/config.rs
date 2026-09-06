@@ -7,6 +7,9 @@ pub struct Config {
     pub database_url: String,
     pub backup_interval_hours: u64,
     pub backup_keep: usize,
+    pub notify_interval_secs: u64,
+    pub notify_timeout_secs: u64,
+    pub notify_max_attempts: i64,
 }
 
 impl Config {
@@ -26,6 +29,18 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(7),
+            notify_interval_secs: env::var("CORE_NOTIFY_INTERVAL_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(30),
+            notify_timeout_secs: env::var("CORE_NOTIFY_TIMEOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(10),
+            notify_max_attempts: env::var("CORE_NOTIFY_MAX_ATTEMPTS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(3),
         }
     }
 }

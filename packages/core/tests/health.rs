@@ -13,6 +13,9 @@ fn test_config() -> Config {
         database_url: "sqlite://:memory:".into(),
         backup_interval_hours: 24,
         backup_keep: 7,
+        notify_interval_secs: 30,
+        notify_timeout_secs: 10,
+        notify_max_attempts: 3,
     }
 }
 
@@ -41,6 +44,9 @@ async fn authed_app() -> (axum::Router, String, sqlx::SqlitePool, std::path::Pat
         database_url: url,
         backup_interval_hours: 24,
         backup_keep: 7,
+        notify_interval_secs: 30,
+        notify_timeout_secs: 10,
+        notify_max_attempts: 3,
     };
     let app = http::router(&config, pool.clone());
     (app, session.token, pool, dir)

@@ -118,6 +118,18 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
             get(get_entity_form_layout).put(update_entity_form_layout),
         )
         .route(
+            "/v1/meta/entities/{id}/notification-rules",
+            get(list_notification_rules).post(create_notification_rule),
+        )
+        .route(
+            "/v1/meta/notification-rules/{id}",
+            axum::routing::put(update_notification_rule).delete(delete_notification_rule),
+        )
+        .route(
+            "/v1/admin/notification-deliveries",
+            get(list_notification_deliveries),
+        )
+        .route(
             "/v1/meta/entities/{id}/workflow/states",
             axum::routing::post(create_workflow_state),
         )
@@ -556,6 +568,105 @@ async fn delete_entity_view(
     repository::delete_entity_view(&state.pool, &id)
         .await
         .map(|()| StatusCode::NO_CONTENT)
+        .map_err(map_db_error)
+}
+
+async fn list_notification_rules(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<repository::NotificationRule>>, AppError> {
+    repository::list_notification_rules(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateNotificationRule {
+    #[serde(default = "default_rule_trigger")]
+    pub trigger: String,
+    pub target_url: String,
+    #[serde(default = "default_rule_active")]
+    pub active: bool,
+}
+
+fn default_rule_trigger() -> String {
+    "transition".to_string()
+}
+
+fn default_rule_active() -> bool {
+    true
+}
+
+async fn create_notification_rule(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CreateNotificationRule>,
+) -> Result<(StatusCode, Json<repository::NotificationRule>), AppError> {
+    repository::create_notification_rule(
+        &state.pool,
+        &id,
+        &input.trigger,
+        &input.target_url,
+        input.active,
+    )
+    .await
+    .map(|rule| (StatusCode::CREATED, Json(rule)))
+    .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateNotificationRule {
+    pub trigger: Option<String>,
+    pub target_url: Option<String>,
+    pub active: Option<bool>,
+}
+
+async fn update_notification_rule(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<UpdateNotificationRule>,
+) -> Result<Json<repository::NotificationRule>, AppError> {
+    repository::update_notification_rule(
+        &state.pool,
+        &id,
+        input.trigger.as_deref(),
+        input.target_url.as_deref(),
+        input.active,
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
+
+async fn delete_notification_rule(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    repository::delete_notification_rule(&state.pool, &id)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListDeliveriesQuery {
+    #[serde(default = "default_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
+}
+
+async fn list_notification_deliveries(
+    State(state): State<AppState>,
+    Query(query): Query<ListDeliveriesQuery>,
+) -> Result<Json<repository::NotificationDeliveryList>, AppError> {
+    if !(1..=100).contains(&query.limit) || query.offset < 0 {
+        return Err(AppError::BadRequest("invalid pagination".into()));
+    }
+    repository::list_notification_deliveries(&state.pool, query.limit, query.offset)
+        .await
+        .map(Json)
         .map_err(map_db_error)
 }
 

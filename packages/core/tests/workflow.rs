@@ -61,6 +61,127 @@ async fn invalid_transition_is_rejected() {
 }
 
 #[tokio::test]
+async fn notification_rule_crud() {
+    let pool = db::connect("sqlite::memory:").await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    seed::seed(&pool).await.unwrap();
+
+    let rule = repository::create_notification_rule(
+        &pool,
+        "work_order",
+        "transition",
+        "https://example.com/hook",
+        true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(rule.entity_id, "work_order");
+    assert!(rule.active);
+
+    // Invalid trigger rejected.
+    assert!(repository::create_notification_rule(
+        &pool,
+        "work_order",
+        "create",
+        "https://example.com/hook",
+        true,
+    )
+    .await
+    .is_err());
+
+    // Non-http(s) URL rejected.
+    assert!(repository::create_notification_rule(
+        &pool,
+        "work_order",
+        "transition",
+        "ftp://example.com/hook",
+        true,
+    )
+    .await
+    .is_err());
+
+    // Missing entity rejected.
+    assert!(repository::create_notification_rule(
+        &pool,
+        "missing",
+        "transition",
+        "https://example.com/hook",
+        true,
+    )
+    .await
+    .is_err());
+
+    let rules = repository::list_notification_rules(&pool, "work_order")
+        .await
+        .unwrap();
+    assert_eq!(rules.len(), 1);
+
+    let updated = repository::update_notification_rule(&pool, &rule.id, None, None, Some(false))
+        .await
+        .unwrap();
+    assert!(!updated.active);
+
+    repository::delete_notification_rule(&pool, &rule.id)
+        .await
+        .unwrap();
+    assert!(repository::delete_notification_rule(&pool, &rule.id)
+        .await
+        .is_err());
+    let rules = repository::list_notification_rules(&pool, "work_order")
+        .await
+        .unwrap();
+    assert!(rules.is_empty());
+}
+
+#[tokio::test]
+async fn transition_creates_delivery() {
+    let pool = db::connect("sqlite::memory:").await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    seed::seed(&pool).await.unwrap();
+    repository::create_notification_rule(
+        &pool,
+        "work_order",
+        "transition",
+        "https://example.com/hook",
+        true,
+    )
+    .await
+    .unwrap();
+    // Inactive rules do not enqueue.
+    repository::create_notification_rule(
+        &pool,
+        "work_order",
+        "transition",
+        "https://example.com/off",
+        false,
+    )
+    .await
+    .unwrap();
+    repository::create_document(
+        &pool,
+        "wo-notify",
+        "work_order",
+        &json!({"title": "Notify me", "status": "draft", "priority": "low"}),
+        Some("alice"),
+    )
+    .await
+    .unwrap();
+    repository::transition_document(&pool, "wo-notify", "submit", Some("alice"), None)
+        .await
+        .unwrap();
+    let deliveries = repository::list_notification_deliveries(&pool, 10, 0)
+        .await
+        .unwrap();
+    assert_eq!(deliveries.total, 1);
+    let delivery = &deliveries.items[0];
+    assert_eq!(delivery.document_id, "wo-notify");
+    assert_eq!(delivery.action, "submit");
+    assert_eq!(delivery.status, "pending");
+    assert_eq!(delivery.payload["to_state"], "open");
+    assert_eq!(delivery.payload["actor"], "alice");
+}
+
+#[tokio::test]
 async fn dashboard_counts_group_by_status() {
     let pool = db::connect("sqlite::memory:").await.unwrap();
     db::migrate(&pool).await.unwrap();

@@ -91,9 +91,10 @@ pnpm --dir packages/app run e2e
 
 ---
 
-## Phase 3 — Notifications (Webhook-first)
+## Phase 3 — Notifications (Webhook-first) ✅ Done 2026-09-06
 
 > เป้าหมาย: แจ้งเตือนระบบภายนอกเมื่อ workflow transition / record เปลี่ยน — webhook ก่อน, email ทีหลัง
+> สถานะ: 3.1–3.3 เสร็จ (outbox + worker + rule CRUD + designer tab + delivery log + browser verify); gates ผ่าน (fmt, clippy, test, build, typecheck, e2e 7 tests)
 
 ### 3.1 Core outbox + hook
 

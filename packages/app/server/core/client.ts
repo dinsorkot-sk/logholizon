@@ -85,6 +85,32 @@ export type CoreFormLayout = {
   config: Record<string, unknown>
 }
 
+export type CoreNotificationRule = {
+  id: string
+  entity_id: string
+  trigger: string
+  target_url: string
+  active: boolean
+  created_at: string
+}
+
+export type CoreNotificationDelivery = {
+  id: string
+  rule_id: string
+  document_id: string
+  action: string
+  payload: Record<string, unknown>
+  status: string
+  attempts: number
+  last_error: string | null
+  created_at: string
+}
+
+export type CoreNotificationDeliveryList = {
+  items: CoreNotificationDelivery[]
+  total: number
+}
+
 export type CreateDocumentInput = {
   id: string
   entity_id: string
@@ -325,6 +351,30 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       }),
     getFormLayoutForUser: (entityId: string): Promise<CoreFormLayout> =>
       request<CoreFormLayout>(`/v1/entities/${encodeURIComponent(entityId)}/form-layout`),
+    listNotificationRules: (entityId: string): Promise<CoreNotificationRule[]> =>
+      request<CoreNotificationRule[]>(`/v1/meta/entities/${encodeURIComponent(entityId)}/notification-rules`),
+    createNotificationRule: (
+      entityId: string,
+      rule: { trigger?: string; target_url: string; active?: boolean }
+    ): Promise<CoreNotificationRule> =>
+      request<CoreNotificationRule>(`/v1/meta/entities/${encodeURIComponent(entityId)}/notification-rules`, {
+        method: 'POST',
+        body: rule
+      }),
+    updateNotificationRule: (
+      id: string,
+      rule: { trigger?: string; target_url?: string; active?: boolean }
+    ): Promise<CoreNotificationRule> =>
+      request<CoreNotificationRule>(`/v1/meta/notification-rules/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: rule
+      }),
+    deleteNotificationRule: (id: string): Promise<void> =>
+      request<void>(`/v1/meta/notification-rules/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    listNotificationDeliveries: (limit = 50, offset = 0): Promise<CoreNotificationDeliveryList> =>
+      request<CoreNotificationDeliveryList>('/v1/admin/notification-deliveries', {
+        query: { limit, offset }
+      }),
     deleteWorkflowTransition: (id: string): Promise<void> =>
       request<void>(`/v1/meta/workflow/transitions/${encodeURIComponent(id)}`, {
         method: 'DELETE'
