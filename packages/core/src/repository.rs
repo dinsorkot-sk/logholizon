@@ -124,6 +124,33 @@ pub struct DocCommentList {
 }
 
 #[derive(Debug, Serialize)]
+pub struct DocFollowerList {
+    pub followers: Vec<String>,
+    pub total: i64,
+    pub is_following: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DocActivity {
+    pub id: String,
+    pub entity_id: String,
+    pub doc_id: String,
+    pub title: String,
+    pub due_date: Option<String>,
+    pub assignee: Option<String>,
+    pub done: bool,
+    pub actor: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DocActivityList {
+    pub items: Vec<DocActivity>,
+    pub total: i64,
+    pub open: i64,
+}
+
+#[derive(Debug, Serialize)]
 pub struct GlobalAuditEntry {
     pub id: String,
     pub entity_id: String,
@@ -3122,6 +3149,226 @@ pub async fn create_doc_comment_as_role(
         actor,
         created_at,
     })
+}
+
+/// Document followers: any role with view access can list; toggling
+/// requires an actor identity and view access. Toggle is idempotent.
+pub async fn list_doc_followers_as_role(
+    pool: &SqlitePool,
+    doc_id: &str,
+    role: &str,
+    actor: Option<&str>,
+) -> Result<DocFollowerList> {
+    let document = get_document(pool, doc_id)
+        .await
+        .map_err(|_| AppError::NotFound(format!("document not found: {doc_id}")))?;
+    check_permission(pool, &document.entity_id, role, false).await?;
+    let followers: Vec<String> =
+        sqlx::query_scalar("SELECT actor FROM _doc_follower WHERE doc_id = ? ORDER BY actor")
+            .bind(doc_id)
+            .fetch_all(pool)
+            .await?;
+    let total = followers.len() as i64;
+    let is_following = actor
+        .map(|a| followers.iter().any(|f| f == a))
+        .unwrap_or(false);
+    Ok(DocFollowerList {
+        followers,
+        total,
+        is_following,
+    })
+}
+
+pub async fn toggle_doc_follower_as_role(
+    pool: &SqlitePool,
+    doc_id: &str,
+    role: &str,
+    actor: Option<&str>,
+) -> Result<DocFollowerList> {
+    let document = get_document(pool, doc_id)
+        .await
+        .map_err(|_| AppError::NotFound(format!("document not found: {doc_id}")))?;
+    check_permission(pool, &document.entity_id, role, false).await?;
+    let actor = actor
+        .map(str::trim)
+        .filter(|a| !a.is_empty())
+        .ok_or_else(|| AppError::Unauthorized("missing actor identity".into()))?;
+    let existing: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM _doc_follower WHERE doc_id = ? AND actor = ?)",
+    )
+    .bind(doc_id)
+    .bind(actor)
+    .fetch_one(pool)
+    .await?;
+    if existing {
+        sqlx::query("DELETE FROM _doc_follower WHERE doc_id = ? AND actor = ?")
+            .bind(doc_id)
+            .bind(actor)
+            .execute(pool)
+            .await?;
+    } else {
+        sqlx::query("INSERT INTO _doc_follower (doc_id, actor) VALUES (?, ?)")
+            .bind(doc_id)
+            .bind(actor)
+            .execute(pool)
+            .await?;
+    }
+    list_doc_followers_as_role(pool, doc_id, role, Some(actor)).await
+}
+
+/// Document activities: any role with view access can list; creating and
+/// toggling done require edit access. Title is trimmed, 1..=200 chars;
+/// due_date must be YYYY-MM-DD when present.
+pub async fn list_doc_activities_as_role(
+    pool: &SqlitePool,
+    doc_id: &str,
+    role: &str,
+) -> Result<DocActivityList> {
+    let document = get_document(pool, doc_id)
+        .await
+        .map_err(|_| AppError::NotFound(format!("document not found: {doc_id}")))?;
+    check_permission(pool, &document.entity_id, role, false).await?;
+    let rows = sqlx::query_as::<_, (String, String, String, String, Option<String>, Option<String>, i64, Option<String>, String)>(
+        "SELECT id, entity_id, doc_id, title, due_date, assignee, done, actor, created_at FROM _doc_activity WHERE doc_id = ? ORDER BY done, due_date, created_at DESC, id DESC",
+    )
+    .bind(doc_id)
+    .fetch_all(pool)
+    .await?;
+    let total = rows.len() as i64;
+    let open = rows.iter().filter(|row| row.6 == 0).count() as i64;
+    Ok(DocActivityList {
+        items: rows
+            .into_iter()
+            .map(
+                |(id, entity_id, doc_id, title, due_date, assignee, done, actor, created_at)| {
+                    DocActivity {
+                        id,
+                        entity_id,
+                        doc_id,
+                        title,
+                        due_date,
+                        assignee,
+                        done: done != 0,
+                        actor,
+                        created_at,
+                    }
+                },
+            )
+            .collect(),
+        total,
+        open,
+    })
+}
+
+pub async fn create_doc_activity_as_role(
+    pool: &SqlitePool,
+    doc_id: &str,
+    title: &str,
+    due_date: Option<&str>,
+    assignee: Option<&str>,
+    role: &str,
+    actor: Option<&str>,
+) -> Result<DocActivity> {
+    let document = get_document(pool, doc_id)
+        .await
+        .map_err(|_| AppError::NotFound(format!("document not found: {doc_id}")))?;
+    check_permission(pool, &document.entity_id, role, true).await?;
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(AppError::BadRequest("activity title is required".into()).into());
+    }
+    if title.chars().count() > 200 {
+        return Err(
+            AppError::BadRequest("activity title must be at most 200 characters".into()).into(),
+        );
+    }
+    let due_date = due_date.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(date) = due_date {
+        if !valid_activity_date(date) {
+            return Err(AppError::BadRequest("due_date must be YYYY-MM-DD".into()).into());
+        }
+    }
+    let assignee = assignee.map(str::trim).filter(|s| !s.is_empty());
+    let id = format!("{doc_id}_activity_{}", chrono_nanos());
+    sqlx::query(
+        "INSERT INTO _doc_activity (id, entity_id, doc_id, title, due_date, assignee, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(&document.entity_id)
+    .bind(doc_id)
+    .bind(title)
+    .bind(due_date)
+    .bind(assignee)
+    .bind(actor)
+    .execute(pool)
+    .await?;
+    get_doc_activity(pool, &id).await
+}
+
+pub async fn toggle_doc_activity_as_role(
+    pool: &SqlitePool,
+    activity_id: &str,
+    role: &str,
+) -> Result<DocActivity> {
+    let row: Option<(String, String)> =
+        sqlx::query_as("SELECT doc_id, entity_id FROM _doc_activity WHERE id = ?")
+            .bind(activity_id)
+            .fetch_optional(pool)
+            .await?;
+    let Some((doc_id, entity_id)) = row else {
+        return Err(AppError::NotFound(format!("activity not found: {activity_id}")).into());
+    };
+    let _ = doc_id;
+    check_permission(pool, &entity_id, role, true).await?;
+    sqlx::query("UPDATE _doc_activity SET done = 1 - done WHERE id = ?")
+        .bind(activity_id)
+        .execute(pool)
+        .await?;
+    get_doc_activity(pool, activity_id).await
+}
+
+async fn get_doc_activity(pool: &SqlitePool, activity_id: &str) -> Result<DocActivity> {
+    let row = sqlx::query_as::<_, (String, String, String, String, Option<String>, Option<String>, i64, Option<String>, String)>(
+        "SELECT id, entity_id, doc_id, title, due_date, assignee, done, actor, created_at FROM _doc_activity WHERE id = ?",
+    )
+    .bind(activity_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("activity not found: {activity_id}")))?;
+    let (id, entity_id, doc_id, title, due_date, assignee, done, actor, created_at) = row;
+    Ok(DocActivity {
+        id,
+        entity_id,
+        doc_id,
+        title,
+        due_date,
+        assignee,
+        done: done != 0,
+        actor,
+        created_at,
+    })
+}
+
+fn valid_activity_date(date: &str) -> bool {
+    let parts: Vec<&str> = date.split('-').collect();
+    if parts.len() != 3 {
+        return false;
+    }
+    let parsed: Vec<u32> = parts
+        .iter()
+        .filter_map(|part| part.parse::<u32>().ok())
+        .collect();
+    if parsed.len() != 3 {
+        return false;
+    }
+    let (year, month, day) = (parsed[0], parsed[1], parsed[2]);
+    if parts[0].len() != 4 || parts[1].len() != 2 || parts[2].len() != 2 {
+        return false;
+    }
+    if year == 0 || month == 0 || month > 12 || day == 0 || day > 31 {
+        return false;
+    }
+    true
 }
 
 pub async fn list_document_audit_as_role(

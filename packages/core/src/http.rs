@@ -223,6 +223,18 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
             "/v1/documents/{id}/comments",
             get(list_doc_comments).post(create_doc_comment),
         )
+        .route(
+            "/v1/documents/{id}/followers",
+            get(list_doc_followers).post(toggle_doc_follower),
+        )
+        .route(
+            "/v1/documents/{id}/activities",
+            get(list_doc_activities).post(create_doc_activity),
+        )
+        .route(
+            "/v1/activities/{id}/toggle",
+            axum::routing::post(toggle_doc_activity),
+        )
         .route("/v1/audit", get(list_global_audit))
         .route(
             "/v1/documents/{id}/transition",
@@ -1471,6 +1483,89 @@ async fn create_doc_comment(
     .await
     .map(|comment| (StatusCode::CREATED, Json(comment)))
     .map_err(map_db_error)
+}
+
+async fn list_doc_followers(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::DocFollowerList>, AppError> {
+    repository::list_doc_followers_as_role(
+        &state.pool,
+        &id,
+        &current_role(&user),
+        current_actor(&user).as_deref(),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
+
+async fn toggle_doc_follower(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::DocFollowerList>, AppError> {
+    repository::toggle_doc_follower_as_role(
+        &state.pool,
+        &id,
+        &current_role(&user),
+        current_actor(&user).as_deref(),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
+
+async fn list_doc_activities(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::DocActivityList>, AppError> {
+    repository::list_doc_activities_as_role(&state.pool, &id, &current_role(&user))
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateDocActivityRequest {
+    pub title: String,
+    #[serde(default)]
+    pub due_date: Option<String>,
+    #[serde(default)]
+    pub assignee: Option<String>,
+}
+
+async fn create_doc_activity(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+    Json(input): Json<CreateDocActivityRequest>,
+) -> Result<(StatusCode, Json<repository::DocActivity>), AppError> {
+    repository::create_doc_activity_as_role(
+        &state.pool,
+        &id,
+        &input.title,
+        input.due_date.as_deref(),
+        input.assignee.as_deref(),
+        &current_role(&user),
+        current_actor(&user).as_deref(),
+    )
+    .await
+    .map(|activity| (StatusCode::CREATED, Json(activity)))
+    .map_err(map_db_error)
+}
+
+async fn toggle_doc_activity(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::DocActivity>, AppError> {
+    repository::toggle_doc_activity_as_role(&state.pool, &id, &current_role(&user))
+        .await
+        .map(Json)
+        .map_err(map_db_error)
 }
 
 #[derive(Debug, Deserialize)]

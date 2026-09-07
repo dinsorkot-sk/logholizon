@@ -300,6 +300,72 @@ const { data: comments, status: commentsStatus, error: commentsError, refresh: r
 const commentBody = ref('')
 const commentError = ref('')
 const postingComment = ref(false)
+const togglingFollow = ref(false)
+
+type DocFollowerList = { followers: string[]; total: number; is_following: boolean }
+const { data: followers, refresh: refreshFollowers } = await useFetch<DocFollowerList>(
+  () => auditId.value ? `/api/documents/${encodeURIComponent(auditId.value)}/followers` : '',
+  { watch: [auditId], immediate: false }
+)
+
+type DocActivity = { id: string; title: string; due_date?: string | null; assignee?: string | null; done: boolean; created_at: string; actor?: string | null }
+type DocActivityList = { items: DocActivity[]; total: number; open: number }
+const { data: activities, refresh: refreshActivities } = await useFetch<DocActivityList>(
+  () => auditId.value ? `/api/documents/${encodeURIComponent(auditId.value)}/activities` : '',
+  { watch: [auditId], immediate: false }
+)
+const activityTitle = ref('')
+const activityDueDate = ref('')
+const activityAssignee = ref('')
+const activityError = ref('')
+const creatingActivity = ref(false)
+
+async function createActivity() {
+  activityError.value = ''
+  if (!auditId.value || !activityTitle.value.trim()) return
+  creatingActivity.value = true
+  try {
+    await $fetch(`/api/documents/${encodeURIComponent(auditId.value)}/activities`, {
+      method: 'POST',
+      body: {
+        title: activityTitle.value.trim(),
+        ...(activityDueDate.value ? { due_date: activityDueDate.value } : {}),
+        ...(activityAssignee.value.trim() ? { assignee: activityAssignee.value.trim() } : {})
+      }
+    })
+    activityTitle.value = ''
+    activityDueDate.value = ''
+    activityAssignee.value = ''
+    await refreshActivities()
+    toast.add({ title: 'Activity added', color: 'success', icon: 'i-lucide-check' })
+  } catch (cause: any) {
+    activityError.value = cause?.data?.message || cause?.statusMessage || 'Unable to add activity'
+  } finally {
+    creatingActivity.value = false
+  }
+}
+
+async function toggleActivity(activity: DocActivity) {
+  try {
+    await $fetch(`/api/activities/${encodeURIComponent(activity.id)}/toggle`, { method: 'POST' })
+    await refreshActivities()
+  } catch (cause: any) {
+    toast.add({ title: 'Unable to update activity', description: cause?.data?.message || cause?.statusMessage || 'Update failed', color: 'error', icon: 'i-lucide-alert-circle' })
+  }
+}
+
+async function toggleFollow() {
+  if (!auditId.value || togglingFollow.value) return
+  togglingFollow.value = true
+  try {
+    await $fetch(`/api/documents/${encodeURIComponent(auditId.value)}/followers`, { method: 'POST' })
+    await refreshFollowers()
+  } catch (cause: any) {
+    toast.add({ title: 'Unable to update follow', description: cause?.data?.message || cause?.statusMessage || 'Update failed', color: 'error', icon: 'i-lucide-alert-circle' })
+  } finally {
+    togglingFollow.value = false
+  }
+}
 
 async function postComment() {
   commentError.value = ''
@@ -347,8 +413,14 @@ function openEdit(document: Document) {
   panelOpen.value = true
   commentBody.value = ''
   commentError.value = ''
+  activityTitle.value = ''
+  activityDueDate.value = ''
+  activityAssignee.value = ''
+  activityError.value = ''
   refreshAudit()
   refreshComments()
+  refreshFollowers()
+  refreshActivities()
 }
 
 function isConflict(cause: any) {
@@ -1321,7 +1393,16 @@ async function confirmImport() {
             </template>
             <UAlert v-if="error" color="error" :title="error" />
             <div v-if="selected" class="border-t pt-4">
-              <h2 class="mb-2 text-sm font-semibold">Comments</h2>
+              <div class="mb-2 flex items-center justify-between">
+                <h2 class="text-sm font-semibold">Comments</h2>
+                <UButton
+                  size="xs"
+                  variant="outline"
+                  :icon="followers?.is_following ? 'i-lucide-bell-off' : 'i-lucide-bell'"
+                  :loading="togglingFollow"
+                  @click="toggleFollow"
+                >{{ followers?.is_following ? 'Unfollow' : 'Follow' }}{{ followers?.total ? ` (${followers.total})` : '' }}</UButton>
+              </div>
               <div class="mb-2 flex gap-2">
                 <UInput
                   v-model="commentBody"
@@ -1344,6 +1425,24 @@ async function confirmImport() {
                 </li>
               </ol>
               <p v-else class="mb-4 text-sm text-muted">No comments yet.</p>
+              <h2 class="mb-2 text-sm font-semibold">Activities{{ activities?.open ? ` (${activities.open} open)` : '' }}</h2>
+              <div class="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_auto_auto]">
+                <UInput v-model="activityTitle" placeholder="New activity…" :disabled="!canEdit" @keyup.enter="createActivity" />
+                <UInput v-model="activityDueDate" type="date" :disabled="!canEdit" aria-label="Due date" />
+                <UInput v-model="activityAssignee" placeholder="Assignee" :disabled="!canEdit" class="sm:w-28" />
+                <UButton size="sm" :loading="creatingActivity" :disabled="!canEdit || !activityTitle.trim()" @click="createActivity">Add</UButton>
+              </div>
+              <UAlert v-if="activityError" color="error" :title="activityError" class="mb-2" />
+              <ol v-if="(activities?.items || []).length" class="mb-4 space-y-2">
+                <li v-for="activity in activities?.items || []" :key="activity.id" class="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2">
+                  <UCheckbox :model-value="activity.done" :disabled="!canEdit" :aria-label="`Mark ${activity.title} done`" @update:model-value="toggleActivity(activity)" />
+                  <div class="min-w-0 flex-1">
+                    <p class="truncate text-sm" :class="{ 'line-through text-muted': activity.done }">{{ activity.title }}</p>
+                    <p v-if="activity.due_date || activity.assignee" class="text-xs text-muted">{{ activity.due_date || 'No due date' }}{{ activity.assignee ? ` · ${activity.assignee}` : '' }}</p>
+                  </div>
+                </li>
+              </ol>
+              <p v-else class="mb-4 text-sm text-muted">No activities yet.</p>
               <h2 class="mb-2 text-sm font-semibold">History</h2>
               <div v-if="auditStatus === 'pending'" class="py-4 text-sm text-muted">Loading history…</div>
               <UAlert v-else-if="auditStatus === 'error'" color="error" title="Cannot load history" />

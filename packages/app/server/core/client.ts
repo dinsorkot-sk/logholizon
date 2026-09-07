@@ -73,6 +73,30 @@ export type CoreDocCommentList = {
   total: number
 }
 
+export type CoreDocFollowerList = {
+  followers: string[]
+  total: number
+  is_following: boolean
+}
+
+export type CoreDocActivity = {
+  id: string
+  entity_id: string
+  doc_id: string
+  title: string
+  due_date?: string | null
+  assignee?: string | null
+  done: boolean
+  actor?: string | null
+  created_at: string
+}
+
+export type CoreDocActivityList = {
+  items: CoreDocActivity[]
+  total: number
+  open: number
+}
+
 export type CoreGlobalAuditEntry = {
   id: string
   entity_id: string
@@ -324,6 +348,26 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       request<CoreDocComment>(`/v1/documents/${encodeURIComponent(id)}/comments`, {
         method: 'POST',
         body: { body }
+      }),
+    listDocFollowers: (id: string): Promise<CoreDocFollowerList> =>
+      request<CoreDocFollowerList>(`/v1/documents/${encodeURIComponent(id)}/followers`),
+    toggleDocFollower: (id: string): Promise<CoreDocFollowerList> =>
+      request<CoreDocFollowerList>(`/v1/documents/${encodeURIComponent(id)}/followers`, {
+        method: 'POST'
+      }),
+    listDocActivities: (id: string): Promise<CoreDocActivityList> =>
+      request<CoreDocActivityList>(`/v1/documents/${encodeURIComponent(id)}/activities`),
+    createDocActivity: (
+      id: string,
+      activity: { title: string; due_date?: string; assignee?: string }
+    ): Promise<CoreDocActivity> =>
+      request<CoreDocActivity>(`/v1/documents/${encodeURIComponent(id)}/activities`, {
+        method: 'POST',
+        body: activity
+      }),
+    toggleDocActivity: (id: string): Promise<CoreDocActivity> =>
+      request<CoreDocActivity>(`/v1/activities/${encodeURIComponent(id)}/toggle`, {
+        method: 'POST'
       }),
     listGlobalAudit: (
       limit = 50,
