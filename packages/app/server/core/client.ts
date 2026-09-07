@@ -219,8 +219,13 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
         method: 'PUT',
         body: entity
       }),
-    getEntityOptions: (id: string): Promise<CoreEntityOption[]> =>
-      request<CoreEntityOption[]>(`/v1/entities/${encodeURIComponent(id)}/options`),
+    getEntityOptions: (id: string, query?: { search?: string; limit?: number }): Promise<CoreEntityOption[]> => {
+      const params = new URLSearchParams()
+      if (query?.search?.trim()) params.set('search', query.search.trim())
+      if (query?.limit) params.set('limit', String(query.limit))
+      const suffix = params.size ? `?${params.toString()}` : ''
+      return request<CoreEntityOption[]>(`/v1/entities/${encodeURIComponent(id)}/options${suffix}`)
+    },
     deleteEntity: (id: string): Promise<void> =>
       request<void>(`/v1/meta/entities/${encodeURIComponent(id)}`, {
         method: 'DELETE'

@@ -293,18 +293,42 @@ async fn create_entity(
         .map_err(map_db_error)
 }
 
+#[derive(Debug, Deserialize)]
+pub struct EntityOptionsQuery {
+    #[serde(default)]
+    pub search: Option<String>,
+    #[serde(default = "default_options_limit")]
+    pub limit: i64,
+}
+
+fn default_options_limit() -> i64 {
+    50
+}
+
 async fn entity_options(
     State(state): State<AppState>,
     user: Option<axum::extract::Extension<auth::User>>,
     Path(id): Path<String>,
+    Query(query): Query<EntityOptionsQuery>,
 ) -> Result<Json<Vec<repository::EntityOption>>, AppError> {
+    if query.limit < 1 || query.limit > 100 {
+        return Err(AppError::BadRequest(
+            "limit must be between 1 and 100".into(),
+        ));
+    }
     repository::check_permission(&state.pool, &id, &current_role(&user), false)
         .await
         .map_err(map_db_error)?;
-    repository::list_entity_options(&state.pool, &id, &current_role(&user))
-        .await
-        .map(Json)
-        .map_err(map_db_error)
+    repository::list_entity_options(
+        &state.pool,
+        &id,
+        &current_role(&user),
+        query.search.as_deref(),
+        query.limit,
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
 }
 
 async fn get_entity(

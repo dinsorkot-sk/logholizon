@@ -10,6 +10,7 @@ const isAdmin = computed(() => user.value?.role === 'admin')
 
 const mainLinks = computed<NavigationMenuItem[]>(() => {
   const links: NavigationMenuItem[] = [
+    { label: 'Apps', icon: 'i-lucide-layout-grid', to: '/apps' },
     { label: 'Dashboard', icon: 'i-lucide-house', to: '/dashboard' },
     { label: 'PM Dashboard', icon: 'i-lucide-clipboard-list', to: '/app/pm' },
     { label: 'Reports', icon: 'i-lucide-chart-bar', to: '/app/reports' }
@@ -50,6 +51,7 @@ const entityLinks = computed<NavigationMenuItem[]>(() => {
   return names.map(name => ({
     label: name,
     icon: 'i-lucide-box',
+    to: `/app/modules/${encodeURIComponent(name)}`,
     children: (groups.get(name) || []).map(e => ({
       label: e.label,
       icon: 'i-lucide-table',
@@ -61,6 +63,7 @@ const entityLinks = computed<NavigationMenuItem[]>(() => {
 // --- Command palette (⌘K) ---
 const commandGroups = computed<CommandPaletteGroup[]>(() => {
   const nav: CommandPaletteGroup['items'] = [
+    { label: 'Apps', icon: 'i-lucide-layout-grid', to: '/apps', kbds: ['g', 'a'] },
     { label: 'Dashboard', icon: 'i-lucide-house', to: '/dashboard', kbds: ['g', 'd'] },
     { label: 'PM Dashboard', icon: 'i-lucide-clipboard-list', to: '/app/pm', kbds: ['g', 'p'] },
     { label: 'Reports', icon: 'i-lucide-chart-bar', to: '/app/reports', kbds: ['g', 'r'] }
@@ -81,6 +84,12 @@ const commandGroups = computed<CommandPaletteGroup[]>(() => {
     if (!modules.has(module)) modules.set(module, [])
     modules.get(module)!.push(e)
   }
+  const moduleItems: CommandPaletteGroup['items'] = [...modules.keys()].sort().map(name => ({
+    label: name,
+    suffix: `${(modules.get(name) || []).length} entities`,
+    icon: 'i-lucide-box',
+    to: `/app/modules/${encodeURIComponent(name)}`
+  }))
   for (const name of [...modules.keys()].sort()) {
     for (const e of modules.get(name) || []) {
       entityItems.push({
@@ -93,6 +102,7 @@ const commandGroups = computed<CommandPaletteGroup[]>(() => {
   }
   return [
     { id: 'navigation', label: 'Navigation', items: nav },
+    { id: 'modules', label: 'Apps', items: moduleItems },
     { id: 'entities', label: 'Entities', items: entityItems }
   ]
 })

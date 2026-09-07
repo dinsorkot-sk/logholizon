@@ -68,7 +68,7 @@ async function onSubmit(event: FormSubmitEvent<Schema>) {
   try {
     await login(event.data.username, event.data.password)
     toast.add({ title: 'Welcome back', color: 'success', icon: 'i-lucide-check' })
-    await router.push('/dashboard')
+    await router.push('/apps')
   } catch (cause: any) {
     error.value = cause?.data?.message || cause?.statusMessage || 'Login failed'
   } finally {
@@ -86,7 +86,7 @@ async function onSetup(event: FormSubmitEvent<SetupSchema>) {
     })
     await login(event.data.username, event.data.password)
     toast.add({ title: 'Admin account created', color: 'success', icon: 'i-lucide-check' })
-    await router.push('/dashboard')
+    await router.push('/apps')
   } catch (cause: any) {
     error.value = cause?.data?.message || cause?.statusMessage || 'Setup failed'
   } finally {

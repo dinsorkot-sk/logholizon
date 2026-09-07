@@ -9,6 +9,6 @@ export default defineNuxtRouteMiddleware(async (to) => {
     return navigateTo('/login')
   }
   if (user.value && isLoginPage) {
-    return navigateTo('/dashboard')
+    return navigateTo('/apps')
   }
 })

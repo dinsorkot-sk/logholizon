@@ -780,12 +780,37 @@ async fn reference_field_validation() {
         .unwrap();
 
     // Options endpoint resolves labels.
-    let options = repository::list_entity_options(&pool, "product", "admin")
+    let options = repository::list_entity_options(&pool, "product", "admin", None, 50)
         .await
         .unwrap();
     assert_eq!(options.len(), 1);
     assert_eq!(options[0].id, "p1");
     assert_eq!(options[0].label, "Pump");
+}
+
+#[tokio::test]
+async fn entity_options_search_filters_and_caps() {
+    use serde_json::json;
+    let pool = setup().await;
+    repository::create_entity(&pool, "product", "product", "Product")
+        .await
+        .unwrap();
+    repository::create_field(&pool, "product", "title", "text", true, false, None, None)
+        .await
+        .unwrap();
+    for (id, title) in [("p1", "Pump"), ("p2", "Valve"), ("p3", "Pump Hose")] {
+        repository::create_document(&pool, id, "product", &json!({"title": title}), None)
+            .await
+            .unwrap();
+    }
+    let options = repository::list_entity_options(&pool, "product", "admin", Some("pump"), 50)
+        .await
+        .unwrap();
+    assert_eq!(options.len(), 2);
+    let capped = repository::list_entity_options(&pool, "product", "admin", None, 2)
+        .await
+        .unwrap();
+    assert_eq!(capped.len(), 2);
 }
 
 #[tokio::test]

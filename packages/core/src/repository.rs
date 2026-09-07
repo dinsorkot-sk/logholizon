@@ -484,12 +484,17 @@ pub struct EntityOption {
 /// Dropdown options for reference fields: id + display label, where the
 /// label is the first text field value (falling back to the document id).
 /// Respects the caller's view permission on the target entity.
+/// `search` filters by id or label substring (case-insensitive);
+/// `limit` caps rows at 1..=100 (default 50).
 pub async fn list_entity_options(
     pool: &SqlitePool,
     entity_id: &str,
     role: &str,
+    search: Option<&str>,
+    limit: i64,
 ) -> Result<Vec<EntityOption>> {
     check_permission(pool, entity_id, role, false).await?;
+    let limit = limit.clamp(1, 100);
     let fields = list_fields(pool, entity_id).await?;
     let label_field = fields
         .iter()
@@ -514,7 +519,16 @@ pub async fn list_entity_options(
             })
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| id.clone());
+        if let Some(query) = search.map(str::trim).filter(|s| !s.is_empty()) {
+            let query = query.to_lowercase();
+            if !id.to_lowercase().contains(&query) && !label.to_lowercase().contains(&query) {
+                continue;
+            }
+        }
         options.push(EntityOption { id, label });
+        if options.len() as i64 >= limit {
+            break;
+        }
     }
     Ok(options)
 }

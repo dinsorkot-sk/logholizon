@@ -121,18 +121,30 @@ const { data: entity, status: entityStatus, error: entityError } = await useFetc
 const canEdit = computed(() => entity.value?.permission?.can_edit ?? true)
 const viewableFields = computed(() => (entity.value?.fields || []).filter(f => f.can_view ?? true))
 // Reference dropdown options, keyed by target entity id.
+// Initial load fetches the first page; typing in a reference field
+// searches server-side so large target entities stay usable.
 const refOptions = ref<Record<string, EntityOption[]>>({})
-async function loadRefOptions(field: Field) {
+const refSearch = ref<Record<string, string>>({})
+async function loadRefOptions(field: Field, search = '') {
   const target = field.ref_entity
-  if (field.type !== 'reference' || !target || refOptions.value[target]) return
+  if (field.type !== 'reference' || !target) return
+  if (!search && refOptions.value[target]) return
   try {
-    refOptions.value[target] = await $fetch<EntityOption[]>(`/api/entities/${encodeURIComponent(target)}/options`)
+    const params = new URLSearchParams({ limit: '50' })
+    if (search.trim()) params.set('search', search.trim())
+    refOptions.value[target] = await $fetch<EntityOption[]>(`/api/entities/${encodeURIComponent(target)}/options?${params.toString()}`)
   } catch {
-    refOptions.value[target] = []
+    if (!search) refOptions.value[target] = []
   }
 }
+function searchRefOptions(field: Field, search: string) {
+  const target = field.ref_entity
+  if (field.type !== 'reference' || !target) return
+  refSearch.value[target] = search
+  loadRefOptions(field, search)
+}
 watch(viewableFields, (fields) => {
-  fields.filter(f => f.type === 'reference').forEach(loadRefOptions)
+  fields.filter(f => f.type === 'reference').forEach(field => loadRefOptions(field))
 }, { immediate: true })
 function refLabel(field: Field, value: unknown) {
   if (value === '' || value === null || value === undefined) return '—'
@@ -890,9 +902,10 @@ async function confirmImport() {
                     v-model="payload[field.name] as string"
                     :items="(field.ref_entity ? refOptions[field.ref_entity] || [] : []).map(o => ({ label: o.label, value: o.id }))"
                     value-key="value"
-                    placeholder="Select…"
+                    placeholder="Type to search…"
                     class="w-full"
                     :disabled="!isFieldEditable(field.name)"
+                    @update:search="(value: string) => searchRefOptions(field, value)"
                   />
                   <UCheckbox
                     v-else-if="field.type === 'checkbox'"
@@ -933,9 +946,10 @@ async function confirmImport() {
                   v-model="payload[field.name] as string"
                   :items="(field.ref_entity ? refOptions[field.ref_entity] || [] : []).map(o => ({ label: o.label, value: o.id }))"
                   value-key="value"
-                  placeholder="Select…"
+                  placeholder="Type to search…"
                   class="w-full"
                   :disabled="!isFieldEditable(field.name)"
+                  @update:search="(value: string) => searchRefOptions(field, value)"
                 />
                 <UCheckbox
                   v-else-if="field.type === 'checkbox'"
