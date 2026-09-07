@@ -3,8 +3,7 @@ import type { CommandPaletteGroup, NavigationMenuItem } from '@nuxt/ui'
 
 const open = ref(false)
 const commandOpen = ref(false)
-const { user, logout } = useAuth()
-const router = useRouter()
+const { user } = useAuth()
 const { data: entities, status, error, refresh } = await useFetch<{ id: string; label: string; module?: string | null }[]>('/api/entities')
 
 const isAdmin = computed(() => user.value?.role === 'admin')
@@ -98,11 +97,6 @@ const commandGroups = computed<CommandPaletteGroup[]>(() => {
   ]
 })
 
-async function onLogout() {
-  await logout()
-  router.push('/login')
-}
-
 function onCommandSelect() {
   commandOpen.value = false
 }
@@ -116,8 +110,6 @@ function onKeydown(event: KeyboardEvent) {
 
 onMounted(() => window.addEventListener('keydown', onKeydown))
 onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
-
-const environment = process.env.NODE_ENV === 'production' ? 'prod' : 'dev'
 </script>
 
 <template>
@@ -161,18 +153,7 @@ const environment = process.env.NODE_ENV === 'production' ? 'prod' : 'dev'
       </template>
 
       <template #footer="{ collapsed }">
-        <div class="flex items-center justify-between gap-2 px-3 py-2">
-          <div class="min-w-0">
-            <p class="truncate text-xs font-medium">{{ user?.username || '—' }}</p>
-            <p class="text-xs text-muted">
-              <span v-if="!collapsed">LOGHOLIZON · {{ environment }}</span>
-              <span v-else>LH</span>
-            </p>
-          </div>
-          <UDropdownMenu :items="[{ label: 'Sign out', icon: 'i-lucide-log-out', onSelect: onLogout }]">
-            <UButton size="xs" variant="ghost" icon="i-lucide-chevrons-up-down" aria-label="User menu" />
-          </UDropdownMenu>
-        </div>
+        <UserMenu :collapsed="collapsed" />
       </template>
     </UDashboardSidebar>
 
