@@ -103,6 +103,23 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
             "/v1/admin/companies/{id}/tax-rules",
             get(list_tax_rules).post(create_tax_rule),
         )
+        .route(
+            "/v1/admin/companies/{id}/accounts",
+            get(list_gl_accounts).post(create_gl_account),
+        )
+        .route(
+            "/v1/admin/companies/{id}/entries",
+            get(list_journal_entries).post(post_journal_entry),
+        )
+        .route(
+            "/v1/admin/entries/{id}/void",
+            axum::routing::post(void_journal_entry),
+        )
+        .route("/v1/admin/companies/{id}/trial-balance", get(trial_balance))
+        .route(
+            "/v1/admin/companies/{id}/locks",
+            get(list_period_locks).post(lock_period),
+        )
         .route("/v1/admin/backup", axum::routing::post(admin_backup))
         .route("/v1/admin/backups", get(admin_list_backups))
         .route("/v1/admin/backups/{name}", get(admin_download_backup))
@@ -2024,6 +2041,151 @@ async fn create_tax_rule(
     )
     .await
     .map(|rule| (StatusCode::CREATED, Json(rule)))
+    .map_err(map_db_error)
+}
+
+async fn list_gl_accounts(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<repository::GlAccount>>, AppError> {
+    repository::list_gl_accounts(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateGlAccountRequest {
+    pub code: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub account_type: String,
+}
+
+async fn create_gl_account(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CreateGlAccountRequest>,
+) -> Result<(StatusCode, Json<repository::GlAccount>), AppError> {
+    repository::create_gl_account(
+        &state.pool,
+        &id,
+        &input.code,
+        &input.name,
+        &input.account_type,
+    )
+    .await
+    .map(|account| (StatusCode::CREATED, Json(account)))
+    .map_err(map_db_error)
+}
+
+async fn list_journal_entries(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<repository::JournalEntry>>, AppError> {
+    repository::list_journal_entries(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct JournalLineRequest {
+    pub account_id: String,
+    #[serde(default)]
+    pub debit: i64,
+    #[serde(default)]
+    pub credit: i64,
+    #[serde(default)]
+    pub memo: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PostJournalRequest {
+    #[serde(default)]
+    pub memo: String,
+    pub entry_date: String,
+    pub lines: Vec<JournalLineRequest>,
+}
+
+async fn post_journal_entry(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+    Json(input): Json<PostJournalRequest>,
+) -> Result<(StatusCode, Json<repository::JournalEntry>), AppError> {
+    let lines: Vec<repository::JournalLineInput> = input
+        .lines
+        .into_iter()
+        .map(|line| repository::JournalLineInput {
+            account_id: line.account_id,
+            debit: line.debit,
+            credit: line.credit,
+            memo: line.memo,
+        })
+        .collect();
+    repository::post_journal_entry(
+        &state.pool,
+        &id,
+        &input.memo,
+        &input.entry_date,
+        &lines,
+        current_actor(&user).as_deref(),
+    )
+    .await
+    .map(|entry| (StatusCode::CREATED, Json(entry)))
+    .map_err(map_db_error)
+}
+
+async fn void_journal_entry(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::JournalEntry>, AppError> {
+    repository::void_journal_entry(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn trial_balance(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::TrialBalance>, AppError> {
+    repository::trial_balance(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn list_period_locks(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<repository::PeriodLock>>, AppError> {
+    repository::list_period_locks(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LockPeriodRequest {
+    pub period: String,
+}
+
+async fn lock_period(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+    Json(input): Json<LockPeriodRequest>,
+) -> Result<(StatusCode, Json<repository::PeriodLock>), AppError> {
+    repository::lock_period(
+        &state.pool,
+        &id,
+        &input.period,
+        current_actor(&user).as_deref(),
+    )
+    .await
+    .map(|lock| (StatusCode::CREATED, Json(lock)))
     .map_err(map_db_error)
 }
 

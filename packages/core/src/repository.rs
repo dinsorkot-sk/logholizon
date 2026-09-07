@@ -231,6 +231,71 @@ pub struct TaxComputed {
     pub gross: i64,
 }
 
+/// M3 core ledger: CoA plus balanced journal entries plus trial balance
+/// plus period locks. Money in integer minor units per company.
+#[derive(Debug, Serialize)]
+pub struct GlAccount {
+    pub id: String,
+    pub company_id: String,
+    pub code: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub account_type: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct JournalLine {
+    pub id: String,
+    pub entry_id: String,
+    pub account_id: String,
+    pub account_code: String,
+    pub account_name: String,
+    pub debit: i64,
+    pub credit: i64,
+    pub memo: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct JournalEntry {
+    pub id: String,
+    pub company_id: String,
+    pub memo: String,
+    pub entry_date: String,
+    pub status: String,
+    pub actor: Option<String>,
+    pub created_at: String,
+    pub lines: Vec<JournalLine>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TrialBalanceRow {
+    pub account_id: String,
+    pub code: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub account_type: String,
+    pub debit: i64,
+    pub credit: i64,
+    pub balance: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TrialBalance {
+    pub company_id: String,
+    pub total_debit: i64,
+    pub total_credit: i64,
+    pub rows: Vec<TrialBalanceRow>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PeriodLock {
+    pub company_id: String,
+    pub period: String,
+    pub actor: Option<String>,
+    pub created_at: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct GlobalAuditEntry {
     pub id: String,
@@ -3982,6 +4047,358 @@ fn slugify(name: &str) -> String {
     } else {
         slug
     }
+}
+
+fn valid_account_type(account_type: &str) -> bool {
+    matches!(
+        account_type,
+        "asset" | "liability" | "equity" | "income" | "expense"
+    )
+}
+
+fn valid_entry_date(date: &str) -> bool {
+    let parts: Vec<&str> = date.split('-').collect();
+    parts.len() == 3
+        && parts[0].len() == 4
+        && parts[1].len() == 2
+        && parts[2].len() == 2
+        && parts.iter().all(|p| p.parse::<u32>().is_ok())
+}
+
+fn period_of(date: &str) -> String {
+    date.trim().chars().take(7).collect()
+}
+
+async fn require_gl_account(
+    pool: &SqlitePool,
+    company_id: &str,
+    account_id: &str,
+) -> Result<GlAccount> {
+    let row = sqlx::query_as::<_, (String, String, String, String, String, String)>(
+        "SELECT id, company_id, code, name, type, created_at FROM _gl_account WHERE id = ? AND company_id = ?",
+    )
+    .bind(account_id.trim())
+    .bind(company_id.trim())
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("account not found: {account_id}")))?;
+    Ok(GlAccount {
+        id: row.0,
+        company_id: row.1,
+        code: row.2,
+        name: row.3,
+        account_type: row.4,
+        created_at: row.5,
+    })
+}
+
+async fn period_locked(pool: &SqlitePool, company_id: &str, entry_date: &str) -> Result<bool> {
+    let period = period_of(entry_date);
+    let locked: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM _period_lock WHERE company_id = ? AND period = ?)",
+    )
+    .bind(company_id.trim())
+    .bind(period)
+    .fetch_one(pool)
+    .await?;
+    Ok(locked)
+}
+
+pub async fn list_gl_accounts(pool: &SqlitePool, company_id: &str) -> Result<Vec<GlAccount>> {
+    require_company(pool, company_id).await?;
+    let rows = sqlx::query_as::<_, (String, String, String, String, String, String)>(
+        "SELECT id, company_id, code, name, type, created_at FROM _gl_account WHERE company_id = ? ORDER BY code",
+    )
+    .bind(company_id.trim())
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, company_id, code, name, account_type, created_at)| GlAccount {
+                id,
+                company_id,
+                code,
+                name,
+                account_type,
+                created_at,
+            },
+        )
+        .collect())
+}
+
+pub async fn create_gl_account(
+    pool: &SqlitePool,
+    company_id: &str,
+    code: &str,
+    name: &str,
+    account_type: &str,
+) -> Result<GlAccount> {
+    require_company(pool, company_id).await?;
+    let code = code.trim();
+    let name = name.trim();
+    let account_type = account_type.trim();
+    if code.is_empty() || code.chars().count() > 20 {
+        return Err(AppError::BadRequest("account code is required (max 20)".into()).into());
+    }
+    if name.is_empty() {
+        return Err(AppError::BadRequest("account name is required".into()).into());
+    }
+    if !valid_account_type(account_type) {
+        return Err(AppError::BadRequest(
+            "type must be asset|liability|equity|income|expense".into(),
+        )
+        .into());
+    }
+    let id = format!("{company_id}_gl_{}", slugify(code));
+    sqlx::query(
+        "INSERT INTO _gl_account (id, company_id, code, name, type) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(company_id.trim())
+    .bind(code)
+    .bind(name)
+    .bind(account_type)
+    .execute(pool)
+    .await?;
+    require_gl_account(pool, company_id, &id).await
+}
+
+#[derive(Debug, Clone)]
+pub struct JournalLineInput {
+    pub account_id: String,
+    pub debit: i64,
+    pub credit: i64,
+    pub memo: String,
+}
+
+pub async fn post_journal_entry(
+    pool: &SqlitePool,
+    company_id: &str,
+    memo: &str,
+    entry_date: &str,
+    lines: &[JournalLineInput],
+    actor: Option<&str>,
+) -> Result<JournalEntry> {
+    require_company(pool, company_id).await?;
+    let entry_date = entry_date.trim();
+    if !valid_entry_date(entry_date) {
+        return Err(AppError::BadRequest("entry_date must be YYYY-MM-DD".into()).into());
+    }
+    if period_locked(pool, company_id, entry_date).await? {
+        return Err(AppError::Conflict(format!("period locked: {}", period_of(entry_date))).into());
+    }
+    if lines.len() < 2 {
+        return Err(AppError::BadRequest("journal requires at least 2 lines".into()).into());
+    }
+    let mut total_debit: i64 = 0;
+    let mut total_credit: i64 = 0;
+    for line in lines {
+        if line.debit < 0 || line.credit < 0 {
+            return Err(AppError::BadRequest("debit and credit must be >= 0".into()).into());
+        }
+        if (line.debit > 0 && line.credit > 0) || (line.debit == 0 && line.credit == 0) {
+            return Err(AppError::BadRequest("each line must be debit xor credit".into()).into());
+        }
+        require_gl_account(pool, company_id, &line.account_id).await?;
+        total_debit += line.debit;
+        total_credit += line.credit;
+    }
+    if total_debit == 0 || total_debit != total_credit {
+        return Err(AppError::BadRequest("debits must equal credits".into()).into());
+    }
+    let mut tx = pool.begin().await?;
+    let id = format!("{company_id}_je_{}", chrono_nanos());
+    sqlx::query(
+        "INSERT INTO _journal_entry (id, company_id, memo, entry_date, actor) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(company_id.trim())
+    .bind(memo.trim())
+    .bind(entry_date)
+    .bind(actor)
+    .execute(&mut *tx)
+    .await?;
+    for line in lines {
+        let line_id = format!("{id}_line_{}", chrono_nanos());
+        sqlx::query(
+            "INSERT INTO _journal_line (id, entry_id, account_id, debit, credit, memo) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&line_id)
+        .bind(&id)
+        .bind(line.account_id.trim())
+        .bind(line.debit)
+        .bind(line.credit)
+        .bind(line.memo.trim())
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    get_journal_entry(pool, &id).await
+}
+
+pub async fn get_journal_entry(pool: &SqlitePool, entry_id: &str) -> Result<JournalEntry> {
+    let row = sqlx::query_as::<_, (String, String, String, String, String, Option<String>, String)>(
+        "SELECT id, company_id, memo, entry_date, status, actor, created_at FROM _journal_entry WHERE id = ?",
+    )
+    .bind(entry_id.trim())
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("journal entry not found: {entry_id}")))?;
+    let lines = sqlx::query_as::<_, (String, String, String, String, String, i64, i64, String)>(
+        "SELECT l.id, l.entry_id, l.account_id, a.code, a.name, l.debit, l.credit, l.memo FROM _journal_line l JOIN _gl_account a ON a.id = l.account_id WHERE l.entry_id = ? ORDER BY l.id",
+    )
+    .bind(entry_id.trim())
+    .fetch_all(pool)
+    .await?;
+    Ok(JournalEntry {
+        id: row.0,
+        company_id: row.1,
+        memo: row.2,
+        entry_date: row.3,
+        status: row.4,
+        actor: row.5,
+        created_at: row.6,
+        lines: lines
+            .into_iter()
+            .map(
+                |(id, entry_id, account_id, account_code, account_name, debit, credit, memo)| {
+                    JournalLine {
+                        id,
+                        entry_id,
+                        account_id,
+                        account_code,
+                        account_name,
+                        debit,
+                        credit,
+                        memo,
+                    }
+                },
+            )
+            .collect(),
+    })
+}
+
+pub async fn list_journal_entries(
+    pool: &SqlitePool,
+    company_id: &str,
+) -> Result<Vec<JournalEntry>> {
+    require_company(pool, company_id).await?;
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM _journal_entry WHERE company_id = ? ORDER BY entry_date DESC, created_at DESC LIMIT 100",
+    )
+    .bind(company_id.trim())
+    .fetch_all(pool)
+    .await?;
+    let mut entries = Vec::new();
+    for id in ids {
+        entries.push(get_journal_entry(pool, &id).await?);
+    }
+    Ok(entries)
+}
+
+pub async fn void_journal_entry(pool: &SqlitePool, entry_id: &str) -> Result<JournalEntry> {
+    let entry = get_journal_entry(pool, entry_id).await?;
+    if entry.status == "void" {
+        return Err(AppError::Conflict("entry already void".into()).into());
+    }
+    if period_locked(pool, &entry.company_id, &entry.entry_date).await? {
+        return Err(
+            AppError::Conflict(format!("period locked: {}", period_of(&entry.entry_date))).into(),
+        );
+    }
+    sqlx::query("UPDATE _journal_entry SET status = 'void' WHERE id = ?")
+        .bind(entry_id.trim())
+        .execute(pool)
+        .await?;
+    get_journal_entry(pool, entry_id).await
+}
+
+pub async fn trial_balance(pool: &SqlitePool, company_id: &str) -> Result<TrialBalance> {
+    require_company(pool, company_id).await?;
+    let accounts = list_gl_accounts(pool, company_id).await?;
+    let mut rows = Vec::new();
+    let mut total_debit: i64 = 0;
+    let mut total_credit: i64 = 0;
+    for account in accounts {
+        let sums: Option<(Option<i64>, Option<i64>)> = sqlx::query_as(
+            "SELECT SUM(l.debit), SUM(l.credit) FROM _journal_line l JOIN _journal_entry e ON e.id = l.entry_id WHERE l.account_id = ? AND e.status = 'posted'",
+        )
+        .bind(&account.id)
+        .fetch_optional(pool)
+        .await?;
+        let (debit, credit) = sums.unwrap_or((None, None));
+        let debit = debit.unwrap_or(0);
+        let credit = credit.unwrap_or(0);
+        total_debit += debit;
+        total_credit += credit;
+        rows.push(TrialBalanceRow {
+            account_id: account.id,
+            code: account.code,
+            name: account.name,
+            account_type: account.account_type,
+            debit,
+            credit,
+            balance: debit - credit,
+        });
+    }
+    Ok(TrialBalance {
+        company_id: company_id.trim().to_string(),
+        total_debit,
+        total_credit,
+        rows,
+    })
+}
+
+pub async fn list_period_locks(pool: &SqlitePool, company_id: &str) -> Result<Vec<PeriodLock>> {
+    require_company(pool, company_id).await?;
+    let rows = sqlx::query_as::<_, (String, String, Option<String>, String)>(
+        "SELECT company_id, period, actor, created_at FROM _period_lock WHERE company_id = ? ORDER BY period DESC",
+    )
+    .bind(company_id.trim())
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(company_id, period, actor, created_at)| PeriodLock {
+            company_id,
+            period,
+            actor,
+            created_at,
+        })
+        .collect())
+}
+
+pub async fn lock_period(
+    pool: &SqlitePool,
+    company_id: &str,
+    period: &str,
+    actor: Option<&str>,
+) -> Result<PeriodLock> {
+    require_company(pool, company_id).await?;
+    let period = period.trim();
+    if period.len() != 7 || !valid_entry_date(&format!("{period}-01")) {
+        return Err(AppError::BadRequest("period must be YYYY-MM".into()).into());
+    }
+    sqlx::query("INSERT INTO _period_lock (company_id, period, actor) VALUES (?, ?, ?)")
+        .bind(company_id.trim())
+        .bind(period)
+        .bind(actor)
+        .execute(pool)
+        .await?;
+    let row = sqlx::query_as::<_, (String, String, Option<String>, String)>(
+        "SELECT company_id, period, actor, created_at FROM _period_lock WHERE company_id = ? AND period = ?",
+    )
+    .bind(company_id.trim())
+    .bind(period)
+    .fetch_one(pool)
+    .await?;
+    Ok(PeriodLock {
+        company_id: row.0,
+        period: row.1,
+        actor: row.2,
+        created_at: row.3,
+    })
 }
 
 async fn get_doc_attachment(

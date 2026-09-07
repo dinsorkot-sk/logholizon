@@ -13,6 +13,7 @@ const mainLinks = computed<NavigationMenuItem[]>(() => {
     { label: 'Apps', icon: 'i-lucide-layout-grid', to: '/apps' },
     { label: 'Dashboard', icon: 'i-lucide-house', to: '/dashboard' },
     { label: 'PM Dashboard', icon: 'i-lucide-clipboard-list', to: '/app/pm' },
+    { label: 'Accounting', icon: 'i-lucide-calculator', to: '/app/accounting' },
     { label: 'Reports', icon: 'i-lucide-chart-bar', to: '/app/reports' }
   ]
   if (isAdmin.value) {
@@ -66,6 +67,7 @@ const commandGroups = computed<CommandPaletteGroup[]>(() => {
     { label: 'Apps', icon: 'i-lucide-layout-grid', to: '/apps', kbds: ['g', 'a'] },
     { label: 'Dashboard', icon: 'i-lucide-house', to: '/dashboard', kbds: ['g', 'd'] },
     { label: 'PM Dashboard', icon: 'i-lucide-clipboard-list', to: '/app/pm', kbds: ['g', 'p'] },
+    { label: 'Accounting', icon: 'i-lucide-calculator', to: '/app/accounting', kbds: ['g', 'c'] },
     { label: 'Reports', icon: 'i-lucide-chart-bar', to: '/app/reports', kbds: ['g', 'r'] }
   ]
   if (isAdmin.value) {

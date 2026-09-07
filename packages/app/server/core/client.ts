@@ -118,6 +118,12 @@ export type CoreCurrency = { code: string; name: string; decimals: number; creat
 export type CoreFxRate = { id: string; company_id: string; from_currency: string; to_currency: string; rate: number; rate_date: string; created_at: string }
 export type CoreTaxRule = { id: string; company_id: string; name: string; rate: number; is_inclusive: boolean; is_withholding: boolean; created_at: string }
 export type CoreMoneyConverted = { amount: number; currency: string; rate: number }
+export type CoreGlAccount = { id: string; company_id: string; code: string; name: string; type: string; created_at: string }
+export type CoreJournalLine = { id: string; entry_id: string; account_id: string; account_code: string; account_name: string; debit: number; credit: number; memo: string }
+export type CoreJournalEntry = { id: string; company_id: string; memo: string; entry_date: string; status: string; actor?: string | null; created_at: string; lines: CoreJournalLine[] }
+export type CoreTrialBalanceRow = { account_id: string; code: string; name: string; type: string; debit: number; credit: number; balance: number }
+export type CoreTrialBalance = { company_id: string; total_debit: number; total_credit: number; rows: CoreTrialBalanceRow[] }
+export type CorePeriodLock = { company_id: string; period: string; actor?: string | null; created_at: string }
 
 export type CoreGlobalAuditEntry = {
   id: string
@@ -634,6 +640,39 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       request<CoreTaxRule>(`/v1/admin/companies/${encodeURIComponent(companyId)}/tax-rules`, {
         method: 'POST',
         body: input
+      }),
+    listGlAccounts: (companyId: string): Promise<CoreGlAccount[]> =>
+      request<CoreGlAccount[]>(`/v1/admin/companies/${encodeURIComponent(companyId)}/accounts`),
+    createGlAccount: (
+      companyId: string,
+      input: { code: string; name: string; type: string }
+    ): Promise<CoreGlAccount> =>
+      request<CoreGlAccount>(`/v1/admin/companies/${encodeURIComponent(companyId)}/accounts`, {
+        method: 'POST',
+        body: input
+      }),
+    listJournalEntries: (companyId: string): Promise<CoreJournalEntry[]> =>
+      request<CoreJournalEntry[]>(`/v1/admin/companies/${encodeURIComponent(companyId)}/entries`),
+    postJournalEntry: (
+      companyId: string,
+      input: { memo?: string; entry_date: string; lines: { account_id: string; debit?: number; credit?: number; memo?: string }[] }
+    ): Promise<CoreJournalEntry> =>
+      request<CoreJournalEntry>(`/v1/admin/companies/${encodeURIComponent(companyId)}/entries`, {
+        method: 'POST',
+        body: input
+      }),
+    voidJournalEntry: (entryId: string): Promise<CoreJournalEntry> =>
+      request<CoreJournalEntry>(`/v1/admin/entries/${encodeURIComponent(entryId)}/void`, {
+        method: 'POST'
+      }),
+    getTrialBalance: (companyId: string): Promise<CoreTrialBalance> =>
+      request<CoreTrialBalance>(`/v1/admin/companies/${encodeURIComponent(companyId)}/trial-balance`),
+    listPeriodLocks: (companyId: string): Promise<CorePeriodLock[]> =>
+      request<CorePeriodLock[]>(`/v1/admin/companies/${encodeURIComponent(companyId)}/locks`),
+    lockPeriod: (companyId: string, period: string): Promise<CorePeriodLock> =>
+      request<CorePeriodLock>(`/v1/admin/companies/${encodeURIComponent(companyId)}/locks`, {
+        method: 'POST',
+        body: { period }
       })
   }
 }
