@@ -120,6 +120,26 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
             "/v1/admin/companies/{id}/locks",
             get(list_period_locks).post(lock_period),
         )
+        .route(
+            "/v1/admin/companies/{id}/invoices",
+            get(list_invoices).post(create_invoice),
+        )
+        .route(
+            "/v1/admin/invoices/{id}/post",
+            axum::routing::post(post_invoice),
+        )
+        .route(
+            "/v1/admin/invoices/{id}/void",
+            axum::routing::post(void_invoice),
+        )
+        .route(
+            "/v1/admin/companies/{id}/payments",
+            get(list_payments).post(create_payment),
+        )
+        .route(
+            "/v1/admin/payments/{id}/allocate",
+            axum::routing::post(allocate_payment),
+        )
         .route("/v1/admin/backup", axum::routing::post(admin_backup))
         .route("/v1/admin/backups", get(admin_list_backups))
         .route("/v1/admin/backups/{name}", get(admin_download_backup))
@@ -2187,6 +2207,142 @@ async fn lock_period(
     .await
     .map(|lock| (StatusCode::CREATED, Json(lock)))
     .map_err(map_db_error)
+}
+
+async fn list_invoices(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<repository::Invoice>>, AppError> {
+    repository::list_invoices(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InvoiceLineRequest {
+    pub description: String,
+    pub quantity: i64,
+    pub unit_price: i64,
+    #[serde(default)]
+    pub tax_rule_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateInvoiceRequest {
+    pub kind: String,
+    pub partner: String,
+    pub currency: String,
+    pub entry_date: String,
+    pub lines: Vec<InvoiceLineRequest>,
+}
+
+async fn create_invoice(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+    Json(input): Json<CreateInvoiceRequest>,
+) -> Result<(StatusCode, Json<repository::Invoice>), AppError> {
+    let lines: Vec<repository::InvoiceLineInput> = input
+        .lines
+        .into_iter()
+        .map(|line| repository::InvoiceLineInput {
+            description: line.description,
+            quantity: line.quantity,
+            unit_price: line.unit_price,
+            tax_rule_id: line.tax_rule_id,
+        })
+        .collect();
+    repository::create_invoice(
+        &state.pool,
+        &id,
+        &input.kind,
+        &input.partner,
+        &input.currency,
+        &input.entry_date,
+        &lines,
+        current_actor(&user).as_deref(),
+    )
+    .await
+    .map(|invoice| (StatusCode::CREATED, Json(invoice)))
+    .map_err(map_db_error)
+}
+
+async fn post_invoice(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::Invoice>, AppError> {
+    repository::post_invoice(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn void_invoice(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::Invoice>, AppError> {
+    repository::void_invoice(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn list_payments(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<repository::Payment>>, AppError> {
+    repository::list_payments(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreatePaymentRequest {
+    pub kind: String,
+    pub partner: String,
+    pub currency: String,
+    pub amount: i64,
+    pub entry_date: String,
+}
+
+async fn create_payment(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+    Json(input): Json<CreatePaymentRequest>,
+) -> Result<(StatusCode, Json<repository::Payment>), AppError> {
+    repository::create_payment(
+        &state.pool,
+        &id,
+        &input.kind,
+        &input.partner,
+        &input.currency,
+        input.amount,
+        &input.entry_date,
+        current_actor(&user).as_deref(),
+    )
+    .await
+    .map(|payment| (StatusCode::CREATED, Json(payment)))
+    .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AllocatePaymentRequest {
+    pub invoice_id: String,
+    pub amount: i64,
+}
+
+async fn allocate_payment(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<AllocatePaymentRequest>,
+) -> Result<Json<repository::Payment>, AppError> {
+    repository::allocate_payment(&state.pool, &id, &input.invoice_id, input.amount)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
 }
 
 fn database_path(state: &AppState) -> Result<std::path::PathBuf, AppError> {

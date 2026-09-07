@@ -498,7 +498,10 @@ async fn seed_accounting_module(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>) ->
         .await?;
     for (id, code, name, account_type) in [
         ("company_acme_gl_1000", "1000", "Cash", "asset"),
+        ("company_acme_gl_1100", "1100", "Receivables", "asset"),
+        ("company_acme_gl_2100", "2100", "Payables", "liability"),
         ("company_acme_gl_4000", "4000", "Revenue", "income"),
+        ("company_acme_gl_5000", "5000", "Purchases", "expense"),
     ] {
         sqlx::query(
             "INSERT OR IGNORE INTO _gl_account (id, company_id, code, name, type) VALUES (?, 'company_acme', ?, ?, ?)",

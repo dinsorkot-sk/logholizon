@@ -124,6 +124,10 @@ export type CoreJournalEntry = { id: string; company_id: string; memo: string; e
 export type CoreTrialBalanceRow = { account_id: string; code: string; name: string; type: string; debit: number; credit: number; balance: number }
 export type CoreTrialBalance = { company_id: string; total_debit: number; total_credit: number; rows: CoreTrialBalanceRow[] }
 export type CorePeriodLock = { company_id: string; period: string; actor?: string | null; created_at: string }
+export type CoreInvoiceLine = { id: string; invoice_id: string; description: string; quantity: number; unit_price: number; tax_rule_id?: string | null; line_total: number; tax: number }
+export type CoreInvoice = { id: string; company_id: string; kind: string; partner: string; currency: string; fx_rate: number; base_total: number; status: string; entry_id?: string | null; entry_date: string; actor?: string | null; created_at: string; lines: CoreInvoiceLine[]; paid: number; remaining: number }
+export type CorePaymentAllocation = { id: string; payment_id: string; invoice_id: string; amount: number; created_at: string }
+export type CorePayment = { id: string; company_id: string; kind: string; partner: string; currency: string; amount: number; entry_id?: string | null; entry_date: string; actor?: string | null; created_at: string; allocations: CorePaymentAllocation[]; allocated: number; remaining: number }
 
 export type CoreGlobalAuditEntry = {
   id: string
@@ -673,6 +677,39 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       request<CorePeriodLock>(`/v1/admin/companies/${encodeURIComponent(companyId)}/locks`, {
         method: 'POST',
         body: { period }
+      }),
+    listInvoices: (companyId: string): Promise<CoreInvoice[]> =>
+      request<CoreInvoice[]>(`/v1/admin/companies/${encodeURIComponent(companyId)}/invoices`),
+    createInvoice: (
+      companyId: string,
+      input: { kind: string; partner: string; currency: string; entry_date: string; lines: { description: string; quantity: number; unit_price: number; tax_rule_id?: string }[] }
+    ): Promise<CoreInvoice> =>
+      request<CoreInvoice>(`/v1/admin/companies/${encodeURIComponent(companyId)}/invoices`, {
+        method: 'POST',
+        body: input
+      }),
+    postInvoice: (invoiceId: string): Promise<CoreInvoice> =>
+      request<CoreInvoice>(`/v1/admin/invoices/${encodeURIComponent(invoiceId)}/post`, {
+        method: 'POST'
+      }),
+    voidInvoice: (invoiceId: string): Promise<CoreInvoice> =>
+      request<CoreInvoice>(`/v1/admin/invoices/${encodeURIComponent(invoiceId)}/void`, {
+        method: 'POST'
+      }),
+    listPayments: (companyId: string): Promise<CorePayment[]> =>
+      request<CorePayment[]>(`/v1/admin/companies/${encodeURIComponent(companyId)}/payments`),
+    createPayment: (
+      companyId: string,
+      input: { kind: string; partner: string; currency: string; amount: number; entry_date: string }
+    ): Promise<CorePayment> =>
+      request<CorePayment>(`/v1/admin/companies/${encodeURIComponent(companyId)}/payments`, {
+        method: 'POST',
+        body: input
+      }),
+    allocatePayment: (paymentId: string, input: { invoice_id: string; amount: number }): Promise<CorePayment> =>
+      request<CorePayment>(`/v1/admin/payments/${encodeURIComponent(paymentId)}/allocate`, {
+        method: 'POST',
+        body: input
       })
   }
 }

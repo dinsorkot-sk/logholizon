@@ -296,6 +296,73 @@ pub struct PeriodLock {
     pub created_at: String,
 }
 
+/// Invoice/Payment AR/AP: dedicated tables with balanced auto-post GL.
+/// Money in integer minor units; FX rate stored at post.
+#[derive(Debug, Serialize)]
+pub struct InvoiceLine {
+    pub id: String,
+    pub invoice_id: String,
+    pub description: String,
+    pub quantity: i64,
+    pub unit_price: i64,
+    pub tax_rule_id: Option<String>,
+    pub line_total: i64,
+    pub tax: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Invoice {
+    pub id: String,
+    pub company_id: String,
+    pub kind: String,
+    pub partner: String,
+    pub currency: String,
+    pub fx_rate: f64,
+    pub base_total: i64,
+    pub status: String,
+    pub entry_id: Option<String>,
+    pub entry_date: String,
+    pub actor: Option<String>,
+    pub created_at: String,
+    pub lines: Vec<InvoiceLine>,
+    pub paid: i64,
+    pub remaining: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PaymentAllocation {
+    pub id: String,
+    pub payment_id: String,
+    pub invoice_id: String,
+    pub amount: i64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Payment {
+    pub id: String,
+    pub company_id: String,
+    pub kind: String,
+    pub partner: String,
+    pub currency: String,
+    pub amount: i64,
+    pub entry_id: Option<String>,
+    pub entry_date: String,
+    pub actor: Option<String>,
+    pub created_at: String,
+    pub allocations: Vec<PaymentAllocation>,
+    pub allocated: i64,
+    pub remaining: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct InvoiceLineInput {
+    pub description: String,
+    pub quantity: i64,
+    pub unit_price: i64,
+    pub tax_rule_id: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct GlobalAuditEntry {
     pub id: String,
@@ -4399,6 +4466,523 @@ pub async fn lock_period(
         actor: row.2,
         created_at: row.3,
     })
+}
+
+fn valid_invoice_kind(kind: &str) -> bool {
+    matches!(kind, "sale" | "purchase")
+}
+
+fn valid_payment_kind(kind: &str) -> bool {
+    matches!(kind, "receive" | "pay")
+}
+
+async fn gl_account_by_code(pool: &SqlitePool, company_id: &str, code: &str) -> Result<GlAccount> {
+    let row = sqlx::query_as::<_, (String, String, String, String, String, String)>(
+        "SELECT id, company_id, code, name, type, created_at FROM _gl_account WHERE company_id = ? AND code = ?",
+    )
+    .bind(company_id.trim())
+    .bind(code.trim())
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("account not found: {code}")))?;
+    Ok(GlAccount {
+        id: row.0,
+        company_id: row.1,
+        code: row.2,
+        name: row.3,
+        account_type: row.4,
+        created_at: row.5,
+    })
+}
+
+fn invoice_line_totals(line_total: i64, tax_rule: Option<&TaxRule>) -> (i64, i64) {
+    match tax_rule {
+        None => (line_total, 0),
+        Some(rule) => {
+            let computed = calc_tax(
+                line_total,
+                rule.rate,
+                rule.is_inclusive,
+                rule.is_withholding,
+            );
+            (computed.net, computed.tax)
+        }
+    }
+}
+
+async fn invoice_totals(
+    pool: &SqlitePool,
+    lines: &[InvoiceLineInput],
+) -> Result<(Vec<(InvoiceLineInput, i64, i64)>, i64, i64)> {
+    if lines.is_empty() {
+        return Err(AppError::BadRequest("invoice requires at least 1 line".into()).into());
+    }
+    let mut detailed = Vec::new();
+    let mut net: i64 = 0;
+    let mut tax: i64 = 0;
+    for line in lines {
+        let description = line.description.trim();
+        if description.is_empty() {
+            return Err(AppError::BadRequest("line description is required".into()).into());
+        }
+        if line.quantity <= 0 || line.unit_price < 0 {
+            return Err(
+                AppError::BadRequest("quantity must be > 0 and unit_price >= 0".into()).into(),
+            );
+        }
+        let line_total = line.quantity * line.unit_price;
+        let rule = match line
+            .tax_rule_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            None => None,
+            Some(id) => Some(get_tax_rule(pool, id).await?),
+        };
+        let (line_net, line_tax) = invoice_line_totals(line_total, rule.as_ref());
+        net += line_net;
+        tax += line_tax;
+        detailed.push((line.clone(), line_net, line_tax));
+    }
+    Ok((detailed, net, tax))
+}
+
+async fn get_invoice(pool: &SqlitePool, invoice_id: &str) -> Result<Invoice> {
+    let row = sqlx::query_as::<_, (String, String, String, String, String, f64, i64, String, Option<String>, String, Option<String>, String)>(
+        "SELECT id, company_id, kind, partner, currency, fx_rate, base_total, status, entry_id, entry_date, actor, created_at FROM _invoice WHERE id = ?",
+    )
+    .bind(invoice_id.trim())
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("invoice not found: {invoice_id}")))?;
+    let line_rows = sqlx::query_as::<_, (String, String, String, i64, i64, Option<String>)>(
+        "SELECT id, invoice_id, description, quantity, unit_price, tax_rule_id FROM _invoice_line WHERE invoice_id = ? ORDER BY id",
+    )
+    .bind(invoice_id.trim())
+    .fetch_all(pool)
+    .await?;
+    let mut lines = Vec::new();
+    for (id, invoice_id, description, quantity, unit_price, tax_rule_id) in line_rows {
+        let line_total = quantity * unit_price;
+        let rule = match tax_rule_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            None => None,
+            Some(rule_id) => Some(get_tax_rule(pool, rule_id).await?),
+        };
+        let (_, tax) = invoice_line_totals(line_total, rule.as_ref());
+        lines.push(InvoiceLine {
+            id,
+            invoice_id,
+            description,
+            quantity,
+            unit_price,
+            tax_rule_id,
+            line_total,
+            tax,
+        });
+    }
+    let paid: Option<i64> =
+        sqlx::query_scalar("SELECT SUM(amount) FROM _payment_allocation WHERE invoice_id = ?")
+            .bind(invoice_id.trim())
+            .fetch_one(pool)
+            .await?;
+    let paid = paid.unwrap_or(0);
+    Ok(Invoice {
+        id: row.0,
+        company_id: row.1,
+        kind: row.2,
+        partner: row.3,
+        currency: row.4,
+        fx_rate: row.5,
+        base_total: row.6,
+        status: row.7,
+        entry_id: row.8,
+        entry_date: row.9,
+        actor: row.10,
+        created_at: row.11,
+        lines,
+        paid,
+        remaining: row.6 - paid,
+    })
+}
+
+pub async fn list_invoices(pool: &SqlitePool, company_id: &str) -> Result<Vec<Invoice>> {
+    require_company(pool, company_id).await?;
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM _invoice WHERE company_id = ? ORDER BY entry_date DESC, created_at DESC LIMIT 100",
+    )
+    .bind(company_id.trim())
+    .fetch_all(pool)
+    .await?;
+    let mut invoices = Vec::new();
+    for id in ids {
+        invoices.push(get_invoice(pool, &id).await?);
+    }
+    Ok(invoices)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn create_invoice(
+    pool: &SqlitePool,
+    company_id: &str,
+    kind: &str,
+    partner: &str,
+    currency: &str,
+    entry_date: &str,
+    lines: &[InvoiceLineInput],
+    actor: Option<&str>,
+) -> Result<Invoice> {
+    require_company(pool, company_id).await?;
+    require_currency(pool, currency).await?;
+    let kind = kind.trim();
+    let partner = partner.trim();
+    if !valid_invoice_kind(kind) {
+        return Err(AppError::BadRequest("kind must be sale|purchase".into()).into());
+    }
+    if partner.is_empty() {
+        return Err(AppError::BadRequest("partner is required".into()).into());
+    }
+    if !valid_entry_date(entry_date.trim()) {
+        return Err(AppError::BadRequest("entry_date must be YYYY-MM-DD".into()).into());
+    }
+    let (detailed, _, _) = invoice_totals(pool, lines).await?;
+    let mut tx = pool.begin().await?;
+    let id = format!("{company_id}_inv_{}", chrono_nanos());
+    sqlx::query(
+        "INSERT INTO _invoice (id, company_id, kind, partner, currency, entry_date, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(company_id.trim())
+    .bind(kind)
+    .bind(partner)
+    .bind(currency.trim())
+    .bind(entry_date.trim())
+    .bind(actor)
+    .execute(&mut *tx)
+    .await?;
+    for (line, _, _) in &detailed {
+        let line_id = format!("{id}_line_{}", chrono_nanos());
+        sqlx::query(
+            "INSERT INTO _invoice_line (id, invoice_id, description, quantity, unit_price, tax_rule_id) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&line_id)
+        .bind(&id)
+        .bind(line.description.trim())
+        .bind(line.quantity)
+        .bind(line.unit_price)
+        .bind(line.tax_rule_id.as_deref().map(str::trim).filter(|s| !s.is_empty()))
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    get_invoice(pool, &id).await
+}
+
+pub async fn post_invoice(pool: &SqlitePool, invoice_id: &str) -> Result<Invoice> {
+    let invoice = get_invoice(pool, invoice_id).await?;
+    if invoice.status != "draft" {
+        return Err(AppError::Conflict(format!("invoice is {}", invoice.status)).into());
+    }
+    if period_locked(pool, &invoice.company_id, &invoice.entry_date).await? {
+        return Err(AppError::Conflict(format!(
+            "period locked: {}",
+            period_of(&invoice.entry_date)
+        ))
+        .into());
+    }
+    let company = require_company(pool, &invoice.company_id).await?;
+    let converted = convert_money(
+        pool,
+        &invoice.company_id,
+        invoice.lines.iter().map(|line| line.line_total).sum(),
+        &invoice.currency,
+        &company.base_currency,
+    )
+    .await?;
+    let mut tax_base: i64 = 0;
+    for line in &invoice.lines {
+        let rule = match line
+            .tax_rule_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            None => None,
+            Some(rule_id) => Some(get_tax_rule(pool, rule_id).await?),
+        };
+        let (_, tax) = invoice_line_totals(line.line_total, rule.as_ref());
+        let tax_converted = if invoice.currency == company.base_currency {
+            tax
+        } else {
+            (tax as f64 * converted.rate).round() as i64
+        };
+        tax_base += tax_converted;
+    }
+    let base_total = converted.amount + tax_base;
+    let (ar_code, income_code) = if invoice.kind == "sale" {
+        ("1100", "4000")
+    } else {
+        ("5000", "2100")
+    };
+    let debit_account = gl_account_by_code(pool, &invoice.company_id, ar_code).await?;
+    let credit_account = gl_account_by_code(pool, &invoice.company_id, income_code).await?;
+    let entry = post_journal_entry(
+        pool,
+        &invoice.company_id,
+        &format!("Invoice {}", invoice.id),
+        &invoice.entry_date,
+        &[
+            JournalLineInput {
+                account_id: debit_account.id,
+                debit: base_total,
+                credit: 0,
+                memo: String::new(),
+            },
+            JournalLineInput {
+                account_id: credit_account.id,
+                debit: 0,
+                credit: base_total,
+                memo: String::new(),
+            },
+        ],
+        invoice.actor.as_deref(),
+    )
+    .await?;
+    sqlx::query("UPDATE _invoice SET status = 'posted', fx_rate = ?, base_total = ?, entry_id = ? WHERE id = ?")
+        .bind(converted.rate)
+        .bind(base_total)
+        .bind(&entry.id)
+        .bind(invoice.id.trim())
+        .execute(pool)
+        .await?;
+    get_invoice(pool, &invoice.id).await
+}
+
+pub async fn void_invoice(pool: &SqlitePool, invoice_id: &str) -> Result<Invoice> {
+    let invoice = get_invoice(pool, invoice_id).await?;
+    if invoice.status == "void" {
+        return Err(AppError::Conflict("invoice already void".into()).into());
+    }
+    if invoice.status == "paid" {
+        return Err(AppError::Conflict("paid invoice cannot be void".into()).into());
+    }
+    if period_locked(pool, &invoice.company_id, &invoice.entry_date).await? {
+        return Err(AppError::Conflict(format!(
+            "period locked: {}",
+            period_of(&invoice.entry_date)
+        ))
+        .into());
+    }
+    if let Some(entry_id) = invoice.entry_id.clone() {
+        void_journal_entry(pool, &entry_id).await?;
+    }
+    sqlx::query("UPDATE _invoice SET status = 'void' WHERE id = ?")
+        .bind(invoice.id.trim())
+        .execute(pool)
+        .await?;
+    get_invoice(pool, &invoice.id).await
+}
+
+async fn get_payment(pool: &SqlitePool, payment_id: &str) -> Result<Payment> {
+    let row = sqlx::query_as::<_, (String, String, String, String, String, i64, Option<String>, String, Option<String>, String)>(
+        "SELECT id, company_id, kind, partner, currency, amount, entry_id, entry_date, actor, created_at FROM _payment WHERE id = ?",
+    )
+    .bind(payment_id.trim())
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("payment not found: {payment_id}")))?;
+    let allocations = sqlx::query_as::<_, (String, String, String, i64, String)>(
+        "SELECT id, payment_id, invoice_id, amount, created_at FROM _payment_allocation WHERE payment_id = ? ORDER BY id",
+    )
+    .bind(payment_id.trim())
+    .fetch_all(pool)
+    .await?;
+    let allocated: i64 = allocations.iter().map(|allocation| allocation.3).sum();
+    Ok(Payment {
+        id: row.0,
+        company_id: row.1,
+        kind: row.2,
+        partner: row.3,
+        currency: row.4,
+        amount: row.5,
+        entry_id: row.6,
+        entry_date: row.7,
+        actor: row.8,
+        created_at: row.9,
+        allocations: allocations
+            .into_iter()
+            .map(
+                |(id, payment_id, invoice_id, amount, created_at)| PaymentAllocation {
+                    id,
+                    payment_id,
+                    invoice_id,
+                    amount,
+                    created_at,
+                },
+            )
+            .collect(),
+        allocated,
+        remaining: row.5 - allocated,
+    })
+}
+
+pub async fn list_payments(pool: &SqlitePool, company_id: &str) -> Result<Vec<Payment>> {
+    require_company(pool, company_id).await?;
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM _payment WHERE company_id = ? ORDER BY entry_date DESC, created_at DESC LIMIT 100",
+    )
+    .bind(company_id.trim())
+    .fetch_all(pool)
+    .await?;
+    let mut payments = Vec::new();
+    for id in ids {
+        payments.push(get_payment(pool, &id).await?);
+    }
+    Ok(payments)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn create_payment(
+    pool: &SqlitePool,
+    company_id: &str,
+    kind: &str,
+    partner: &str,
+    currency: &str,
+    amount: i64,
+    entry_date: &str,
+    actor: Option<&str>,
+) -> Result<Payment> {
+    require_company(pool, company_id).await?;
+    require_currency(pool, currency).await?;
+    let kind = kind.trim();
+    let partner = partner.trim();
+    if !valid_payment_kind(kind) {
+        return Err(AppError::BadRequest("kind must be receive|pay".into()).into());
+    }
+    if partner.is_empty() {
+        return Err(AppError::BadRequest("partner is required".into()).into());
+    }
+    if amount <= 0 {
+        return Err(AppError::BadRequest("amount must be > 0".into()).into());
+    }
+    if !valid_entry_date(entry_date.trim()) {
+        return Err(AppError::BadRequest("entry_date must be YYYY-MM-DD".into()).into());
+    }
+    if period_locked(pool, company_id, entry_date.trim()).await? {
+        return Err(
+            AppError::Conflict(format!("period locked: {}", period_of(entry_date.trim()))).into(),
+        );
+    }
+    let company = require_company(pool, company_id).await?;
+    let converted =
+        convert_money(pool, company_id, amount, currency, &company.base_currency).await?;
+    let (cash_code, ar_code) = if kind == "receive" {
+        ("1000", "1100")
+    } else {
+        ("2100", "1000")
+    };
+    let debit_account = gl_account_by_code(pool, company_id, cash_code).await?;
+    let credit_account = gl_account_by_code(pool, company_id, ar_code).await?;
+    let entry = post_journal_entry(
+        pool,
+        company_id,
+        &format!("Payment {partner}"),
+        entry_date.trim(),
+        &[
+            JournalLineInput {
+                account_id: debit_account.id,
+                debit: converted.amount,
+                credit: 0,
+                memo: String::new(),
+            },
+            JournalLineInput {
+                account_id: credit_account.id,
+                debit: 0,
+                credit: converted.amount,
+                memo: String::new(),
+            },
+        ],
+        actor,
+    )
+    .await?;
+    let id = format!("{company_id}_pay_{}", chrono_nanos());
+    sqlx::query(
+        "INSERT INTO _payment (id, company_id, kind, partner, currency, amount, entry_id, entry_date, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(company_id.trim())
+    .bind(kind)
+    .bind(partner)
+    .bind(currency.trim())
+    .bind(converted.amount)
+    .bind(&entry.id)
+    .bind(entry_date.trim())
+    .bind(actor)
+    .execute(pool)
+    .await?;
+    get_payment(pool, &id).await
+}
+
+pub async fn allocate_payment(
+    pool: &SqlitePool,
+    payment_id: &str,
+    invoice_id: &str,
+    amount: i64,
+) -> Result<Payment> {
+    if amount <= 0 {
+        return Err(AppError::BadRequest("amount must be > 0".into()).into());
+    }
+    let payment = get_payment(pool, payment_id).await?;
+    let invoice = get_invoice(pool, invoice_id).await?;
+    if payment.company_id != invoice.company_id {
+        return Err(AppError::BadRequest("payment and invoice must share a company".into()).into());
+    }
+    if invoice.status != "posted" && invoice.status != "paid" {
+        return Err(AppError::BadRequest("invoice must be posted".into()).into());
+    }
+    if payment.remaining < amount {
+        return Err(AppError::BadRequest("allocation exceeds payment remaining".into()).into());
+    }
+    if invoice.remaining < amount {
+        return Err(AppError::BadRequest("allocation exceeds invoice remaining".into()).into());
+    }
+    let id = format!("{payment_id}_alloc_{}", chrono_nanos());
+    let existing: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM _payment_allocation WHERE payment_id = ? AND invoice_id = ?",
+    )
+    .bind(payment_id.trim())
+    .bind(invoice_id.trim())
+    .fetch_optional(pool)
+    .await?;
+    if let Some(existing) = existing {
+        sqlx::query("UPDATE _payment_allocation SET amount = amount + ? WHERE id = ?")
+            .bind(amount)
+            .bind(existing)
+            .execute(pool)
+            .await?;
+    } else {
+        sqlx::query(
+            "INSERT INTO _payment_allocation (id, payment_id, invoice_id, amount) VALUES (?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(payment_id.trim())
+        .bind(invoice_id.trim())
+        .bind(amount)
+        .execute(pool)
+        .await?;
+    }
+    let refreshed = get_invoice(pool, invoice_id).await?;
+    if refreshed.remaining == 0 && refreshed.status == "posted" {
+        sqlx::query("UPDATE _invoice SET status = 'paid' WHERE id = ?")
+            .bind(invoice_id.trim())
+            .execute(pool)
+            .await?;
+    }
+    get_payment(pool, payment_id).await
 }
 
 async fn get_doc_attachment(
