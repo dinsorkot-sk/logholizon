@@ -86,6 +86,23 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
             axum::routing::post(reset_user_password),
         )
         .route("/v1/admin/status", get(admin_status))
+        .route(
+            "/v1/admin/companies",
+            get(list_companies).post(create_company),
+        )
+        .route(
+            "/v1/admin/currencies",
+            get(list_currencies).post(create_currency),
+        )
+        .route(
+            "/v1/admin/companies/{id}/fx-rates",
+            get(list_fx_rates).post(set_fx_rate),
+        )
+        .route("/v1/admin/convert", get(convert_money))
+        .route(
+            "/v1/admin/companies/{id}/tax-rules",
+            get(list_tax_rules).post(create_tax_rule),
+        )
         .route("/v1/admin/backup", axum::routing::post(admin_backup))
         .route("/v1/admin/backups", get(admin_list_backups))
         .route("/v1/admin/backups/{name}", get(admin_download_backup))
@@ -1850,6 +1867,165 @@ async fn reset_user_password(
 }
 
 // --- Admin: status / backup / restore ---
+
+// --- M2 foundation: companies, currencies, FX, tax ---
+
+async fn list_companies(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<repository::Company>>, AppError> {
+    repository::list_companies(&state.pool)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateCompanyRequest {
+    pub name: String,
+    pub base_currency: String,
+}
+
+async fn create_company(
+    State(state): State<AppState>,
+    Json(input): Json<CreateCompanyRequest>,
+) -> Result<(StatusCode, Json<repository::Company>), AppError> {
+    repository::create_company(&state.pool, &input.name, &input.base_currency)
+        .await
+        .map(|company| (StatusCode::CREATED, Json(company)))
+        .map_err(map_db_error)
+}
+
+async fn list_currencies(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<repository::Currency>>, AppError> {
+    repository::list_currencies(&state.pool)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateCurrencyRequest {
+    pub code: String,
+    pub name: String,
+    #[serde(default = "default_currency_decimals")]
+    pub decimals: i64,
+}
+
+fn default_currency_decimals() -> i64 {
+    2
+}
+
+async fn create_currency(
+    State(state): State<AppState>,
+    Json(input): Json<CreateCurrencyRequest>,
+) -> Result<(StatusCode, Json<repository::Currency>), AppError> {
+    repository::create_currency(&state.pool, &input.code, &input.name, input.decimals)
+        .await
+        .map(|currency| (StatusCode::CREATED, Json(currency)))
+        .map_err(map_db_error)
+}
+
+async fn list_fx_rates(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<repository::FxRate>>, AppError> {
+    repository::list_fx_rates(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetFxRateRequest {
+    pub from_currency: String,
+    pub to_currency: String,
+    pub rate: f64,
+    pub rate_date: String,
+}
+
+async fn set_fx_rate(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<SetFxRateRequest>,
+) -> Result<(StatusCode, Json<repository::FxRate>), AppError> {
+    repository::set_fx_rate(
+        &state.pool,
+        &id,
+        &input.from_currency,
+        &input.to_currency,
+        input.rate,
+        &input.rate_date,
+    )
+    .await
+    .map(|fx| (StatusCode::CREATED, Json(fx)))
+    .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConvertMoneyQuery {
+    pub company_id: String,
+    pub amount: i64,
+    pub from_currency: String,
+    pub to_currency: String,
+}
+
+async fn convert_money(
+    State(state): State<AppState>,
+    Query(query): Query<ConvertMoneyQuery>,
+) -> Result<Json<repository::MoneyConverted>, AppError> {
+    if query.amount < 0 {
+        return Err(AppError::BadRequest("amount must be >= 0".into()));
+    }
+    repository::convert_money(
+        &state.pool,
+        &query.company_id,
+        query.amount,
+        &query.from_currency,
+        &query.to_currency,
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
+
+async fn list_tax_rules(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<repository::TaxRule>>, AppError> {
+    repository::list_tax_rules(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateTaxRuleRequest {
+    pub name: String,
+    pub rate: f64,
+    #[serde(default)]
+    pub is_inclusive: bool,
+    #[serde(default)]
+    pub is_withholding: bool,
+}
+
+async fn create_tax_rule(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CreateTaxRuleRequest>,
+) -> Result<(StatusCode, Json<repository::TaxRule>), AppError> {
+    repository::create_tax_rule(
+        &state.pool,
+        &id,
+        &input.name,
+        input.rate,
+        input.is_inclusive,
+        input.is_withholding,
+    )
+    .await
+    .map(|rule| (StatusCode::CREATED, Json(rule)))
+    .map_err(map_db_error)
+}
 
 fn database_path(state: &AppState) -> Result<std::path::PathBuf, AppError> {
     crate::db::database_path(&state.config.database_url)

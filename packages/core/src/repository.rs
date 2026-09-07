@@ -177,6 +177,60 @@ pub struct DocAttachmentData {
     pub data: Vec<u8>,
 }
 
+/// M2 foundation: company plus currency plus FX plus tax rule.
+/// Money uses integer minor units plus ISO code; no doc scoping yet.
+#[derive(Debug, Serialize)]
+pub struct Company {
+    pub id: String,
+    pub name: String,
+    pub base_currency: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Currency {
+    pub code: String,
+    pub name: String,
+    pub decimals: i64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FxRate {
+    pub id: String,
+    pub company_id: String,
+    pub from_currency: String,
+    pub to_currency: String,
+    pub rate: f64,
+    pub rate_date: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TaxRule {
+    pub id: String,
+    pub company_id: String,
+    pub name: String,
+    pub rate: f64,
+    pub is_inclusive: bool,
+    pub is_withholding: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MoneyConverted {
+    pub amount: i64,
+    pub currency: String,
+    pub rate: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TaxComputed {
+    pub net: i64,
+    pub tax: i64,
+    pub gross: i64,
+}
+
 #[derive(Debug, Serialize)]
 pub struct GlobalAuditEntry {
     pub id: String,
@@ -3563,6 +3617,371 @@ pub async fn delete_doc_attachment_as_role(
         .execute(pool)
         .await?;
     Ok(())
+}
+
+fn valid_currency_code(code: &str) -> bool {
+    let code = code.trim();
+    code.len() == 3 && code.chars().all(|c| c.is_ascii_uppercase())
+}
+
+async fn require_currency(pool: &SqlitePool, code: &str) -> Result<Currency> {
+    let row = sqlx::query_as::<_, (String, String, i64, String)>(
+        "SELECT code, name, decimals, created_at FROM _currency WHERE code = ?",
+    )
+    .bind(code.trim())
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("currency not found: {code}")))?;
+    Ok(Currency {
+        code: row.0,
+        name: row.1,
+        decimals: row.2,
+        created_at: row.3,
+    })
+}
+
+async fn require_company(pool: &SqlitePool, id: &str) -> Result<Company> {
+    let row = sqlx::query_as::<_, (String, String, String, String)>(
+        "SELECT id, name, base_currency, created_at FROM _company WHERE id = ?",
+    )
+    .bind(id.trim())
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("company not found: {id}")))?;
+    Ok(Company {
+        id: row.0,
+        name: row.1,
+        base_currency: row.2,
+        created_at: row.3,
+    })
+}
+
+pub async fn list_companies(pool: &SqlitePool) -> Result<Vec<Company>> {
+    let rows = sqlx::query_as::<_, (String, String, String, String)>(
+        "SELECT id, name, base_currency, created_at FROM _company ORDER BY name",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, name, base_currency, created_at)| Company {
+            id,
+            name,
+            base_currency,
+            created_at,
+        })
+        .collect())
+}
+
+pub async fn create_company(pool: &SqlitePool, name: &str, base_currency: &str) -> Result<Company> {
+    let name = name.trim();
+    let base_currency = base_currency.trim();
+    if name.is_empty() {
+        return Err(AppError::BadRequest("company name is required".into()).into());
+    }
+    if !valid_currency_code(base_currency) {
+        return Err(
+            AppError::BadRequest("base_currency must be a 3-letter ISO code".into()).into(),
+        );
+    }
+    require_currency(pool, base_currency).await?;
+    let id = format!("company_{}", slugify(name));
+    sqlx::query("INSERT INTO _company (id, name, base_currency) VALUES (?, ?, ?)")
+        .bind(&id)
+        .bind(name)
+        .bind(base_currency)
+        .execute(pool)
+        .await?;
+    require_company(pool, &id).await
+}
+
+pub async fn list_currencies(pool: &SqlitePool) -> Result<Vec<Currency>> {
+    let rows = sqlx::query_as::<_, (String, String, i64, String)>(
+        "SELECT code, name, decimals, created_at FROM _currency ORDER BY code",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(code, name, decimals, created_at)| Currency {
+            code,
+            name,
+            decimals,
+            created_at,
+        })
+        .collect())
+}
+
+pub async fn create_currency(
+    pool: &SqlitePool,
+    code: &str,
+    name: &str,
+    decimals: i64,
+) -> Result<Currency> {
+    let code = code.trim();
+    let name = name.trim();
+    if !valid_currency_code(code) {
+        return Err(AppError::BadRequest("code must be a 3-letter ISO code".into()).into());
+    }
+    if name.is_empty() {
+        return Err(AppError::BadRequest("currency name is required".into()).into());
+    }
+    if !(0..=4).contains(&decimals) {
+        return Err(AppError::BadRequest("decimals must be 0..=4".into()).into());
+    }
+    sqlx::query("INSERT INTO _currency (code, name, decimals) VALUES (?, ?, ?)")
+        .bind(code)
+        .bind(name)
+        .bind(decimals)
+        .execute(pool)
+        .await?;
+    require_currency(pool, code).await
+}
+
+fn valid_rate_date(date: &str) -> bool {
+    let parts: Vec<&str> = date.split('-').collect();
+    parts.len() == 3
+        && parts[0].len() == 4
+        && parts[1].len() == 2
+        && parts[2].len() == 2
+        && parts.iter().all(|p| p.parse::<u32>().is_ok())
+}
+
+pub async fn set_fx_rate(
+    pool: &SqlitePool,
+    company_id: &str,
+    from_currency: &str,
+    to_currency: &str,
+    rate: f64,
+    rate_date: &str,
+) -> Result<FxRate> {
+    require_company(pool, company_id).await?;
+    require_currency(pool, from_currency).await?;
+    require_currency(pool, to_currency).await?;
+    if !rate.is_finite() || rate <= 0.0 {
+        return Err(AppError::BadRequest("rate must be a positive number".into()).into());
+    }
+    if !valid_rate_date(rate_date.trim()) {
+        return Err(AppError::BadRequest("rate_date must be YYYY-MM-DD".into()).into());
+    }
+    let id = format!(
+        "{company_id}_fx_{from_currency}_{to_currency}_{}",
+        chrono_nanos()
+    );
+    sqlx::query(
+        "INSERT INTO _fx_rate (id, company_id, from_currency, to_currency, rate, rate_date) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(company_id.trim())
+    .bind(from_currency.trim())
+    .bind(to_currency.trim())
+    .bind(rate)
+    .bind(rate_date.trim())
+    .execute(pool)
+    .await?;
+    get_fx_rate(pool, &id).await
+}
+
+async fn get_fx_rate(pool: &SqlitePool, id: &str) -> Result<FxRate> {
+    let row = sqlx::query_as::<_, (String, String, String, String, f64, String, String)>(
+        "SELECT id, company_id, from_currency, to_currency, rate, rate_date, created_at FROM _fx_rate WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("fx rate not found: {id}")))?;
+    Ok(FxRate {
+        id: row.0,
+        company_id: row.1,
+        from_currency: row.2,
+        to_currency: row.3,
+        rate: row.4,
+        rate_date: row.5,
+        created_at: row.6,
+    })
+}
+
+pub async fn list_fx_rates(pool: &SqlitePool, company_id: &str) -> Result<Vec<FxRate>> {
+    require_company(pool, company_id).await?;
+    let rows = sqlx::query_as::<_, (String, String, String, String, f64, String, String)>(
+        "SELECT id, company_id, from_currency, to_currency, rate, rate_date, created_at FROM _fx_rate WHERE company_id = ? ORDER BY rate_date DESC, created_at DESC",
+    )
+    .bind(company_id.trim())
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, company_id, from_currency, to_currency, rate, rate_date, created_at)| FxRate {
+                id,
+                company_id,
+                from_currency,
+                to_currency,
+                rate,
+                rate_date,
+                created_at,
+            },
+        )
+        .collect())
+}
+
+/// Convert integer minor units using the latest FX rate for the pair.
+/// Same-currency returns the amount unchanged with rate 1.0.
+pub async fn convert_money(
+    pool: &SqlitePool,
+    company_id: &str,
+    amount: i64,
+    from_currency: &str,
+    to_currency: &str,
+) -> Result<MoneyConverted> {
+    require_company(pool, company_id).await?;
+    require_currency(pool, from_currency).await?;
+    require_currency(pool, to_currency).await?;
+    if amount < 0 {
+        return Err(AppError::BadRequest("amount must be >= 0".into()).into());
+    }
+    if from_currency.trim() == to_currency.trim() {
+        return Ok(MoneyConverted {
+            amount,
+            currency: to_currency.trim().to_string(),
+            rate: 1.0,
+        });
+    }
+    let rate: Option<f64> = sqlx::query_scalar(
+        "SELECT rate FROM _fx_rate WHERE company_id = ? AND from_currency = ? AND to_currency = ? ORDER BY rate_date DESC, created_at DESC LIMIT 1",
+    )
+    .bind(company_id.trim())
+    .bind(from_currency.trim())
+    .bind(to_currency.trim())
+    .fetch_optional(pool)
+    .await?;
+    let Some(rate) = rate else {
+        return Err(AppError::NotFound(format!(
+            "fx rate not found: {from_currency}->{to_currency}"
+        ))
+        .into());
+    };
+    Ok(MoneyConverted {
+        amount: (amount as f64 * rate).round() as i64,
+        currency: to_currency.trim().to_string(),
+        rate,
+    })
+}
+
+pub async fn list_tax_rules(pool: &SqlitePool, company_id: &str) -> Result<Vec<TaxRule>> {
+    require_company(pool, company_id).await?;
+    let rows = sqlx::query_as::<_, (String, String, String, f64, i64, i64, String)>(
+        "SELECT id, company_id, name, rate, is_inclusive, is_withholding, created_at FROM _tax_rule WHERE company_id = ? ORDER BY name",
+    )
+    .bind(company_id.trim())
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, company_id, name, rate, is_inclusive, is_withholding, created_at)| TaxRule {
+                id,
+                company_id,
+                name,
+                rate,
+                is_inclusive: is_inclusive != 0,
+                is_withholding: is_withholding != 0,
+                created_at,
+            },
+        )
+        .collect())
+}
+
+pub async fn create_tax_rule(
+    pool: &SqlitePool,
+    company_id: &str,
+    name: &str,
+    rate: f64,
+    is_inclusive: bool,
+    is_withholding: bool,
+) -> Result<TaxRule> {
+    require_company(pool, company_id).await?;
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(AppError::BadRequest("tax name is required".into()).into());
+    }
+    if !rate.is_finite() || rate < 0.0 || rate > 1.0 {
+        return Err(AppError::BadRequest("rate must be 0..=1".into()).into());
+    }
+    let id = format!("{company_id}_tax_{}", chrono_nanos());
+    sqlx::query(
+        "INSERT INTO _tax_rule (id, company_id, name, rate, is_inclusive, is_withholding) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(company_id.trim())
+    .bind(name)
+    .bind(rate)
+    .bind(i64::from(is_inclusive))
+    .bind(i64::from(is_withholding))
+    .execute(pool)
+    .await?;
+    get_tax_rule(pool, &id).await
+}
+
+async fn get_tax_rule(pool: &SqlitePool, id: &str) -> Result<TaxRule> {
+    let row = sqlx::query_as::<_, (String, String, String, f64, i64, i64, String)>(
+        "SELECT id, company_id, name, rate, is_inclusive, is_withholding, created_at FROM _tax_rule WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("tax rule not found: {id}")))?;
+    Ok(TaxRule {
+        id: row.0,
+        company_id: row.1,
+        name: row.2,
+        rate: row.3,
+        is_inclusive: row.4 != 0,
+        is_withholding: row.5 != 0,
+        created_at: row.6,
+    })
+}
+
+/// Compute net/tax/gross in minor units. Exclusive adds tax on top;
+/// inclusive extracts tax from gross; withholding subtracts tax.
+pub fn calc_tax(amount: i64, rate: f64, is_inclusive: bool, is_withholding: bool) -> TaxComputed {
+    if is_withholding {
+        let tax = (amount as f64 * rate).round() as i64;
+        return TaxComputed {
+            net: amount - tax,
+            tax,
+            gross: amount,
+        };
+    }
+    if is_inclusive {
+        let net = (amount as f64 / (1.0 + rate)).round() as i64;
+        return TaxComputed {
+            net,
+            tax: amount - net,
+            gross: amount,
+        };
+    }
+    let tax = (amount as f64 * rate).round() as i64;
+    TaxComputed {
+        net: amount,
+        tax,
+        gross: amount + tax,
+    }
+}
+
+fn slugify(name: &str) -> String {
+    let slug: String = name
+        .trim()
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    let slug = slug.trim_matches('_').to_string();
+    if slug.is_empty() {
+        format!("{}", chrono_nanos())
+    } else {
+        slug
+    }
 }
 
 async fn get_doc_attachment(

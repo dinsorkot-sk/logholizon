@@ -113,6 +113,12 @@ export type CoreDocAttachmentList = {
   total: number
 }
 
+export type CoreCompany = { id: string; name: string; base_currency: string; created_at: string }
+export type CoreCurrency = { code: string; name: string; decimals: number; created_at: string }
+export type CoreFxRate = { id: string; company_id: string; from_currency: string; to_currency: string; rate: number; rate_date: string; created_at: string }
+export type CoreTaxRule = { id: string; company_id: string; name: string; rate: number; is_inclusive: boolean; is_withholding: boolean; created_at: string }
+export type CoreMoneyConverted = { amount: number; currency: string; rate: number }
+
 export type CoreGlobalAuditEntry = {
   id: string
   entity_id: string
@@ -598,6 +604,36 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
         body: { path, force: true }
       }),
     restartCore: (): Promise<{ message: string }> =>
-      request<{ message: string }>('/v1/admin/restart', { method: 'POST' })
+      request<{ message: string }>('/v1/admin/restart', { method: 'POST' }),
+    listCompanies: (): Promise<CoreCompany[]> =>
+      request<CoreCompany[]>('/v1/admin/companies'),
+    createCompany: (input: { name: string; base_currency: string }): Promise<CoreCompany> =>
+      request<CoreCompany>('/v1/admin/companies', { method: 'POST', body: input }),
+    listCurrencies: (): Promise<CoreCurrency[]> =>
+      request<CoreCurrency[]>('/v1/admin/currencies'),
+    createCurrency: (input: { code: string; name: string; decimals?: number }): Promise<CoreCurrency> =>
+      request<CoreCurrency>('/v1/admin/currencies', { method: 'POST', body: input }),
+    listFxRates: (companyId: string): Promise<CoreFxRate[]> =>
+      request<CoreFxRate[]>(`/v1/admin/companies/${encodeURIComponent(companyId)}/fx-rates`),
+    setFxRate: (
+      companyId: string,
+      input: { from_currency: string; to_currency: string; rate: number; rate_date: string }
+    ): Promise<CoreFxRate> =>
+      request<CoreFxRate>(`/v1/admin/companies/${encodeURIComponent(companyId)}/fx-rates`, {
+        method: 'POST',
+        body: input
+      }),
+    convertMoney: (query: { company_id: string; amount: number; from_currency: string; to_currency: string }): Promise<CoreMoneyConverted> =>
+      request<CoreMoneyConverted>('/v1/admin/convert', { query }),
+    listTaxRules: (companyId: string): Promise<CoreTaxRule[]> =>
+      request<CoreTaxRule[]>(`/v1/admin/companies/${encodeURIComponent(companyId)}/tax-rules`),
+    createTaxRule: (
+      companyId: string,
+      input: { name: string; rate: number; is_inclusive?: boolean; is_withholding?: boolean }
+    ): Promise<CoreTaxRule> =>
+      request<CoreTaxRule>(`/v1/admin/companies/${encodeURIComponent(companyId)}/tax-rules`, {
+        method: 'POST',
+        body: input
+      })
   }
 }
