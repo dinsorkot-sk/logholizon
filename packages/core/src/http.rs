@@ -235,6 +235,14 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
             "/v1/activities/{id}/toggle",
             axum::routing::post(toggle_doc_activity),
         )
+        .route(
+            "/v1/documents/{id}/attachments",
+            get(list_doc_attachments).post(upload_doc_attachment),
+        )
+        .route(
+            "/v1/attachments/{id}",
+            get(download_doc_attachment).delete(delete_doc_attachment),
+        )
         .route("/v1/audit", get(list_global_audit))
         .route(
             "/v1/documents/{id}/transition",
@@ -1565,6 +1573,81 @@ async fn toggle_doc_activity(
     repository::toggle_doc_activity_as_role(&state.pool, &id, &current_role(&user))
         .await
         .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn list_doc_attachments(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::DocAttachmentList>, AppError> {
+    repository::list_doc_attachments_as_role(&state.pool, &id, &current_role(&user))
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn upload_doc_attachment(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<(StatusCode, Json<repository::DocAttachment>), AppError> {
+    let filename = headers
+        .get("x-filename")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let content_type = headers
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+    repository::upload_doc_attachment_as_role(
+        &state.pool,
+        &id,
+        &filename,
+        &content_type,
+        &body,
+        &current_role(&user),
+        current_actor(&user).as_deref(),
+    )
+    .await
+    .map(|attachment| (StatusCode::CREATED, Json(attachment)))
+    .map_err(map_db_error)
+}
+
+async fn download_doc_attachment(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<axum::response::Response, AppError> {
+    let data = repository::get_doc_attachment_data_as_role(&state.pool, &id, &current_role(&user))
+        .await
+        .map_err(map_db_error)?;
+    let disposition = format!(
+        "attachment; filename=\"{}\"",
+        data.filename.replace('"', "")
+    );
+    Ok((
+        [
+            ("content-type", data.content_type.clone()),
+            ("content-disposition", disposition),
+        ],
+        data.data,
+    )
+        .into_response())
+}
+
+async fn delete_doc_attachment(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    repository::delete_doc_attachment_as_role(&state.pool, &id, &current_role(&user))
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
         .map_err(map_db_error)
 }
 

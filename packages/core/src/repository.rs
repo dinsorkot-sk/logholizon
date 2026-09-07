@@ -150,6 +150,33 @@ pub struct DocActivityList {
     pub open: i64,
 }
 
+pub const ATTACHMENT_MAX_BYTES: usize = 5 * 1024 * 1024;
+
+#[derive(Debug, Serialize)]
+pub struct DocAttachment {
+    pub id: String,
+    pub entity_id: String,
+    pub doc_id: String,
+    pub filename: String,
+    pub content_type: String,
+    pub size: i64,
+    pub actor: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DocAttachmentList {
+    pub items: Vec<DocAttachment>,
+    pub total: i64,
+}
+
+#[derive(Debug)]
+pub struct DocAttachmentData {
+    pub filename: String,
+    pub content_type: String,
+    pub data: Vec<u8>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct GlobalAuditEntry {
     pub id: String,
@@ -3369,6 +3396,199 @@ fn valid_activity_date(date: &str) -> bool {
         return false;
     }
     true
+}
+
+/// Record attachments: any role with view access can list and download;
+/// uploading and deleting require edit access. Files are stored as DB
+/// blobs with a 5MB per-file cap; MIME allowlist blocks executables.
+pub fn validate_attachment(filename: &str, content_type: &str, size: usize) -> Result<()> {
+    let filename = filename.trim();
+    if filename.is_empty() {
+        return Err(AppError::BadRequest("filename is required".into()).into());
+    }
+    if filename.chars().count() > 255 {
+        return Err(AppError::BadRequest("filename must be at most 255 characters".into()).into());
+    }
+    if size == 0 {
+        return Err(AppError::BadRequest("file is empty".into()).into());
+    }
+    if size > ATTACHMENT_MAX_BYTES {
+        return Err(AppError::BadRequest("file must be at most 5MB".into()).into());
+    }
+    let content_type = content_type.trim().to_lowercase();
+    let allowed = content_type.starts_with("image/")
+        || matches!(
+            content_type.as_str(),
+            "application/pdf"
+                | "text/plain"
+                | "text/csv"
+                | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        );
+    if !allowed {
+        return Err(AppError::BadRequest("unsupported file type".into()).into());
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn attachment_row(
+    id: String,
+    entity_id: String,
+    doc_id: String,
+    filename: String,
+    content_type: String,
+    size: i64,
+    actor: Option<String>,
+    created_at: String,
+) -> DocAttachment {
+    DocAttachment {
+        id,
+        entity_id,
+        doc_id,
+        filename,
+        content_type,
+        size,
+        actor,
+        created_at,
+    }
+}
+
+pub async fn list_doc_attachments_as_role(
+    pool: &SqlitePool,
+    doc_id: &str,
+    role: &str,
+) -> Result<DocAttachmentList> {
+    let document = get_document(pool, doc_id)
+        .await
+        .map_err(|_| AppError::NotFound(format!("document not found: {doc_id}")))?;
+    check_permission(pool, &document.entity_id, role, false).await?;
+    let rows = sqlx::query_as::<_, (String, String, String, String, String, i64, Option<String>, String)>(
+        "SELECT id, entity_id, doc_id, filename, content_type, size, actor, created_at FROM _doc_attachment WHERE doc_id = ? ORDER BY created_at DESC, id DESC",
+    )
+    .bind(doc_id)
+    .fetch_all(pool)
+    .await?;
+    let total = rows.len() as i64;
+    Ok(DocAttachmentList {
+        items: rows
+            .into_iter()
+            .map(
+                |(id, entity_id, doc_id, filename, content_type, size, actor, created_at)| {
+                    attachment_row(
+                        id,
+                        entity_id,
+                        doc_id,
+                        filename,
+                        content_type,
+                        size,
+                        actor,
+                        created_at,
+                    )
+                },
+            )
+            .collect(),
+        total,
+    })
+}
+
+pub async fn upload_doc_attachment_as_role(
+    pool: &SqlitePool,
+    doc_id: &str,
+    filename: &str,
+    content_type: &str,
+    data: &[u8],
+    role: &str,
+    actor: Option<&str>,
+) -> Result<DocAttachment> {
+    let document = get_document(pool, doc_id)
+        .await
+        .map_err(|_| AppError::NotFound(format!("document not found: {doc_id}")))?;
+    check_permission(pool, &document.entity_id, role, true).await?;
+    validate_attachment(filename, content_type, data.len())?;
+    let id = format!("{doc_id}_attachment_{}", chrono_nanos());
+    sqlx::query(
+        "INSERT INTO _doc_attachment (id, entity_id, doc_id, filename, content_type, size, data, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(&document.entity_id)
+    .bind(doc_id)
+    .bind(filename.trim())
+    .bind(content_type.trim().to_lowercase())
+    .bind(data.len() as i64)
+    .bind(data)
+    .bind(actor)
+    .execute(pool)
+    .await?;
+    get_doc_attachment(pool, &id, role).await
+}
+
+pub async fn get_doc_attachment_data_as_role(
+    pool: &SqlitePool,
+    attachment_id: &str,
+    role: &str,
+) -> Result<DocAttachmentData> {
+    let row: Option<(String, String, String, Vec<u8>)> = sqlx::query_as(
+        "SELECT a.entity_id, a.filename, a.content_type, a.data FROM _doc_attachment a WHERE a.id = ?",
+    )
+    .bind(attachment_id)
+    .fetch_optional(pool)
+    .await?;
+    let Some((entity_id, filename, content_type, data)) = row else {
+        return Err(AppError::NotFound(format!("attachment not found: {attachment_id}")).into());
+    };
+    check_permission(pool, &entity_id, role, false).await?;
+    Ok(DocAttachmentData {
+        filename,
+        content_type,
+        data,
+    })
+}
+
+pub async fn delete_doc_attachment_as_role(
+    pool: &SqlitePool,
+    attachment_id: &str,
+    role: &str,
+) -> Result<()> {
+    let row: Option<String> =
+        sqlx::query_scalar("SELECT entity_id FROM _doc_attachment WHERE id = ?")
+            .bind(attachment_id)
+            .fetch_optional(pool)
+            .await?;
+    let Some(entity_id) = row else {
+        return Err(AppError::NotFound(format!("attachment not found: {attachment_id}")).into());
+    };
+    check_permission(pool, &entity_id, role, true).await?;
+    sqlx::query("DELETE FROM _doc_attachment WHERE id = ?")
+        .bind(attachment_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+async fn get_doc_attachment(
+    pool: &SqlitePool,
+    attachment_id: &str,
+    role: &str,
+) -> Result<DocAttachment> {
+    let row = sqlx::query_as::<_, (String, String, String, String, String, i64, Option<String>, String)>(
+        "SELECT id, entity_id, doc_id, filename, content_type, size, actor, created_at FROM _doc_attachment WHERE id = ?",
+    )
+    .bind(attachment_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("attachment not found: {attachment_id}")))?;
+    let (id, entity_id, doc_id, filename, content_type, size, actor, created_at) = row;
+    check_permission(pool, &entity_id, role, false).await?;
+    Ok(attachment_row(
+        id,
+        entity_id,
+        doc_id,
+        filename,
+        content_type,
+        size,
+        actor,
+        created_at,
+    ))
 }
 
 pub async fn list_document_audit_as_role(

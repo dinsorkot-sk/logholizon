@@ -176,6 +176,73 @@ async fn doc_comments_create_list_and_validate() {
 }
 
 #[tokio::test]
+async fn doc_attachments_upload_list_download_delete() {
+    let pool = seeded_pool().await;
+    repository::create_document(&pool, "d1", "ticket", &json!({"title": "Fix pump"}), None)
+        .await
+        .unwrap();
+
+    let data = b"%PDF-1.4 test".to_vec();
+    let attachment = repository::upload_doc_attachment_as_role(
+        &pool,
+        "d1",
+        "report.pdf",
+        "application/pdf",
+        &data,
+        "user",
+        Some("demo"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(attachment.filename, "report.pdf");
+    assert_eq!(attachment.size, data.len() as i64);
+
+    let list = repository::list_doc_attachments_as_role(&pool, "d1", "user")
+        .await
+        .unwrap();
+    assert_eq!(list.total, 1);
+
+    let downloaded = repository::get_doc_attachment_data_as_role(&pool, &attachment.id, "user")
+        .await
+        .unwrap();
+    assert_eq!(downloaded.data, data);
+
+    // Oversize rejected before write.
+    let big = vec![0u8; repository::ATTACHMENT_MAX_BYTES + 1];
+    assert!(repository::upload_doc_attachment_as_role(
+        &pool,
+        "d1",
+        "big.pdf",
+        "application/pdf",
+        &big,
+        "user",
+        None,
+    )
+    .await
+    .is_err());
+    // Executable type rejected.
+    assert!(repository::upload_doc_attachment_as_role(
+        &pool,
+        "d1",
+        "run.exe",
+        "application/x-msdownload",
+        b"x",
+        "user",
+        None,
+    )
+    .await
+    .is_err());
+
+    repository::delete_doc_attachment_as_role(&pool, &attachment.id, "user")
+        .await
+        .unwrap();
+    let list = repository::list_doc_attachments_as_role(&pool, "d1", "user")
+        .await
+        .unwrap();
+    assert_eq!(list.total, 0);
+}
+
+#[tokio::test]
 async fn global_audit_lists_filters_and_paginates() {
     let pool = seeded_pool().await;
     repository::create_document(&pool, "d1", "ticket", &json!({"title": "Fix pump"}), None)

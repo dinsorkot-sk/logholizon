@@ -354,6 +354,71 @@ async function toggleActivity(activity: DocActivity) {
   }
 }
 
+type DocAttachment = { id: string; filename: string; content_type: string; size: number; created_at: string; actor?: string | null }
+type DocAttachmentList = { items: DocAttachment[]; total: number }
+const { data: attachments, refresh: refreshAttachments } = await useFetch<DocAttachmentList>(
+  () => auditId.value ? `/api/documents/${encodeURIComponent(auditId.value)}/attachments` : '',
+  { watch: [auditId], immediate: false }
+)
+const attachmentInput = ref<HTMLInputElement | null>(null)
+const attachmentError = ref('')
+const uploadingAttachment = ref(false)
+const deletingAttachmentId = ref<string | null>(null)
+
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+async function uploadAttachment(event: Event) {
+  attachmentError.value = ''
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file || !auditId.value) return
+  if (file.size > 5 * 1024 * 1024) {
+    attachmentError.value = 'file must be at most 5MB'
+    input.value = ''
+    return
+  }
+  uploadingAttachment.value = true
+  try {
+    const buffer = new Uint8Array(await file.arrayBuffer())
+    await $fetch(`/api/documents/${encodeURIComponent(auditId.value)}/attachments`, {
+      method: 'POST',
+      headers: { 'content-type': file.type || 'application/octet-stream', 'x-filename': file.name },
+      body: buffer
+    })
+    await refreshAttachments()
+    toast.add({ title: 'Attachment uploaded', color: 'success', icon: 'i-lucide-check' })
+  } catch (cause: any) {
+    attachmentError.value = cause?.data?.message || cause?.statusMessage || 'Unable to upload attachment'
+  } finally {
+    input.value = ''
+    uploadingAttachment.value = false
+  }
+}
+
+function downloadAttachment(attachment: DocAttachment) {
+  const link = document.createElement('a')
+  link.href = `/api/attachments/${encodeURIComponent(attachment.id)}/download`
+  link.download = attachment.filename
+  link.click()
+}
+
+async function deleteAttachment(attachment: DocAttachment) {
+  deletingAttachmentId.value = attachment.id
+  try {
+    await $fetch(`/api/attachments/${encodeURIComponent(attachment.id)}`, { method: 'DELETE' })
+    await refreshAttachments()
+    toast.add({ title: 'Attachment deleted', color: 'success', icon: 'i-lucide-check' })
+  } catch (cause: any) {
+    toast.add({ title: 'Unable to delete attachment', description: cause?.data?.message || cause?.statusMessage || 'Delete failed', color: 'error', icon: 'i-lucide-alert-circle' })
+  } finally {
+    deletingAttachmentId.value = null
+  }
+}
+
 async function toggleFollow() {
   if (!auditId.value || togglingFollow.value) return
   togglingFollow.value = true
@@ -417,10 +482,12 @@ function openEdit(document: Document) {
   activityDueDate.value = ''
   activityAssignee.value = ''
   activityError.value = ''
+  attachmentError.value = ''
   refreshAudit()
   refreshComments()
   refreshFollowers()
   refreshActivities()
+  refreshAttachments()
 }
 
 function isConflict(cause: any) {
@@ -1443,6 +1510,34 @@ async function confirmImport() {
                 </li>
               </ol>
               <p v-else class="mb-4 text-sm text-muted">No activities yet.</p>
+              <h2 class="mb-2 text-sm font-semibold">Attachments{{ attachments?.total ? ` (${attachments.total})` : '' }}</h2>
+              <div class="mb-2 flex items-center gap-2">
+                <input ref="attachmentInput" type="file" class="hidden" accept="image/*,.pdf,.txt,.csv,.xlsx" @change="uploadAttachment">
+                <UButton size="sm" variant="outline" icon="i-lucide-paperclip" :loading="uploadingAttachment" :disabled="!canEdit" @click="attachmentInput?.click()">Attach file</UButton>
+                <p class="text-xs text-muted">Images, PDF, TXT, CSV, XLSX · max 5MB</p>
+              </div>
+              <UAlert v-if="attachmentError" color="error" :title="attachmentError" class="mb-2" />
+              <ol v-if="(attachments?.items || []).length" class="mb-4 space-y-2">
+                <li v-for="attachment in attachments?.items || []" :key="attachment.id" class="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2">
+                  <UIcon name="i-lucide-paperclip" class="h-4 w-4 shrink-0 text-muted" />
+                  <div class="min-w-0 flex-1">
+                    <p class="truncate text-sm">{{ attachment.filename }}</p>
+                    <p class="text-xs text-muted">{{ formatFileSize(attachment.size) }} · by {{ attachment.actor || 'system' }}</p>
+                  </div>
+                  <UButton size="xs" variant="ghost" icon="i-lucide-download" aria-label="Download attachment" @click="downloadAttachment(attachment)" />
+                  <UButton
+                    size="xs"
+                    variant="ghost"
+                    color="error"
+                    icon="i-lucide-trash"
+                    aria-label="Delete attachment"
+                    :loading="deletingAttachmentId === attachment.id"
+                    :disabled="!canEdit"
+                    @click="deleteAttachment(attachment)"
+                  />
+                </li>
+              </ol>
+              <p v-else class="mb-4 text-sm text-muted">No attachments yet.</p>
               <h2 class="mb-2 text-sm font-semibold">History</h2>
               <div v-if="auditStatus === 'pending'" class="py-4 text-sm text-muted">Loading history…</div>
               <UAlert v-else-if="auditStatus === 'error'" color="error" title="Cannot load history" />

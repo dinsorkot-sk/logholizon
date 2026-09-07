@@ -97,6 +97,22 @@ export type CoreDocActivityList = {
   open: number
 }
 
+export type CoreDocAttachment = {
+  id: string
+  entity_id: string
+  doc_id: string
+  filename: string
+  content_type: string
+  size: number
+  actor?: string | null
+  created_at: string
+}
+
+export type CoreDocAttachmentList = {
+  items: CoreDocAttachment[]
+  total: number
+}
+
 export type CoreGlobalAuditEntry = {
   id: string
   entity_id: string
@@ -369,6 +385,26 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       request<CoreDocActivity>(`/v1/activities/${encodeURIComponent(id)}/toggle`, {
         method: 'POST'
       }),
+    listDocAttachments: (id: string): Promise<CoreDocAttachmentList> =>
+      request<CoreDocAttachmentList>(`/v1/documents/${encodeURIComponent(id)}/attachments`),
+    uploadDocAttachment: (
+      id: string,
+      file: { filename: string; contentType: string; data: Uint8Array }
+    ): Promise<CoreDocAttachment> =>
+      request<CoreDocAttachment>(`/v1/documents/${encodeURIComponent(id)}/attachments`, {
+        method: 'POST',
+        headers: { 'content-type': file.contentType, 'x-filename': file.filename },
+        body: file.data
+      }),
+    downloadDocAttachment: (id: string): Promise<ArrayBuffer> =>
+      request<ArrayBuffer>(`/v1/attachments/${encodeURIComponent(id)}`, {
+        responseType: 'arrayBuffer'
+      }),
+    deleteDocAttachment: async (id: string): Promise<void> => {
+      await request<void>(`/v1/attachments/${encodeURIComponent(id)}`, {
+        method: 'DELETE'
+      })
+    },
     listGlobalAudit: (
       limit = 50,
       offset = 0,
