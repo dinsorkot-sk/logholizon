@@ -153,6 +153,22 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
             "/v1/admin/companies/{id}/stock-ledger",
             get(list_stock_ledger).post(apply_stock_move),
         )
+        .route(
+            "/v1/admin/companies/{id}/trade-docs",
+            get(list_trade_docs).post(create_trade_doc),
+        )
+        .route(
+            "/v1/admin/trade/{id}/convert",
+            axum::routing::post(convert_trade_doc),
+        )
+        .route(
+            "/v1/admin/trade/{id}/confirm",
+            axum::routing::post(confirm_trade_doc),
+        )
+        .route(
+            "/v1/admin/trade/{id}/to-invoice",
+            axum::routing::post(trade_to_invoice),
+        )
         .route("/v1/admin/backup", axum::routing::post(admin_backup))
         .route("/v1/admin/backups", get(admin_list_backups))
         .route("/v1/admin/backups/{name}", get(admin_download_backup))
@@ -2501,6 +2517,140 @@ async fn apply_stock_move(
     .await
     .map(|entry| (StatusCode::CREATED, Json(entry)))
     .map_err(map_db_error)
+}
+
+// --- Trade docs: lead/quotation/order chain with convert/confirm/to-invoice ---
+
+#[derive(Debug, Deserialize)]
+pub struct ListTradeDocsQuery {
+    #[serde(default)]
+    pub doc_type: Option<String>,
+}
+
+async fn list_trade_docs(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<ListTradeDocsQuery>,
+) -> Result<Json<Vec<repository::TradeDoc>>, AppError> {
+    repository::list_trade_docs(&state.pool, &id, query.doc_type.as_deref())
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TradeLineRequest {
+    #[serde(default)]
+    pub product_id: Option<String>,
+    pub description: String,
+    pub qty: f64,
+    #[serde(default)]
+    pub uom_id: Option<String>,
+    pub unit_price: i64,
+    #[serde(default)]
+    pub tax_rule_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateTradeRequest {
+    pub kind: String,
+    pub doc_type: String,
+    #[serde(default)]
+    pub status: Option<String>,
+    pub partner: String,
+    pub currency: String,
+    pub entry_date: String,
+    #[serde(default)]
+    pub source_id: Option<String>,
+    #[serde(default)]
+    pub lines: Vec<TradeLineRequest>,
+}
+
+async fn create_trade_doc(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+    Json(input): Json<CreateTradeRequest>,
+) -> Result<(StatusCode, Json<repository::TradeDoc>), AppError> {
+    let lines: Vec<repository::TradeLineInput> = input
+        .lines
+        .into_iter()
+        .map(|line| repository::TradeLineInput {
+            product_id: line.product_id,
+            description: line.description,
+            qty: line.qty,
+            uom_id: line.uom_id,
+            unit_price: line.unit_price,
+            tax_rule_id: line.tax_rule_id,
+        })
+        .collect();
+    repository::create_trade_doc(
+        &state.pool,
+        &id,
+        &input.kind,
+        &input.doc_type,
+        input.status.as_deref(),
+        &input.partner,
+        &input.currency,
+        &input.entry_date,
+        input.source_id.as_deref(),
+        &lines,
+        current_actor(&user).as_deref(),
+    )
+    .await
+    .map(|doc| (StatusCode::CREATED, Json(doc)))
+    .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConvertTradeRequest {
+    #[serde(default)]
+    pub entry_date: Option<String>,
+}
+
+async fn convert_trade_doc(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+    Json(input): Json<ConvertTradeRequest>,
+) -> Result<(StatusCode, Json<repository::TradeDoc>), AppError> {
+    repository::convert_lead_to_quotation(
+        &state.pool,
+        &id,
+        input.entry_date.as_deref(),
+        current_actor(&user).as_deref(),
+    )
+    .await
+    .map(|doc| (StatusCode::CREATED, Json(doc)))
+    .map_err(map_db_error)
+}
+
+async fn confirm_trade_doc(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+    Json(input): Json<ConvertTradeRequest>,
+) -> Result<(StatusCode, Json<repository::TradeDoc>), AppError> {
+    repository::confirm_quotation_to_order(
+        &state.pool,
+        &id,
+        input.entry_date.as_deref(),
+        current_actor(&user).as_deref(),
+    )
+    .await
+    .map(|doc| (StatusCode::CREATED, Json(doc)))
+    .map_err(map_db_error)
+}
+
+async fn trade_to_invoice(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<(StatusCode, Json<repository::TradeDoc>), AppError> {
+    repository::invoice_from_order(&state.pool, &id, current_actor(&user).as_deref())
+        .await
+        .map(|doc| (StatusCode::CREATED, Json(doc)))
+        .map_err(map_db_error)
 }
 
 fn database_path(state: &AppState) -> Result<std::path::PathBuf, AppError> {
