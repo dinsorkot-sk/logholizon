@@ -4985,6 +4985,534 @@ pub async fn allocate_payment(
     get_payment(pool, payment_id).await
 }
 
+/// Trade docs: single table with doc_type lead/quotation/order plus chain
+/// links. Dedicated tables like invoice for transactional integrity; money
+/// in integer minor units; qty REAL stock-aligned with qty_base plus UOM.
+#[derive(Debug, Serialize)]
+pub struct TradeLine {
+    pub id: String,
+    pub trade_doc_id: String,
+    pub product_id: Option<String>,
+    pub description: String,
+    pub qty: f64,
+    pub uom_id: Option<String>,
+    pub qty_base: f64,
+    pub unit_price: i64,
+    pub tax_rule_id: Option<String>,
+    pub line_total: i64,
+    pub tax: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TradeDoc {
+    pub id: String,
+    pub company_id: String,
+    pub kind: String,
+    pub doc_type: String,
+    pub status: String,
+    pub partner: String,
+    pub currency: String,
+    pub entry_date: String,
+    pub source_id: Option<String>,
+    pub invoice_id: Option<String>,
+    pub actor: Option<String>,
+    pub created_at: String,
+    pub lines: Vec<TradeLine>,
+    pub subtotal: i64,
+    pub tax_total: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct TradeLineInput {
+    pub product_id: Option<String>,
+    pub description: String,
+    pub qty: f64,
+    pub uom_id: Option<String>,
+    pub unit_price: i64,
+    pub tax_rule_id: Option<String>,
+}
+
+fn valid_trade_kind(kind: &str) -> bool {
+    matches!(kind, "sale" | "purchase")
+}
+
+fn valid_trade_doc_type(doc_type: &str) -> bool {
+    matches!(doc_type, "lead" | "quotation" | "order")
+}
+
+fn valid_trade_status(doc_type: &str, status: &str) -> bool {
+    match doc_type {
+        "lead" => matches!(status, "new" | "qualified" | "lost"),
+        "quotation" | "order" => {
+            matches!(status, "draft" | "sent" | "confirmed" | "done")
+        }
+        _ => false,
+    }
+}
+
+fn default_trade_status(doc_type: &str) -> &'static str {
+    match doc_type {
+        "lead" => "new",
+        _ => "draft",
+    }
+}
+
+async fn trade_qty_base(
+    pool: &SqlitePool,
+    company_id: &str,
+    qty: f64,
+    uom_id: Option<&str>,
+) -> Result<(f64, Option<String>)> {
+    if !qty.is_finite() || qty <= 0.0 {
+        return Err(AppError::BadRequest("qty must be > 0".into()).into());
+    }
+    match uom_id.map(str::trim).filter(|s| !s.is_empty()) {
+        None => Ok((qty, None)),
+        Some(id) => {
+            let uom = get_uom(pool, id).await?;
+            if uom.company_id != company_id.trim() {
+                return Err(AppError::BadRequest("uom belongs to another company".into()).into());
+            }
+            let qty_base = qty * uom.factor_to_base;
+            if !qty_base.is_finite() || qty_base <= 0.0 {
+                return Err(AppError::BadRequest("qty_base must be > 0".into()).into());
+            }
+            Ok((qty_base, Some(uom.id)))
+        }
+    }
+}
+
+fn trade_line_totals(qty: f64, unit_price: i64, tax_rule: Option<&TaxRule>) -> (i64, i64) {
+    let line_total = (qty * unit_price as f64).round() as i64;
+    match tax_rule {
+        None => (line_total, 0),
+        Some(rule) => {
+            let computed = calc_tax(
+                line_total,
+                rule.rate,
+                rule.is_inclusive,
+                rule.is_withholding,
+            );
+            (computed.net, computed.tax)
+        }
+    }
+}
+
+async fn get_trade_doc(pool: &SqlitePool, id: &str) -> Result<TradeDoc> {
+    let row = sqlx::query_as::<_, (String, String, String, String, String, String, String, String, Option<String>, Option<String>, Option<String>, String)>(
+        "SELECT id, company_id, kind, doc_type, status, partner, currency, entry_date, source_id, invoice_id, actor, created_at FROM _trade_doc WHERE id = ?",
+    )
+    .bind(id.trim())
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("trade doc not found: {id}")))?;
+    let line_rows = sqlx::query_as::<_, (String, String, Option<String>, String, f64, Option<String>, f64, i64, Option<String>)>(
+        "SELECT id, trade_doc_id, product_id, description, qty, uom_id, qty_base, unit_price, tax_rule_id FROM _trade_line WHERE trade_doc_id = ? ORDER BY id",
+    )
+    .bind(id.trim())
+    .fetch_all(pool)
+    .await?;
+    let mut lines = Vec::new();
+    let mut subtotal = 0i64;
+    let mut tax_total = 0i64;
+    for (
+        line_id,
+        doc_id,
+        product_id,
+        description,
+        qty,
+        uom_id,
+        qty_base,
+        unit_price,
+        tax_rule_id,
+    ) in line_rows
+    {
+        let rule = match tax_rule_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            None => None,
+            Some(rule_id) => Some(get_tax_rule(pool, rule_id).await?),
+        };
+        let (net, tax) = trade_line_totals(qty, unit_price, rule.as_ref());
+        subtotal += net;
+        tax_total += tax;
+        lines.push(TradeLine {
+            id: line_id,
+            trade_doc_id: doc_id,
+            product_id,
+            description,
+            qty,
+            uom_id,
+            qty_base,
+            unit_price,
+            tax_rule_id,
+            line_total: net + tax,
+            tax,
+        });
+    }
+    Ok(TradeDoc {
+        id: row.0,
+        company_id: row.1,
+        kind: row.2,
+        doc_type: row.3,
+        status: row.4,
+        partner: row.5,
+        currency: row.6,
+        entry_date: row.7,
+        source_id: row.8,
+        invoice_id: row.9,
+        actor: row.10,
+        created_at: row.11,
+        lines,
+        subtotal,
+        tax_total,
+    })
+}
+
+pub async fn list_trade_docs(
+    pool: &SqlitePool,
+    company_id: &str,
+    doc_type: Option<&str>,
+) -> Result<Vec<TradeDoc>> {
+    require_company(pool, company_id).await?;
+    let mut where_sql = String::from("company_id = ?");
+    let mut params: Vec<String> = vec![company_id.trim().to_string()];
+    if let Some(doc_type) = doc_type.map(str::trim).filter(|s| !s.is_empty()) {
+        if !valid_trade_doc_type(doc_type) {
+            return Err(
+                AppError::BadRequest("doc_type must be lead|quotation|order".into()).into(),
+            );
+        }
+        where_sql.push_str(" AND doc_type = ?");
+        params.push(doc_type.to_string());
+    }
+    let query = format!(
+        "SELECT id FROM _trade_doc WHERE {where_sql} ORDER BY entry_date DESC, created_at DESC LIMIT 100"
+    );
+    let mut query_builder = sqlx::query_scalar::<_, String>(&query);
+    for param in &params {
+        query_builder = query_builder.bind(param);
+    }
+    let ids: Vec<String> = query_builder.fetch_all(pool).await?;
+    let mut docs = Vec::new();
+    for id in ids {
+        docs.push(get_trade_doc(pool, &id).await?);
+    }
+    Ok(docs)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn create_trade_doc(
+    pool: &SqlitePool,
+    company_id: &str,
+    kind: &str,
+    doc_type: &str,
+    status: Option<&str>,
+    partner: &str,
+    currency: &str,
+    entry_date: &str,
+    source_id: Option<&str>,
+    lines: &[TradeLineInput],
+    actor: Option<&str>,
+) -> Result<TradeDoc> {
+    require_company(pool, company_id).await?;
+    require_currency(pool, currency).await?;
+    let kind = kind.trim();
+    let doc_type = doc_type.trim();
+    if !valid_trade_kind(kind) {
+        return Err(AppError::BadRequest("kind must be sale|purchase".into()).into());
+    }
+    if !valid_trade_doc_type(doc_type) {
+        return Err(AppError::BadRequest("doc_type must be lead|quotation|order".into()).into());
+    }
+    let status = status
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(default_trade_status(doc_type));
+    if !valid_trade_status(doc_type, status) {
+        return Err(AppError::BadRequest(format!("invalid status {status} for {doc_type}")).into());
+    }
+    if partner.trim().is_empty() {
+        return Err(AppError::BadRequest("partner is required".into()).into());
+    }
+    if !valid_entry_date(entry_date.trim()) {
+        return Err(AppError::BadRequest("entry_date must be YYYY-MM-DD".into()).into());
+    }
+    if period_locked(pool, company_id, entry_date.trim()).await? {
+        return Err(
+            AppError::Conflict(format!("period locked: {}", period_of(entry_date.trim()))).into(),
+        );
+    }
+    if let Some(source) = source_id.map(str::trim).filter(|s| !s.is_empty()) {
+        let parent = get_trade_doc(pool, source).await?;
+        if parent.company_id != company_id.trim() {
+            return Err(AppError::BadRequest("source belongs to another company".into()).into());
+        }
+    }
+    let needs_lines = !matches!(doc_type, "lead");
+    if needs_lines && lines.is_empty() {
+        return Err(AppError::BadRequest("quotation/order requires at least 1 line".into()).into());
+    }
+    let mut resolved: Vec<(TradeLineInput, f64, Option<String>)> = Vec::new();
+    for line in lines {
+        if line.description.trim().is_empty() {
+            return Err(AppError::BadRequest("line description is required".into()).into());
+        }
+        if line.unit_price < 0 {
+            return Err(AppError::BadRequest("unit_price must be >= 0".into()).into());
+        }
+        if let Some(rule_id) = line
+            .tax_rule_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            get_tax_rule(pool, rule_id).await?;
+        }
+        let (qty_base, resolved_uom) =
+            trade_qty_base(pool, company_id, line.qty, line.uom_id.as_deref()).await?;
+        resolved.push((line.clone(), qty_base, resolved_uom));
+    }
+    let mut tx = pool.begin().await?;
+    let id = format!("{company_id}_trade_{}", chrono_nanos());
+    sqlx::query(
+        "INSERT INTO _trade_doc (id, company_id, kind, doc_type, status, partner, currency, entry_date, source_id, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(company_id.trim())
+    .bind(kind)
+    .bind(doc_type)
+    .bind(status)
+    .bind(partner.trim())
+    .bind(currency.trim())
+    .bind(entry_date.trim())
+    .bind(source_id.map(str::trim).filter(|s| !s.is_empty()))
+    .bind(actor)
+    .execute(&mut *tx)
+    .await?;
+    for (line, qty_base, resolved_uom) in &resolved {
+        let line_id = format!("{id}_line_{}", chrono_nanos());
+        sqlx::query(
+            "INSERT INTO _trade_line (id, trade_doc_id, product_id, description, qty, uom_id, qty_base, unit_price, tax_rule_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&line_id)
+        .bind(&id)
+        .bind(
+            line.product_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty()),
+        )
+        .bind(line.description.trim())
+        .bind(line.qty)
+        .bind(resolved_uom.clone())
+        .bind(qty_base)
+        .bind(line.unit_price)
+        .bind(
+            line.tax_rule_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty()),
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    get_trade_doc(pool, &id).await
+}
+
+pub async fn convert_lead_to_quotation(
+    pool: &SqlitePool,
+    lead_id: &str,
+    entry_date: Option<&str>,
+    actor: Option<&str>,
+) -> Result<TradeDoc> {
+    let lead = get_trade_doc(pool, lead_id).await?;
+    if lead.doc_type != "lead" {
+        return Err(AppError::BadRequest("source is not a lead".into()).into());
+    }
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _trade_doc WHERE source_id = ?)")
+            .bind(lead_id.trim())
+            .fetch_one(pool)
+            .await?;
+    if exists {
+        return Err(AppError::Conflict("lead already converted".into()).into());
+    }
+    if lead.status != "new" {
+        return Err(AppError::Conflict(format!("lead is {}", lead.status)).into());
+    }
+    let entry_date = entry_date.unwrap_or(&lead.entry_date).trim().to_string();
+    if !valid_entry_date(&entry_date) {
+        return Err(AppError::BadRequest("entry_date must be YYYY-MM-DD".into()).into());
+    }
+    if period_locked(pool, &lead.company_id, &entry_date).await? {
+        return Err(
+            AppError::Conflict(format!("period locked: {}", period_of(&entry_date))).into(),
+        );
+    }
+    let inputs: Vec<TradeLineInput> = lead
+        .lines
+        .iter()
+        .map(|line| TradeLineInput {
+            product_id: line.product_id.clone(),
+            description: line.description.clone(),
+            qty: line.qty,
+            uom_id: line.uom_id.clone(),
+            unit_price: line.unit_price,
+            tax_rule_id: line.tax_rule_id.clone(),
+        })
+        .collect();
+    let quote = create_trade_doc(
+        pool,
+        &lead.company_id,
+        &lead.kind,
+        "quotation",
+        Some("draft"),
+        &lead.partner,
+        &lead.currency,
+        &entry_date,
+        Some(&lead.id),
+        &inputs,
+        actor,
+    )
+    .await?;
+    sqlx::query("UPDATE _trade_doc SET status = 'qualified' WHERE id = ?")
+        .bind(lead.id.trim())
+        .execute(pool)
+        .await?;
+    get_trade_doc(pool, &quote.id).await
+}
+
+pub async fn confirm_quotation_to_order(
+    pool: &SqlitePool,
+    quotation_id: &str,
+    entry_date: Option<&str>,
+    actor: Option<&str>,
+) -> Result<TradeDoc> {
+    let quote = get_trade_doc(pool, quotation_id).await?;
+    if quote.doc_type != "quotation" {
+        return Err(AppError::BadRequest("source is not a quotation".into()).into());
+    }
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _trade_doc WHERE source_id = ?)")
+            .bind(quotation_id.trim())
+            .fetch_one(pool)
+            .await?;
+    if exists {
+        return Err(AppError::Conflict("quotation already converted".into()).into());
+    }
+    if !matches!(quote.status.as_str(), "draft" | "sent") {
+        return Err(AppError::Conflict(format!("quotation is {}", quote.status)).into());
+    }
+    let entry_date = entry_date.unwrap_or(&quote.entry_date).trim().to_string();
+    if !valid_entry_date(&entry_date) {
+        return Err(AppError::BadRequest("entry_date must be YYYY-MM-DD".into()).into());
+    }
+    if period_locked(pool, &quote.company_id, &entry_date).await? {
+        return Err(
+            AppError::Conflict(format!("period locked: {}", period_of(&entry_date))).into(),
+        );
+    }
+    let inputs: Vec<TradeLineInput> = quote
+        .lines
+        .iter()
+        .map(|line| TradeLineInput {
+            product_id: line.product_id.clone(),
+            description: line.description.clone(),
+            qty: line.qty,
+            uom_id: line.uom_id.clone(),
+            unit_price: line.unit_price,
+            tax_rule_id: line.tax_rule_id.clone(),
+        })
+        .collect();
+    let order = create_trade_doc(
+        pool,
+        &quote.company_id,
+        &quote.kind,
+        "order",
+        Some("confirmed"),
+        &quote.partner,
+        &quote.currency,
+        &entry_date,
+        Some(&quote.id),
+        &inputs,
+        actor,
+    )
+    .await?;
+    sqlx::query("UPDATE _trade_doc SET status = 'confirmed' WHERE id = ?")
+        .bind(quote.id.trim())
+        .execute(pool)
+        .await?;
+    get_trade_doc(pool, &order.id).await
+}
+
+pub async fn invoice_from_order(
+    pool: &SqlitePool,
+    order_id: &str,
+    actor: Option<&str>,
+) -> Result<TradeDoc> {
+    let order = get_trade_doc(pool, order_id).await?;
+    if order.doc_type != "order" {
+        return Err(AppError::BadRequest("source is not an order".into()).into());
+    }
+    if !matches!(order.status.as_str(), "confirmed" | "done") {
+        return Err(AppError::Conflict(format!("order is {}", order.status)).into());
+    }
+    if order
+        .invoice_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .is_some()
+    {
+        return Err(AppError::Conflict("order already invoiced".into()).into());
+    }
+    if order.lines.is_empty() {
+        return Err(AppError::BadRequest("order has no lines".into()).into());
+    }
+    let mut invoice_lines: Vec<InvoiceLineInput> = Vec::new();
+    for line in &order.lines {
+        if line.qty.fract().abs() > 1e-9 {
+            return Err(AppError::BadRequest(format!(
+                "fractional qty cannot be invoiced: {}",
+                line.description
+            ))
+            .into());
+        }
+        let qty = line.qty.round() as i64;
+        if qty <= 0 {
+            return Err(AppError::BadRequest("quantity must be > 0".into()).into());
+        }
+        invoice_lines.push(InvoiceLineInput {
+            description: line.description.clone(),
+            quantity: qty,
+            unit_price: line.unit_price,
+            tax_rule_id: line.tax_rule_id.clone(),
+        });
+    }
+    let draft = create_invoice(
+        pool,
+        &order.company_id,
+        &order.kind,
+        &order.partner,
+        &order.currency,
+        &order.entry_date,
+        &invoice_lines,
+        actor,
+    )
+    .await?;
+    let posted = post_invoice(pool, &draft.id).await?;
+    sqlx::query("UPDATE _trade_doc SET invoice_id = ?, status = 'done' WHERE id = ?")
+        .bind(&posted.id)
+        .bind(order.id.trim())
+        .execute(pool)
+        .await?;
+    get_trade_doc(pool, &order.id).await
+}
+
 /// Stock ledger: full UOM dimensions plus on-hand balances plus
 /// moving-average valuation. Quantities in base units (REAL); money in
 /// integer minor units per base unit. product_id / warehouse_id are
