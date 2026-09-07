@@ -3,7 +3,7 @@ definePageMeta({ middleware: 'auth' })
 
 import { h, resolveComponent } from 'vue'
 import type { TableColumn } from '@nuxt/ui'
-import { absoluteTime, actionLabel, relativeTime } from '../../utils/audit-time'
+import { absoluteTime, actionLabel, parseDate, relativeTime } from '../../utils/audit-time'
 
 const UButton = resolveComponent('UButton')
 const UCheckbox = resolveComponent('UCheckbox')
@@ -450,6 +450,161 @@ const statusItems = computed(() => [
   ...(statusField.value?.options || []).map(o => ({ label: o.label, value: o.value }))
 ])
 
+// --- View modes (List / Kanban / Calendar) ---
+type RecordViewMode = 'list' | 'kanban' | 'calendar'
+const viewMode = ref<RecordViewMode>('list')
+const dateFields = computed(() => viewableFields.value.filter(f => f.type === 'date'))
+const viewModeItems = computed(() => {
+  const items = [
+    { label: 'List', value: 'list', icon: 'i-lucide-table' },
+    { label: 'Kanban', value: 'kanban', icon: 'i-lucide-kanban-square' }
+  ]
+  if (dateFields.value.length) items.push({ label: 'Calendar', value: 'calendar', icon: 'i-lucide-calendar' })
+  return items
+})
+watch(viewModeItems, (items) => {
+  if (!items.some(item => item.value === viewMode.value)) viewMode.value = 'list'
+})
+
+// Reset to list when switching entities so kanban/calendar state never leaks.
+watch(entityId, () => {
+  viewMode.value = 'list'
+  calendarCursor.value = startOfMonth(new Date())
+})
+
+function kanbanTitle(document: Document) {
+  const textField = viewableFields.value.find(f => f.type === 'text')
+  const raw = textField ? document.payload[textField.name] : document.id
+  return raw === '' || raw === null || raw === undefined ? document.id : String(raw)
+}
+
+const kanbanColumns = computed(() => {
+  const name = statusField.value?.name
+  if (!name) return []
+  const options = statusField.value?.options || []
+  const buckets = new Map(options.map(o => [o.value, [] as Document[]]))
+  const unassigned: Document[] = []
+  for (const document of tableData.value) {
+    const key = String(document.payload[name] ?? '')
+    const bucket = buckets.get(key)
+    if (bucket) bucket.push(document)
+    else unassigned.push(document)
+  }
+  const columns = options.map(option => ({
+    value: option.value,
+    label: option.label,
+    items: buckets.get(option.value) || []
+  }))
+  if (unassigned.length) columns.push({ value: '', label: 'Unassigned', items: unassigned })
+  return columns
+})
+
+function kanbanActions(document: Document) {
+  const name = statusField.value?.name || ''
+  const status = document.payload[name]
+  return workflow.value?.transitions.filter(item => item.from_state === status) || []
+}
+
+async function kanbanTransition(document: Document, action: string) {
+  if (!canEdit.value || transitioningAction.value) return
+  transitioningAction.value = `${document.id}:${action}`
+  try {
+    await $fetch<Document>(`/api/documents/${encodeURIComponent(document.id)}/transition`, { method: 'POST', body: { action } })
+    await refresh()
+    toast.add({ title: 'Record transitioned', color: 'success', icon: 'i-lucide-check' })
+  } catch (cause: any) {
+    toast.add({ title: 'Unable to transition record', description: cause?.data?.message || cause?.statusMessage || 'Transition failed', color: 'error', icon: 'i-lucide-alert-circle' })
+  } finally {
+    transitioningAction.value = null
+  }
+}
+
+function isKanbanTransitioning(document: Document, action: string) {
+  return transitioningAction.value === `${document.id}:${action}`
+}
+
+// --- Calendar (month grid over a date field) ---
+const calendarField = ref('')
+watch(dateFields, (fields) => {
+  if (!fields.some(f => f.name === calendarField.value)) {
+    calendarField.value = fields[0]?.name || ''
+  }
+}, { immediate: true })
+
+function startOfMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1)
+}
+const calendarCursor = ref(startOfMonth(new Date()))
+const calendarTitle = computed(() => calendarCursor.value.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }))
+
+function calendarDayKey(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+function recordDayKey(document: Document) {
+  const raw = document.payload[calendarField.value]
+  if (typeof raw !== 'string' || !raw) return ''
+  const parsed = parseDate(raw.includes('T') ? raw : `${raw}T00:00:00`)
+  if (Number.isNaN(parsed.getTime())) return ''
+  return calendarDayKey(parsed)
+}
+
+const calendarCells = computed(() => {
+  const first = startOfMonth(calendarCursor.value)
+  const lead = first.getDay()
+  const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate()
+  const cells: { date: Date; inMonth: boolean; items: Document[] }[] = []
+  for (let i = lead - 1; i >= 0; i--) {
+    const date = new Date(first.getFullYear(), first.getMonth(), -i)
+    cells.push({ date, inMonth: false, items: [] })
+  }
+  for (let day = 1; day <= daysInMonth; day++) {
+    cells.push({ date: new Date(first.getFullYear(), first.getMonth(), day), inMonth: true, items: [] })
+  }
+  while (cells.length % 7 !== 0) {
+    const last = cells[cells.length - 1]?.date || first
+    const date = new Date(last.getFullYear(), last.getMonth(), last.getDate() + 1)
+    cells.push({ date, inMonth: false, items: [] })
+  }
+  if (!calendarField.value) return cells
+  const byDay = new Map<string, Document[]>()
+  for (const document of tableData.value) {
+    const key = recordDayKey(document)
+    if (!key) continue
+    if (!byDay.has(key)) byDay.set(key, [])
+    byDay.get(key)!.push(document)
+  }
+  for (const cell of cells) {
+    cell.items = byDay.get(calendarDayKey(cell.date)) || []
+  }
+  return cells
+})
+
+function prevMonth() {
+  calendarCursor.value = new Date(calendarCursor.value.getFullYear(), calendarCursor.value.getMonth() - 1, 1)
+}
+function nextMonth() {
+  calendarCursor.value = new Date(calendarCursor.value.getFullYear(), calendarCursor.value.getMonth() + 1, 1)
+}
+function goToToday() {
+  calendarCursor.value = startOfMonth(new Date())
+}
+
+// --- Group summary (counts + page-level numeric subtotals) ---
+const { data: statusCounts } = await useFetch<{ status: string; count: number }[]>(
+  () => `/api/dashboard/counts?entity_id=${encodeURIComponent(entityId.value)}`,
+  { watch: [entityId] }
+)
+const numericFields = computed(() => viewableFields.value.filter(f => f.type === 'number' || f.type === 'currency'))
+const pageSubtotals = computed(() => numericFields.value.map((field) => {
+  const total = tableData.value.reduce((sum, document) => {
+    const raw = document.payload[field.name]
+    const value = typeof raw === 'number' ? raw : Number(raw)
+    return Number.isFinite(value) ? sum + value : sum
+  }, 0)
+  return { name: field.name, total }
+}))
+
 // --- Audit log helpers ---
 function statusLabel(value: unknown) {
   if (value === undefined || value === null || value === '') return null
@@ -771,6 +926,15 @@ async function confirmImport() {
             @update:model-value="applyFilters"
           />
           <USelectMenu v-model="sortValue" :items="sortItems" value-key="value" class="w-48" />
+          <USelectMenu v-model="viewMode" :items="viewModeItems" value-key="value" class="w-36" aria-label="View mode" />
+          <USelectMenu
+            v-if="viewMode === 'calendar' && dateFields.length > 1"
+            v-model="calendarField"
+            :items="dateFields.map(f => ({ label: f.name, value: f.name }))"
+            value-key="value"
+            class="w-40"
+            aria-label="Calendar date field"
+          />
           <UPopover>
             <UButton variant="outline" icon="i-lucide-settings-2">Columns</UButton>
             <template #content>
@@ -791,6 +955,14 @@ async function confirmImport() {
       <div v-if="activeViewId" class="mb-3 flex items-center gap-2">
         <UBadge color="primary" variant="subtle" icon="i-lucide-eye">View: {{ activeView?.name || activeViewId }}</UBadge>
         <UButton size="xs" variant="ghost" @click="clearView">Clear</UButton>
+      </div>
+      <div v-if="statusCounts?.length || pageSubtotals.length" class="mb-3 flex flex-wrap items-center gap-2">
+        <UBadge v-for="item in statusCounts || []" :key="item.status" color="neutral" variant="subtle">
+          {{ item.status }}: {{ item.count }}
+        </UBadge>
+        <UBadge v-for="item in pageSubtotals" :key="item.name" color="neutral" variant="outline">
+          {{ item.name }} Σ {{ item.total }}
+        </UBadge>
       </div>
         <UAlert v-if="importPreview" class="w-full" :color="importPreview.errors.length ? 'error' : 'success'" :title="`${importPreview.rows.length} rows previewed`">
           <template #description>
@@ -848,7 +1020,78 @@ async function confirmImport() {
             <UButton size="xs" color="error" variant="ghost" @click="bulkDeleteOpen = true">Delete</UButton>
             <UButton size="xs" variant="ghost" @click="selectedRows = new Set()">Clear</UButton>
           </div>
+          <div v-if="viewMode === 'kanban'">
+            <div v-if="!statusField" class="p-6 text-center text-sm text-muted">
+              Kanban needs a status field. Mark one select field as the status field in Entity Manager.
+            </div>
+            <div v-else class="flex gap-3 overflow-x-auto p-3">
+              <div v-for="column in kanbanColumns" :key="column.value || 'unassigned'" class="w-72 shrink-0 rounded-lg bg-muted/40 p-2">
+                <div class="mb-2 flex items-center justify-between px-1">
+                  <p class="text-sm font-semibold">{{ column.label }}</p>
+                  <UBadge color="neutral" variant="subtle">{{ column.items.length }}</UBadge>
+                </div>
+                <div class="space-y-2">
+                  <UCard
+                    v-for="document in column.items"
+                    :key="document.id"
+                    class="cursor-pointer hover:bg-elevated/50"
+                    @click="openEdit(document)"
+                  >
+                    <p class="truncate text-sm font-medium">{{ kanbanTitle(document) }}</p>
+                    <p class="mt-1 font-mono text-xs text-muted">{{ document.id }}</p>
+                    <div v-if="kanbanActions(document).length" class="mt-2 flex flex-wrap gap-1" @click.stop>
+                      <UButton
+                        v-for="item in kanbanActions(document)"
+                        :key="item.action"
+                        size="xs"
+                        variant="outline"
+                        :loading="isKanbanTransitioning(document, item.action)"
+                        :disabled="!canEdit || transitioningAction !== null"
+                        @click="kanbanTransition(document, item.action)"
+                      >{{ transitionLabel(item.action) }}</UButton>
+                    </div>
+                  </UCard>
+                  <p v-if="!column.items.length" class="px-1 py-4 text-center text-xs text-muted">No records</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-else-if="viewMode === 'calendar'">
+            <div v-if="!calendarField" class="p-6 text-center text-sm text-muted">
+              Calendar needs a date field. Add a date field in Entity Manager first.
+            </div>
+            <div v-else>
+              <div class="flex items-center justify-between border-b px-3 py-2">
+                <p class="text-sm font-semibold">{{ calendarTitle }}</p>
+                <div class="flex gap-1">
+                  <UButton size="xs" variant="ghost" @click="prevMonth">Prev</UButton>
+                  <UButton size="xs" variant="ghost" @click="goToToday">Today</UButton>
+                  <UButton size="xs" variant="ghost" @click="nextMonth">Next</UButton>
+                </div>
+              </div>
+              <div class="grid grid-cols-7 gap-px bg-default p-px">
+                <div v-for="day in ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']" :key="day" class="bg-card px-2 py-1 text-xs font-medium text-muted">{{ day }}</div>
+                <div
+                  v-for="cell in calendarCells"
+                  :key="calendarDayKey(cell.date)"
+                  class="min-h-20 bg-card p-1"
+                  :class="{ 'opacity-50': !cell.inMonth }"
+                >
+                  <p class="text-xs text-muted">{{ cell.date.getDate() }}</p>
+                  <button
+                    v-for="document in cell.items.slice(0, 3)"
+                    :key="document.id"
+                    type="button"
+                    class="mt-1 block w-full truncate rounded bg-primary/10 px-1 py-0.5 text-left text-xs hover:bg-primary/20"
+                    @click="openEdit(document)"
+                  >{{ kanbanTitle(document) }}</button>
+                  <p v-if="cell.items.length > 3" class="mt-1 text-xs text-muted">+{{ cell.items.length - 3 }} more</p>
+                </div>
+              </div>
+            </div>
+          </div>
           <UTable
+            v-else
             :data="tableData"
             :columns="tableColumns"
             v-model:sorting="sorting"
