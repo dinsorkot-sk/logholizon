@@ -14,6 +14,9 @@ const mainLinks = computed<NavigationMenuItem[]>(() => {
     { label: 'Dashboard', icon: 'i-lucide-house', to: '/dashboard' },
     { label: 'PM Dashboard', icon: 'i-lucide-clipboard-list', to: '/app/pm' },
     { label: 'Accounting', icon: 'i-lucide-calculator', to: '/app/accounting' },
+    { label: 'Stock', icon: 'i-lucide-package', to: '/app/stock' },
+    { label: 'Sales', icon: 'i-lucide-shopping-cart', to: '/app/sales' },
+    { label: 'Purchases', icon: 'i-lucide-truck', to: '/app/purchases' },
     { label: 'Reports', icon: 'i-lucide-chart-bar', to: '/app/reports' }
   ]
   if (isAdmin.value) {
@@ -68,6 +71,9 @@ const commandGroups = computed<CommandPaletteGroup[]>(() => {
     { label: 'Dashboard', icon: 'i-lucide-house', to: '/dashboard', kbds: ['g', 'd'] },
     { label: 'PM Dashboard', icon: 'i-lucide-clipboard-list', to: '/app/pm', kbds: ['g', 'p'] },
     { label: 'Accounting', icon: 'i-lucide-calculator', to: '/app/accounting', kbds: ['g', 'c'] },
+    { label: 'Stock', icon: 'i-lucide-package', to: '/app/stock' },
+    { label: 'Sales', icon: 'i-lucide-shopping-cart', to: '/app/sales' },
+    { label: 'Purchases', icon: 'i-lucide-truck', to: '/app/purchases' },
     { label: 'Reports', icon: 'i-lucide-chart-bar', to: '/app/reports', kbds: ['g', 'r'] }
   ]
   if (isAdmin.value) {

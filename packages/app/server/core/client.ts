@@ -130,6 +130,8 @@ export type CoreUom = { id: string; company_id: string; code: string; name: stri
 export type CoreStockBalance = { company_id: string; product_id: string; warehouse_id: string; qty_base: number; avg_cost: number; total_value: number; updated_at: string }
 export type CoreStockLedgerEntry = { id: string; company_id: string; product_id: string; warehouse_id: string; move_doc_id?: string | null; move_type: string; qty: number; uom_id?: string | null; qty_base: number; unit_cost: number; total_value: number; balance_qty: number; balance_avg: number; entry_date: string; actor?: string | null; created_at: string }
 export type CorePaymentAllocation = { id: string; payment_id: string; invoice_id: string; amount: number; created_at: string }
+export type CoreTradeLine = { id: string; trade_doc_id: string; product_id?: string | null; description: string; qty: number; uom_id?: string | null; qty_base: number; unit_price: number; tax_rule_id?: string | null; line_total: number; tax: number }
+export type CoreTradeDoc = { id: string; company_id: string; kind: string; doc_type: string; status: string; partner: string; currency: string; entry_date: string; source_id?: string | null; invoice_id?: string | null; actor?: string | null; created_at: string; lines: CoreTradeLine[]; subtotal: number; tax_total: number }
 export type CorePayment = { id: string; company_id: string; kind: string; partner: string; currency: string; amount: number; entry_id?: string | null; entry_date: string; actor?: string | null; created_at: string; allocations: CorePaymentAllocation[]; allocated: number; remaining: number }
 
 export type CoreGlobalAuditEntry = {
@@ -737,6 +739,32 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       request<CoreStockLedgerEntry>(`/v1/admin/companies/${encodeURIComponent(companyId)}/stock-ledger`, {
         method: 'POST',
         body: input
+      }),
+    listTradeDocs: (companyId: string, docType?: string): Promise<CoreTradeDoc[]> =>
+      request<CoreTradeDoc[]>(`/v1/admin/companies/${encodeURIComponent(companyId)}/trade-docs`, {
+        query: docType ? { doc_type: docType } : {}
+      }),
+    createTradeDoc: (
+      companyId: string,
+      input: { kind: string; doc_type: string; status?: string; partner: string; currency: string; entry_date: string; source_id?: string; lines: { product_id?: string; description: string; qty: number; uom_id?: string; unit_price: number; tax_rule_id?: string }[] }
+    ): Promise<CoreTradeDoc> =>
+      request<CoreTradeDoc>(`/v1/admin/companies/${encodeURIComponent(companyId)}/trade-docs`, {
+        method: 'POST',
+        body: input
+      }),
+    convertTradeDoc: (tradeId: string, input?: { entry_date?: string }): Promise<CoreTradeDoc> =>
+      request<CoreTradeDoc>(`/v1/admin/trade/${encodeURIComponent(tradeId)}/convert`, {
+        method: 'POST',
+        body: input || {}
+      }),
+    confirmTradeDoc: (tradeId: string, input?: { entry_date?: string }): Promise<CoreTradeDoc> =>
+      request<CoreTradeDoc>(`/v1/admin/trade/${encodeURIComponent(tradeId)}/confirm`, {
+        method: 'POST',
+        body: input || {}
+      }),
+    tradeToInvoice: (tradeId: string): Promise<CoreTradeDoc> =>
+      request<CoreTradeDoc>(`/v1/admin/trade/${encodeURIComponent(tradeId)}/to-invoice`, {
+        method: 'POST'
       })
   }
 }
