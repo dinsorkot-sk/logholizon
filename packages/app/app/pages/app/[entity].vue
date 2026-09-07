@@ -999,7 +999,7 @@ async function confirmImport() {
         <UButton icon="i-lucide-settings-2" :to="'/admin/meta/entity'">Add fields in Entity Manager</UButton>
       </div>
 
-      <UCard v-else>
+      <UCard v-else :ui="{ root: 'rounded-lg bg-default ring ring-default divide-y divide-default overflow-visible', body: 'p-2 sm:p-4 overflow-x-auto' }">
         <div v-if="documentsStatus === 'pending'" class="space-y-3" aria-busy="true">
           <USkeleton v-for="index in 4" :key="index" class="h-10 w-full" />
         </div>
