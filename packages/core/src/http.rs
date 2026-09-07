@@ -140,6 +140,19 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
             "/v1/admin/payments/{id}/allocate",
             axum::routing::post(allocate_payment),
         )
+        .route(
+            "/v1/admin/companies/{id}/uoms",
+            get(list_uoms).post(create_uom),
+        )
+        .route("/v1/admin/convert-uom", get(convert_uom))
+        .route(
+            "/v1/admin/companies/{id}/stock-balances",
+            get(list_stock_balances),
+        )
+        .route(
+            "/v1/admin/companies/{id}/stock-ledger",
+            get(list_stock_ledger).post(apply_stock_move),
+        )
         .route("/v1/admin/backup", axum::routing::post(admin_backup))
         .route("/v1/admin/backups", get(admin_list_backups))
         .route("/v1/admin/backups/{name}", get(admin_download_backup))
@@ -2343,6 +2356,151 @@ async fn allocate_payment(
         .await
         .map(Json)
         .map_err(map_db_error)
+}
+
+// --- Stock ledger: UOM, on-hand balances, moving-average valuation ---
+
+async fn list_uoms(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<repository::Uom>>, AppError> {
+    repository::list_uoms(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateUomRequest {
+    pub code: String,
+    pub name: String,
+    pub dimension: String,
+    pub factor_to_base: f64,
+    #[serde(default)]
+    pub is_base: bool,
+}
+
+async fn create_uom(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CreateUomRequest>,
+) -> Result<(StatusCode, Json<repository::Uom>), AppError> {
+    repository::create_uom(
+        &state.pool,
+        &id,
+        &input.code,
+        &input.name,
+        &input.dimension,
+        input.factor_to_base,
+        input.is_base,
+    )
+    .await
+    .map(|uom| (StatusCode::CREATED, Json(uom)))
+    .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConvertUomQuery {
+    pub company_id: String,
+    pub qty: f64,
+    pub from_uom_id: String,
+    pub to_uom_id: String,
+}
+
+async fn convert_uom(
+    State(state): State<AppState>,
+    Query(query): Query<ConvertUomQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    repository::convert_uom(
+        &state.pool,
+        &query.company_id,
+        query.qty,
+        &query.from_uom_id,
+        &query.to_uom_id,
+    )
+    .await
+    .map(|qty| Json(json!({ "qty": qty })))
+    .map_err(map_db_error)
+}
+
+async fn list_stock_balances(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<repository::StockBalance>>, AppError> {
+    repository::list_stock_balances(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListStockLedgerQuery {
+    #[serde(default)]
+    pub product_id: Option<String>,
+    #[serde(default)]
+    pub warehouse_id: Option<String>,
+    #[serde(default = "default_stock_limit")]
+    pub limit: i64,
+}
+
+fn default_stock_limit() -> i64 {
+    50
+}
+
+async fn list_stock_ledger(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<ListStockLedgerQuery>,
+) -> Result<Json<Vec<repository::StockLedgerEntry>>, AppError> {
+    repository::list_stock_ledger(
+        &state.pool,
+        &id,
+        query.product_id.as_deref(),
+        query.warehouse_id.as_deref(),
+        query.limit,
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ApplyStockMoveRequest {
+    pub product_id: String,
+    pub warehouse_id: String,
+    pub move_type: String,
+    pub qty: f64,
+    #[serde(default)]
+    pub uom_id: Option<String>,
+    #[serde(default)]
+    pub unit_cost: i64,
+    pub entry_date: String,
+    #[serde(default)]
+    pub move_doc_id: Option<String>,
+}
+
+async fn apply_stock_move(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+    Json(input): Json<ApplyStockMoveRequest>,
+) -> Result<(StatusCode, Json<repository::StockLedgerEntry>), AppError> {
+    repository::apply_stock_move(
+        &state.pool,
+        &id,
+        &input.product_id,
+        &input.warehouse_id,
+        &input.move_type,
+        input.qty,
+        input.uom_id.as_deref(),
+        input.unit_cost,
+        &input.entry_date,
+        input.move_doc_id.as_deref(),
+        current_actor(&user).as_deref(),
+    )
+    .await
+    .map(|entry| (StatusCode::CREATED, Json(entry)))
+    .map_err(map_db_error)
 }
 
 fn database_path(state: &AppState) -> Result<std::path::PathBuf, AppError> {

@@ -4985,6 +4985,446 @@ pub async fn allocate_payment(
     get_payment(pool, payment_id).await
 }
 
+/// Stock ledger: full UOM dimensions plus on-hand balances plus
+/// moving-average valuation. Quantities in base units (REAL); money in
+/// integer minor units per base unit. product_id / warehouse_id are
+/// generic `_doc` ids (no FK); all rows are company-scoped.
+#[derive(Debug, Serialize)]
+pub struct Uom {
+    pub id: String,
+    pub company_id: String,
+    pub code: String,
+    pub name: String,
+    pub dimension: String,
+    pub factor_to_base: f64,
+    pub is_base: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StockBalance {
+    pub company_id: String,
+    pub product_id: String,
+    pub warehouse_id: String,
+    pub qty_base: f64,
+    pub avg_cost: i64,
+    pub total_value: i64,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StockLedgerEntry {
+    pub id: String,
+    pub company_id: String,
+    pub product_id: String,
+    pub warehouse_id: String,
+    pub move_doc_id: Option<String>,
+    pub move_type: String,
+    pub qty: f64,
+    pub uom_id: Option<String>,
+    pub qty_base: f64,
+    pub unit_cost: i64,
+    pub total_value: i64,
+    pub balance_qty: f64,
+    pub balance_avg: i64,
+    pub entry_date: String,
+    pub actor: Option<String>,
+    pub created_at: String,
+}
+
+fn valid_uom_dimension(dimension: &str) -> bool {
+    matches!(dimension, "qty" | "weight" | "length" | "volume")
+}
+
+async fn get_uom(pool: &SqlitePool, id: &str) -> Result<Uom> {
+    let row = sqlx::query_as::<_, (String, String, String, String, String, f64, i64, String)>(
+        "SELECT id, company_id, code, name, dimension, factor_to_base, is_base, created_at FROM _uom WHERE id = ?",
+    )
+    .bind(id.trim())
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("uom not found: {id}")))?;
+    Ok(Uom {
+        id: row.0,
+        company_id: row.1,
+        code: row.2,
+        name: row.3,
+        dimension: row.4,
+        factor_to_base: row.5,
+        is_base: row.6 != 0,
+        created_at: row.7,
+    })
+}
+
+pub async fn list_uoms(pool: &SqlitePool, company_id: &str) -> Result<Vec<Uom>> {
+    require_company(pool, company_id).await?;
+    let rows = sqlx::query_as::<_, (String, String, String, String, String, f64, i64, String)>(
+        "SELECT id, company_id, code, name, dimension, factor_to_base, is_base, created_at FROM _uom WHERE company_id = ? ORDER BY dimension, code",
+    )
+    .bind(company_id.trim())
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, company_id, code, name, dimension, factor_to_base, is_base, created_at)| Uom {
+                id,
+                company_id,
+                code,
+                name,
+                dimension,
+                factor_to_base,
+                is_base: is_base != 0,
+                created_at,
+            },
+        )
+        .collect())
+}
+
+pub async fn create_uom(
+    pool: &SqlitePool,
+    company_id: &str,
+    code: &str,
+    name: &str,
+    dimension: &str,
+    factor_to_base: f64,
+    is_base: bool,
+) -> Result<Uom> {
+    require_company(pool, company_id).await?;
+    let code = code.trim();
+    let name = name.trim();
+    let dimension = dimension.trim();
+    if code.is_empty() || code.chars().count() > 20 {
+        return Err(AppError::BadRequest("uom code is required (max 20)".into()).into());
+    }
+    if name.is_empty() {
+        return Err(AppError::BadRequest("uom name is required".into()).into());
+    }
+    if !valid_uom_dimension(dimension) {
+        return Err(
+            AppError::BadRequest("dimension must be qty|weight|length|volume".into()).into(),
+        );
+    }
+    if !factor_to_base.is_finite() || factor_to_base <= 0.0 {
+        return Err(AppError::BadRequest("factor_to_base must be > 0".into()).into());
+    }
+    if is_base && (factor_to_base - 1.0).abs() > f64::EPSILON {
+        return Err(AppError::BadRequest("base uom factor must be 1.0".into()).into());
+    }
+    let id = format!("{company_id}_uom_{}", slugify(code));
+    let mut tx = pool.begin().await?;
+    sqlx::query(
+        "INSERT INTO _uom (id, company_id, code, name, dimension, factor_to_base, is_base) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(company_id.trim())
+    .bind(code)
+    .bind(name)
+    .bind(dimension)
+    .bind(factor_to_base)
+    .bind(i64::from(is_base))
+    .execute(&mut *tx)
+    .await?;
+    if is_base {
+        sqlx::query(
+            "UPDATE _uom SET is_base = 0 WHERE company_id = ? AND dimension = ? AND id != ?",
+        )
+        .bind(company_id.trim())
+        .bind(dimension)
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    get_uom(pool, &id).await
+}
+
+/// Convert a quantity between two UOMs of the same company and dimension.
+/// `qty` is in `from` units; returns the equivalent in `to` units.
+pub async fn convert_uom(
+    pool: &SqlitePool,
+    company_id: &str,
+    qty: f64,
+    from_uom_id: &str,
+    to_uom_id: &str,
+) -> Result<f64> {
+    require_company(pool, company_id).await?;
+    if !qty.is_finite() || qty < 0.0 {
+        return Err(AppError::BadRequest("qty must be >= 0".into()).into());
+    }
+    if from_uom_id.trim() == to_uom_id.trim() {
+        return Ok(qty);
+    }
+    let from = get_uom(pool, from_uom_id).await?;
+    let to = get_uom(pool, to_uom_id).await?;
+    if from.company_id != company_id.trim() || to.company_id != company_id.trim() {
+        return Err(AppError::BadRequest("uom belongs to another company".into()).into());
+    }
+    if from.dimension != to.dimension {
+        return Err(AppError::BadRequest(format!(
+            "uom dimension mismatch: {} != {}",
+            from.dimension, to.dimension
+        ))
+        .into());
+    }
+    Ok(qty * from.factor_to_base / to.factor_to_base)
+}
+
+pub async fn list_stock_balances(pool: &SqlitePool, company_id: &str) -> Result<Vec<StockBalance>> {
+    require_company(pool, company_id).await?;
+    let rows = sqlx::query_as::<_, (String, String, String, f64, i64, i64, String)>(
+        "SELECT company_id, product_id, warehouse_id, qty_base, avg_cost, total_value, updated_at FROM _stock_balance WHERE company_id = ? ORDER BY product_id, warehouse_id",
+    )
+    .bind(company_id.trim())
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(
+                company_id,
+                product_id,
+                warehouse_id,
+                qty_base,
+                avg_cost,
+                total_value,
+                updated_at,
+            )| {
+                StockBalance {
+                    company_id,
+                    product_id,
+                    warehouse_id,
+                    qty_base,
+                    avg_cost,
+                    total_value,
+                    updated_at,
+                }
+            },
+        )
+        .collect())
+}
+
+pub async fn get_stock_balance(
+    pool: &SqlitePool,
+    company_id: &str,
+    product_id: &str,
+    warehouse_id: &str,
+) -> Result<StockBalance> {
+    require_company(pool, company_id).await?;
+    let row: Option<(f64, i64, i64, String)> = sqlx::query_as(
+        "SELECT qty_base, avg_cost, total_value, updated_at FROM _stock_balance WHERE company_id = ? AND product_id = ? AND warehouse_id = ?",
+    )
+    .bind(company_id.trim())
+    .bind(product_id.trim())
+    .bind(warehouse_id.trim())
+    .fetch_optional(pool)
+    .await?;
+    match row {
+        Some((qty_base, avg_cost, total_value, updated_at)) => Ok(StockBalance {
+            company_id: company_id.trim().to_string(),
+            product_id: product_id.trim().to_string(),
+            warehouse_id: warehouse_id.trim().to_string(),
+            qty_base,
+            avg_cost,
+            total_value,
+            updated_at,
+        }),
+        None => Ok(StockBalance {
+            company_id: company_id.trim().to_string(),
+            product_id: product_id.trim().to_string(),
+            warehouse_id: warehouse_id.trim().to_string(),
+            qty_base: 0.0,
+            avg_cost: 0,
+            total_value: 0,
+            updated_at: String::new(),
+        }),
+    }
+}
+
+async fn get_stock_ledger_entry(pool: &SqlitePool, id: &str) -> Result<StockLedgerEntry> {
+    let row = sqlx::query_as::<_, (String, String, String, String, Option<String>, String, f64, Option<String>, f64, i64, i64, f64, i64, String, Option<String>, String)>(
+        "SELECT id, company_id, product_id, warehouse_id, move_doc_id, move_type, qty, uom_id, qty_base, unit_cost, total_value, balance_qty, balance_avg, entry_date, actor, created_at FROM _stock_ledger_entry WHERE id = ?",
+    )
+    .bind(id.trim())
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("stock ledger entry not found: {id}")))?;
+    Ok(StockLedgerEntry {
+        id: row.0,
+        company_id: row.1,
+        product_id: row.2,
+        warehouse_id: row.3,
+        move_doc_id: row.4,
+        move_type: row.5,
+        qty: row.6,
+        uom_id: row.7,
+        qty_base: row.8,
+        unit_cost: row.9,
+        total_value: row.10,
+        balance_qty: row.11,
+        balance_avg: row.12,
+        entry_date: row.13,
+        actor: row.14,
+        created_at: row.15,
+    })
+}
+
+pub async fn list_stock_ledger(
+    pool: &SqlitePool,
+    company_id: &str,
+    product_id: Option<&str>,
+    warehouse_id: Option<&str>,
+    limit: i64,
+) -> Result<Vec<StockLedgerEntry>> {
+    require_company(pool, company_id).await?;
+    if !(1..=100).contains(&limit) {
+        return Err(AppError::BadRequest("limit must be 1..=100".into()).into());
+    }
+    let mut where_sql = String::from("company_id = ?");
+    let mut params: Vec<String> = vec![company_id.trim().to_string()];
+    if let Some(product) = product_id.map(str::trim).filter(|s| !s.is_empty()) {
+        where_sql.push_str(" AND product_id = ?");
+        params.push(product.to_string());
+    }
+    if let Some(warehouse) = warehouse_id.map(str::trim).filter(|s| !s.is_empty()) {
+        where_sql.push_str(" AND warehouse_id = ?");
+        params.push(warehouse.to_string());
+    }
+    let query = format!(
+        "SELECT id FROM _stock_ledger_entry WHERE {where_sql} ORDER BY entry_date DESC, created_at DESC LIMIT ?"
+    );
+    let mut q = sqlx::query_scalar::<_, String>(&query);
+    for param in &params {
+        q = q.bind(param);
+    }
+    let ids: Vec<String> = q.bind(limit).fetch_all(pool).await?;
+    let mut entries = Vec::new();
+    for id in ids {
+        entries.push(get_stock_ledger_entry(pool, &id).await?);
+    }
+    Ok(entries)
+}
+
+/// Apply one stock move with moving-average valuation.
+/// `qty` is in `uom_id` units (or base units when `uom_id` is None);
+/// `unit_cost` is minor units per base unit (used for `in` moves).
+/// `out` moves consume at the current average and reject negative stock.
+#[allow(clippy::too_many_arguments)]
+pub async fn apply_stock_move(
+    pool: &SqlitePool,
+    company_id: &str,
+    product_id: &str,
+    warehouse_id: &str,
+    move_type: &str,
+    qty: f64,
+    uom_id: Option<&str>,
+    unit_cost: i64,
+    entry_date: &str,
+    move_doc_id: Option<&str>,
+    actor: Option<&str>,
+) -> Result<StockLedgerEntry> {
+    require_company(pool, company_id).await?;
+    let product_id = product_id.trim();
+    let warehouse_id = warehouse_id.trim();
+    let move_type = move_type.trim();
+    let entry_date = entry_date.trim();
+    if product_id.is_empty() || warehouse_id.is_empty() {
+        return Err(AppError::BadRequest("product_id and warehouse_id are required".into()).into());
+    }
+    if !matches!(move_type, "in" | "out") {
+        return Err(AppError::BadRequest("move_type must be in|out".into()).into());
+    }
+    if !qty.is_finite() || qty <= 0.0 {
+        return Err(AppError::BadRequest("qty must be > 0".into()).into());
+    }
+    if unit_cost < 0 {
+        return Err(AppError::BadRequest("unit_cost must be >= 0".into()).into());
+    }
+    if !valid_entry_date(entry_date) {
+        return Err(AppError::BadRequest("entry_date must be YYYY-MM-DD".into()).into());
+    }
+    if period_locked(pool, company_id, entry_date).await? {
+        return Err(AppError::Conflict(format!("period locked: {}", period_of(entry_date))).into());
+    }
+    let (factor, resolved_uom): (f64, Option<String>) = match uom_id
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        None => (1.0, None),
+        Some(id) => {
+            let uom = get_uom(pool, id).await?;
+            if uom.company_id != company_id.trim() {
+                return Err(AppError::BadRequest("uom belongs to another company".into()).into());
+            }
+            (uom.factor_to_base, Some(uom.id))
+        }
+    };
+    let qty_base = qty * factor;
+    if !qty_base.is_finite() || qty_base <= 0.0 {
+        return Err(AppError::BadRequest("qty_base must be > 0".into()).into());
+    }
+    let current = get_stock_balance(pool, company_id, product_id, warehouse_id).await?;
+    let (new_qty, new_avg, entry_total) = if move_type == "in" {
+        let new_qty = current.qty_base + qty_base;
+        let new_avg = if current.qty_base <= f64::EPSILON {
+            unit_cost
+        } else {
+            ((current.qty_base * current.avg_cost as f64 + qty_base * unit_cost as f64) / new_qty)
+                .round() as i64
+        };
+        let entry_total = (qty_base * unit_cost as f64).round() as i64;
+        (new_qty, new_avg, entry_total)
+    } else {
+        if current.qty_base + 1e-9 < qty_base {
+            return Err(AppError::BadRequest("insufficient stock".into()).into());
+        }
+        let entry_total = (qty_base * current.avg_cost as f64).round() as i64;
+        let new_qty = current.qty_base - qty_base;
+        if new_qty < 1e-9 {
+            (0.0, 0, entry_total)
+        } else {
+            (new_qty, current.avg_cost, entry_total)
+        }
+    };
+    let new_total = (new_qty * new_avg as f64).round() as i64;
+    let mut tx = pool.begin().await?;
+    let id = format!("{company_id}_stock_{}", chrono_nanos());
+    sqlx::query(
+        "INSERT INTO _stock_ledger_entry (id, company_id, product_id, warehouse_id, move_doc_id, move_type, qty, uom_id, qty_base, unit_cost, total_value, balance_qty, balance_avg, entry_date, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(company_id.trim())
+    .bind(product_id)
+    .bind(warehouse_id)
+    .bind(move_doc_id.map(str::trim).filter(|s| !s.is_empty()))
+    .bind(move_type)
+    .bind(qty)
+    .bind(resolved_uom.clone())
+    .bind(qty_base)
+    .bind(unit_cost)
+    .bind(entry_total)
+    .bind(new_qty)
+    .bind(new_avg)
+    .bind(entry_date)
+    .bind(actor)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO _stock_balance (company_id, product_id, warehouse_id, qty_base, avg_cost, total_value) VALUES (?, ?, ?, ?, ?, ?) \
+         ON CONFLICT(company_id, product_id, warehouse_id) DO UPDATE SET qty_base = excluded.qty_base, avg_cost = excluded.avg_cost, total_value = excluded.total_value, updated_at = CURRENT_TIMESTAMP",
+    )
+    .bind(company_id.trim())
+    .bind(product_id)
+    .bind(warehouse_id)
+    .bind(new_qty)
+    .bind(new_avg)
+    .bind(new_total)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    get_stock_ledger_entry(pool, &id).await
+}
+
 async fn get_doc_attachment(
     pool: &SqlitePool,
     attachment_id: &str,

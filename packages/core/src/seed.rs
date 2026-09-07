@@ -513,6 +513,36 @@ async fn seed_accounting_module(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>) ->
         .execute(&mut **tx)
         .await?;
     }
+    // Stock UOM seed: full dimensions with one base unit each.
+    for (id, code, name, dimension, factor, is_base) in [
+        ("company_acme_uom_pcs", "PCS", "Pieces", "qty", 1.0, 1),
+        ("company_acme_uom_box", "BOX", "Box", "qty", 12.0, 0),
+        ("company_acme_uom_kg", "KG", "Kilogram", "weight", 1.0, 1),
+        ("company_acme_uom_g", "G", "Gram", "weight", 0.001, 0),
+        ("company_acme_uom_m", "M", "Meter", "length", 1.0, 1),
+        ("company_acme_uom_cm", "CM", "Centimeter", "length", 0.01, 0),
+        ("company_acme_uom_l", "L", "Liter", "volume", 1.0, 1),
+        (
+            "company_acme_uom_ml",
+            "ML",
+            "Milliliter",
+            "volume",
+            0.001,
+            0,
+        ),
+    ] {
+        sqlx::query(
+            "INSERT OR IGNORE INTO _uom (id, company_id, code, name, dimension, factor_to_base, is_base) VALUES (?, 'company_acme', ?, ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(code)
+        .bind(name)
+        .bind(dimension)
+        .bind(factor)
+        .bind(is_base)
+        .execute(&mut **tx)
+        .await?;
+    }
     Ok(())
 }
 

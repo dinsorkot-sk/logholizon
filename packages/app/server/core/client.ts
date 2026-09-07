@@ -126,6 +126,9 @@ export type CoreTrialBalance = { company_id: string; total_debit: number; total_
 export type CorePeriodLock = { company_id: string; period: string; actor?: string | null; created_at: string }
 export type CoreInvoiceLine = { id: string; invoice_id: string; description: string; quantity: number; unit_price: number; tax_rule_id?: string | null; line_total: number; tax: number }
 export type CoreInvoice = { id: string; company_id: string; kind: string; partner: string; currency: string; fx_rate: number; base_total: number; status: string; entry_id?: string | null; entry_date: string; actor?: string | null; created_at: string; lines: CoreInvoiceLine[]; paid: number; remaining: number }
+export type CoreUom = { id: string; company_id: string; code: string; name: string; dimension: string; factor_to_base: number; is_base: boolean; created_at: string }
+export type CoreStockBalance = { company_id: string; product_id: string; warehouse_id: string; qty_base: number; avg_cost: number; total_value: number; updated_at: string }
+export type CoreStockLedgerEntry = { id: string; company_id: string; product_id: string; warehouse_id: string; move_doc_id?: string | null; move_type: string; qty: number; uom_id?: string | null; qty_base: number; unit_cost: number; total_value: number; balance_qty: number; balance_avg: number; entry_date: string; actor?: string | null; created_at: string }
 export type CorePaymentAllocation = { id: string; payment_id: string; invoice_id: string; amount: number; created_at: string }
 export type CorePayment = { id: string; company_id: string; kind: string; partner: string; currency: string; amount: number; entry_id?: string | null; entry_date: string; actor?: string | null; created_at: string; allocations: CorePaymentAllocation[]; allocated: number; remaining: number }
 
@@ -708,6 +711,30 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       }),
     allocatePayment: (paymentId: string, input: { invoice_id: string; amount: number }): Promise<CorePayment> =>
       request<CorePayment>(`/v1/admin/payments/${encodeURIComponent(paymentId)}/allocate`, {
+        method: 'POST',
+        body: input
+      }),
+    listUoms: (companyId: string): Promise<CoreUom[]> =>
+      request<CoreUom[]>(`/v1/admin/companies/${encodeURIComponent(companyId)}/uoms`),
+    createUom: (
+      companyId: string,
+      input: { code: string; name: string; dimension: string; factor_to_base: number; is_base?: boolean }
+    ): Promise<CoreUom> =>
+      request<CoreUom>(`/v1/admin/companies/${encodeURIComponent(companyId)}/uoms`, {
+        method: 'POST',
+        body: input
+      }),
+    convertUom: (query: { company_id: string; qty: number; from_uom_id: string; to_uom_id: string }): Promise<{ qty: number }> =>
+      request<{ qty: number }>('/v1/admin/convert-uom', { query }),
+    listStockBalances: (companyId: string): Promise<CoreStockBalance[]> =>
+      request<CoreStockBalance[]>(`/v1/admin/companies/${encodeURIComponent(companyId)}/stock-balances`),
+    listStockLedger: (companyId: string, query?: { product_id?: string; warehouse_id?: string; limit?: number }): Promise<CoreStockLedgerEntry[]> =>
+      request<CoreStockLedgerEntry[]>(`/v1/admin/companies/${encodeURIComponent(companyId)}/stock-ledger`, { query }),
+    applyStockMove: (
+      companyId: string,
+      input: { product_id: string; warehouse_id: string; move_type: string; qty: number; uom_id?: string; unit_cost?: number; entry_date: string; move_doc_id?: string }
+    ): Promise<CoreStockLedgerEntry> =>
+      request<CoreStockLedgerEntry>(`/v1/admin/companies/${encodeURIComponent(companyId)}/stock-ledger`, {
         method: 'POST',
         body: input
       })
