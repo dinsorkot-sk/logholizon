@@ -137,6 +137,45 @@ async fn document_crud_validates_payload() {
 }
 
 #[tokio::test]
+async fn doc_comments_create_list_and_validate() {
+    let pool = seeded_pool().await;
+    repository::create_document(&pool, "d1", "ticket", &json!({"title": "Fix pump"}), None)
+        .await
+        .unwrap();
+
+    let comment = repository::create_doc_comment_as_role(
+        &pool,
+        "d1",
+        "  Check the seal  ",
+        "user",
+        Some("demo"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(comment.body, "Check the seal");
+    assert_eq!(comment.actor.as_deref(), Some("demo"));
+
+    let list = repository::list_doc_comments_as_role(&pool, "d1", 10, 0, "user")
+        .await
+        .unwrap();
+    assert_eq!(list.total, 1);
+    assert_eq!(list.items[0].id, comment.id);
+
+    // Empty body rejected.
+    assert!(
+        repository::create_doc_comment_as_role(&pool, "d1", "   ", "user", None)
+            .await
+            .is_err()
+    );
+    // Unknown document rejected.
+    assert!(
+        repository::create_doc_comment_as_role(&pool, "missing", "hi", "admin", None)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
 async fn global_audit_lists_filters_and_paginates() {
     let pool = seeded_pool().await;
     repository::create_document(&pool, "d1", "ticket", &json!({"title": "Fix pump"}), None)

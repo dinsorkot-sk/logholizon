@@ -219,6 +219,10 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
                 .delete(delete_document),
         )
         .route("/v1/documents/{id}/audit", get(list_document_audit))
+        .route(
+            "/v1/documents/{id}/comments",
+            get(list_doc_comments).post(create_doc_comment),
+        )
         .route("/v1/audit", get(list_global_audit))
         .route(
             "/v1/documents/{id}/transition",
@@ -1419,6 +1423,53 @@ async fn list_document_audit(
     )
     .await
     .map(Json)
+    .map_err(map_db_error)
+}
+
+async fn list_doc_comments(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+    Query(query): Query<AuditQuery>,
+) -> Result<Json<repository::DocCommentList>, AppError> {
+    if query.limit < 1 || query.limit > 100 {
+        return Err(AppError::BadRequest("limit must be 1..=100".into()));
+    }
+    if query.offset < 0 {
+        return Err(AppError::BadRequest("offset must be >= 0".into()));
+    }
+    repository::list_doc_comments_as_role(
+        &state.pool,
+        &id,
+        query.limit,
+        query.offset,
+        &current_role(&user),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateDocCommentRequest {
+    pub body: String,
+}
+
+async fn create_doc_comment(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+    Json(input): Json<CreateDocCommentRequest>,
+) -> Result<(StatusCode, Json<repository::DocComment>), AppError> {
+    repository::create_doc_comment_as_role(
+        &state.pool,
+        &id,
+        &input.body,
+        &current_role(&user),
+        current_actor(&user).as_deref(),
+    )
+    .await
+    .map(|comment| (StatusCode::CREATED, Json(comment)))
     .map_err(map_db_error)
 }
 

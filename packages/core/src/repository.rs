@@ -108,6 +108,22 @@ pub struct AuditList {
 }
 
 #[derive(Debug, Serialize)]
+pub struct DocComment {
+    pub id: String,
+    pub entity_id: String,
+    pub doc_id: String,
+    pub body: String,
+    pub actor: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DocCommentList {
+    pub items: Vec<DocComment>,
+    pub total: i64,
+}
+
+#[derive(Debug, Serialize)]
 pub struct GlobalAuditEntry {
     pub id: String,
     pub entity_id: String,
@@ -3015,6 +3031,97 @@ pub async fn list_document_audit(
     offset: i64,
 ) -> Result<AuditList> {
     list_document_audit_as_role(pool, doc_id, limit, offset, "admin").await
+}
+
+/// Record comments (chatter write). Any role with view access can read;
+/// creating requires edit access. Bodies are trimmed, 1..=2000 chars.
+pub async fn list_doc_comments_as_role(
+    pool: &SqlitePool,
+    doc_id: &str,
+    limit: i64,
+    offset: i64,
+    role: &str,
+) -> Result<DocCommentList> {
+    let document = get_document(pool, doc_id)
+        .await
+        .map_err(|_| AppError::NotFound(format!("document not found: {doc_id}")))?;
+    check_permission(pool, &document.entity_id, role, false).await?;
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _doc_comment WHERE doc_id = ?")
+        .bind(doc_id)
+        .fetch_one(pool)
+        .await?;
+    let rows = sqlx::query_as::<_, (String, String, String, String, Option<String>, String)>(
+        "SELECT id, entity_id, doc_id, body, actor, created_at FROM _doc_comment WHERE doc_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+    )
+    .bind(doc_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    Ok(DocCommentList {
+        items: rows
+            .into_iter()
+            .map(
+                |(id, entity_id, doc_id, body, actor, created_at)| DocComment {
+                    id,
+                    entity_id,
+                    doc_id,
+                    body,
+                    actor,
+                    created_at,
+                },
+            )
+            .collect(),
+        total,
+    })
+}
+
+pub async fn create_doc_comment_as_role(
+    pool: &SqlitePool,
+    doc_id: &str,
+    body: &str,
+    role: &str,
+    actor: Option<&str>,
+) -> Result<DocComment> {
+    let document = get_document(pool, doc_id)
+        .await
+        .map_err(|_| AppError::NotFound(format!("document not found: {doc_id}")))?;
+    check_permission(pool, &document.entity_id, role, true).await?;
+    let body = body.trim();
+    if body.is_empty() {
+        return Err(AppError::BadRequest("comment body is required".into()).into());
+    }
+    if body.chars().count() > 2000 {
+        return Err(
+            AppError::BadRequest("comment body must be at most 2000 characters".into()).into(),
+        );
+    }
+    let id = format!("{doc_id}_comment_{}", chrono_nanos());
+    sqlx::query(
+        "INSERT INTO _doc_comment (id, entity_id, doc_id, body, actor) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(&document.entity_id)
+    .bind(doc_id)
+    .bind(body)
+    .bind(actor)
+    .execute(pool)
+    .await?;
+    let row = sqlx::query_as::<_, (String, String, String, String, Option<String>, String)>(
+        "SELECT id, entity_id, doc_id, body, actor, created_at FROM _doc_comment WHERE id = ?",
+    )
+    .bind(&id)
+    .fetch_one(pool)
+    .await?;
+    let (id, entity_id, doc_id, body, actor, created_at) = row;
+    Ok(DocComment {
+        id,
+        entity_id,
+        doc_id,
+        body,
+        actor,
+        created_at,
+    })
 }
 
 pub async fn list_document_audit_as_role(

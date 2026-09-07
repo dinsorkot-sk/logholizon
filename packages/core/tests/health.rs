@@ -298,7 +298,9 @@ async fn user_can_save_shared_entity_view() {
                 .uri("/v1/entities/work_order/views")
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
-                .body(Body::from(r#"{"name":"Open orders","config":{"status":"open"}}"#))
+                .body(Body::from(
+                    r#"{"name":"Open orders","config":{"status":"open"}}"#,
+                ))
                 .unwrap(),
         )
         .await

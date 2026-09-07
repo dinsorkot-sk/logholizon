@@ -18,6 +18,8 @@ type Document = { id: string; entity_id: string; payload: Record<string, unknown
 type DocumentList = { items: Document[]; total: number }
 type AuditEntry = { id: string; action: string; payload: Record<string, unknown>; created_at: string; actor?: string | null }
 type AuditList = { items: AuditEntry[]; total: number }
+type DocComment = { id: string; body: string; created_at: string; actor?: string | null }
+type DocCommentList = { items: DocComment[]; total: number }
 type WorkbookSheet = { entity_id: string; rows: { id: string; payload: Record<string, unknown> }[]; errors: string[] }
 type WorkbookPreview = { sheets: WorkbookSheet[] }
 type WorkbookResult = { sheets: { entity_id: string; created: number; updated: number }[] }
@@ -291,6 +293,32 @@ const { data: audit, status: auditStatus, refresh: refreshAudit } = await useFet
   () => `/api/documents/${encodeURIComponent(auditId.value)}/audit`,
   { watch: [auditId], immediate: false }
 )
+const { data: comments, status: commentsStatus, error: commentsError, refresh: refreshComments } = await useFetch<DocCommentList>(
+  () => auditId.value ? `/api/documents/${encodeURIComponent(auditId.value)}/comments` : '',
+  { watch: [auditId], immediate: false }
+)
+const commentBody = ref('')
+const commentError = ref('')
+const postingComment = ref(false)
+
+async function postComment() {
+  commentError.value = ''
+  if (!auditId.value || !commentBody.value.trim()) return
+  postingComment.value = true
+  try {
+    await $fetch(`/api/documents/${encodeURIComponent(auditId.value)}/comments`, {
+      method: 'POST',
+      body: { body: commentBody.value.trim() }
+    })
+    commentBody.value = ''
+    await refreshComments()
+    toast.add({ title: 'Comment posted', color: 'success', icon: 'i-lucide-check' })
+  } catch (cause: any) {
+    commentError.value = cause?.data?.message || cause?.statusMessage || 'Unable to post comment'
+  } finally {
+    postingComment.value = false
+  }
+}
 
 function emptyPayload() {
   const fields = viewableFields.value
@@ -317,7 +345,10 @@ function openEdit(document: Document) {
   Object.keys(fieldErrors).forEach(key => delete fieldErrors[key])
   error.value = ''
   panelOpen.value = true
+  commentBody.value = ''
+  commentError.value = ''
   refreshAudit()
+  refreshComments()
 }
 
 function isConflict(cause: any) {
@@ -336,6 +367,7 @@ async function reloadLatest() {
     conflictOpen.value = false
     await refresh()
     await refreshAudit()
+    await refreshComments()
     toast.add({ title: 'Reloaded latest version', color: 'info', icon: 'i-lucide-refresh-cw' })
   } catch (cause: any) {
     toast.add({ title: 'Unable to reload', description: cause?.data?.message || cause?.statusMessage || 'Reload failed', color: 'error', icon: 'i-lucide-alert-circle' })
@@ -398,6 +430,7 @@ async function transition(action: string) {
     selectedUpdatedAt.value = updated.updated_at
     await refresh()
     await refreshAudit()
+    await refreshComments()
     toast.add({ title: 'Record transitioned', color: 'success', icon: 'i-lucide-check' })
   } catch (cause: any) {
     if (isConflict(cause)) {
@@ -1288,6 +1321,29 @@ async function confirmImport() {
             </template>
             <UAlert v-if="error" color="error" :title="error" />
             <div v-if="selected" class="border-t pt-4">
+              <h2 class="mb-2 text-sm font-semibold">Comments</h2>
+              <div class="mb-2 flex gap-2">
+                <UInput
+                  v-model="commentBody"
+                  placeholder="Write a comment…"
+                  class="flex-1"
+                  :disabled="!canEdit"
+                  @keyup.enter="postComment"
+                />
+                <UButton size="sm" :loading="postingComment" :disabled="!canEdit || !commentBody.trim()" @click="postComment">Post</UButton>
+              </div>
+              <UAlert v-if="commentError" color="error" :title="commentError" class="mb-2" />
+              <div v-if="commentsStatus === 'pending'" class="py-2 text-sm text-muted">Loading comments…</div>
+              <UAlert v-else-if="commentsStatus === 'error'" color="error" title="Cannot load comments" :description="commentsError?.message" class="mb-2" />
+              <ol v-else-if="(comments?.items || []).length" class="mb-4 space-y-2">
+                <li v-for="comment in comments?.items || []" :key="comment.id" class="rounded-lg bg-muted/40 px-3 py-2">
+                  <p class="text-sm">{{ comment.body }}</p>
+                  <UTooltip :text="absoluteTime(comment.created_at)">
+                    <p class="mt-1 text-xs text-muted">by {{ comment.actor || 'system' }} · {{ relativeTime(comment.created_at) }}</p>
+                  </UTooltip>
+                </li>
+              </ol>
+              <p v-else class="mb-4 text-sm text-muted">No comments yet.</p>
               <h2 class="mb-2 text-sm font-semibold">History</h2>
               <div v-if="auditStatus === 'pending'" class="py-4 text-sm text-muted">Loading history…</div>
               <UAlert v-else-if="auditStatus === 'error'" color="error" title="Cannot load history" />

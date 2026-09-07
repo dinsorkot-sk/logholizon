@@ -59,6 +59,20 @@ export type CoreAuditList = {
   total: number
 }
 
+export type CoreDocComment = {
+  id: string
+  entity_id: string
+  doc_id: string
+  body: string
+  actor?: string | null
+  created_at: string
+}
+
+export type CoreDocCommentList = {
+  items: CoreDocComment[]
+  total: number
+}
+
 export type CoreGlobalAuditEntry = {
   id: string
   entity_id: string
@@ -297,6 +311,19 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
     ): Promise<CoreAuditList> =>
       request<CoreAuditList>(`/v1/documents/${encodeURIComponent(id)}/audit`, {
         query: { limit, offset }
+      }),
+    listDocComments: (
+      id: string,
+      limit = 50,
+      offset = 0
+    ): Promise<CoreDocCommentList> =>
+      request<CoreDocCommentList>(`/v1/documents/${encodeURIComponent(id)}/comments`, {
+        query: { limit, offset }
+      }),
+    createDocComment: (id: string, body: string): Promise<CoreDocComment> =>
+      request<CoreDocComment>(`/v1/documents/${encodeURIComponent(id)}/comments`, {
+        method: 'POST',
+        body: { body }
       }),
     listGlobalAudit: (
       limit = 50,
