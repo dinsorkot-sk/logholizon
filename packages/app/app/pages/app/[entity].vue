@@ -187,6 +187,80 @@ const { data: activeView } = await useFetch<EntityView>(
   () => activeViewId.value ? `/api/views/${encodeURIComponent(activeViewId.value)}` : '',
   { watch: [activeViewId], immediate: false }
 )
+const { data: savedViews, refresh: refreshSavedViews } = await useFetch<EntityView[]>(
+  () => `/api/entities/${encodeURIComponent(entityId.value)}/views`,
+  { watch: [entityId] }
+)
+const viewSelectItems = computed(() => [
+  { label: 'All records', value: 'all' },
+  ...((savedViews.value || []).map(v => ({ label: v.name, value: v.id })))
+])
+const viewSelectValue = computed({
+  get: () => activeViewId.value || 'all',
+  set: (value: string) => {
+    router.push({ path: route.path, query: value && value !== 'all' ? { view: value } : {} })
+  }
+})
+function viewConfigSummary(config: Record<string, unknown>) {
+  const parts: string[] = []
+  const get = (key: string) => {
+    const value = config[key]
+    return typeof value === 'string' && value.trim() ? value.trim() : ''
+  }
+  const status = get('status')
+  if (status) parts.push(`status=${status}`)
+  const search = get('search')
+  if (search) parts.push(`search="${search}"`)
+  const sortBy = get('sort_by')
+  if (sortBy) parts.push(`sort=${sortBy} ${get('sort_dir') || 'desc'}`)
+  return parts.join(' · ')
+}
+
+// --- Save current filters as a view (shared per entity) ---
+const saveViewOpen = ref(false)
+const saveViewName = ref('')
+const saveViewError = ref('')
+const savingView = ref(false)
+
+function currentFilterConfig() {
+  const config: Record<string, unknown> = {}
+  if (search.value.trim()) config.search = search.value.trim()
+  if (statusFilter.value && statusFilter.value !== 'all') config.status = statusFilter.value
+  if (sortBy.value) {
+    config.sort_by = sortBy.value
+    config.sort_dir = sortDir.value
+  }
+  return config
+}
+
+function openSaveView() {
+  saveViewName.value = ''
+  saveViewError.value = ''
+  saveViewOpen.value = true
+}
+
+async function saveCurrentView() {
+  saveViewError.value = ''
+  if (!saveViewName.value.trim()) {
+    saveViewError.value = 'name is required'
+    return
+  }
+  savingView.value = true
+  try {
+    const created = await $fetch<EntityView>(`/api/entities/${encodeURIComponent(entityId.value)}/views`, {
+      method: 'POST',
+      body: { name: saveViewName.value.trim(), config: currentFilterConfig() }
+    })
+    saveViewOpen.value = false
+    await refreshSavedViews()
+    router.push({ path: route.path, query: { view: created.id } })
+    toast.add({ title: 'View saved', color: 'success', icon: 'i-lucide-check' })
+  } catch (cause: any) {
+    saveViewError.value = cause?.data?.message || cause?.statusMessage || 'Failed to save view'
+  } finally {
+    savingView.value = false
+  }
+}
 const documentsUrl = computed(() => {
   const params = new URLSearchParams({
     entity_id: entityId.value,
@@ -926,6 +1000,8 @@ async function confirmImport() {
             @update:model-value="applyFilters"
           />
           <USelectMenu v-model="sortValue" :items="sortItems" value-key="value" class="w-48" />
+          <USelectMenu v-model="viewSelectValue" :items="viewSelectItems" value-key="value" placeholder="All records" class="w-48" aria-label="Saved view" />
+          <UButton variant="outline" icon="i-lucide-bookmark-plus" :disabled="!search.trim() && (!statusFilter || statusFilter === 'all') && !sortBy" @click="openSaveView">Save view</UButton>
           <USelectMenu v-model="viewMode" :items="viewModeItems" value-key="value" class="w-36" aria-label="View mode" />
           <USelectMenu
             v-if="viewMode === 'calendar' && dateFields.length > 1"
@@ -954,6 +1030,7 @@ async function confirmImport() {
       </div>
       <div v-if="activeViewId" class="mb-3 flex items-center gap-2">
         <UBadge color="primary" variant="subtle" icon="i-lucide-eye">View: {{ activeView?.name || activeViewId }}</UBadge>
+        <span v-if="activeView && viewConfigSummary(activeView.config)" class="font-mono text-xs text-muted">{{ viewConfigSummary(activeView.config) }}</span>
         <UButton size="xs" variant="ghost" @click="clearView">Clear</UButton>
       </div>
       <div v-if="statusCounts?.length || pageSubtotals.length" class="mb-3 flex flex-wrap items-center gap-2">
@@ -1314,6 +1391,24 @@ async function confirmImport() {
           <div class="flex justify-end gap-2">
             <UButton variant="ghost" @click="discardOpen = false">Keep editing</UButton>
             <UButton color="error" @click="discardChanges">Discard</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <UModal v-model:open="saveViewOpen" title="Save current filters">
+        <template #body>
+          <UForm class="space-y-4" @submit="saveCurrentView">
+            <UFormField label="Name">
+              <UInput v-model="saveViewName" placeholder="e.g. Open high priority" />
+            </UFormField>
+            <p class="font-mono text-xs text-muted">{{ JSON.stringify(currentFilterConfig()) }}</p>
+            <UAlert v-if="saveViewError" color="error" :title="saveViewError" />
+          </UForm>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="saveViewOpen = false">Cancel</UButton>
+            <UButton :loading="savingView" @click="saveCurrentView">Save view</UButton>
           </div>
         </template>
       </UModal>

@@ -289,6 +289,28 @@ async fn field_permission_routes_require_admin() {
 }
 
 #[tokio::test]
+async fn user_can_save_shared_entity_view() {
+    let (app, token) = authed_user_app().await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/entities/work_order/views")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"name":"Open orders","config":{"status":"open"}}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["name"], "Open orders");
+    assert_eq!(json["config"]["status"], "open");
+}
+
+#[tokio::test]
 async fn health_returns_ok() {
     let pool = db::connect("sqlite::memory:").await.unwrap();
     db::migrate(&pool).await.unwrap();

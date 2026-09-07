@@ -193,7 +193,10 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
         .route("/v1/entities/{id}", get(get_entity_for_user))
         .route("/v1/entities/{id}/options", get(entity_options))
         .route("/v1/entities/{id}/workflow", get(get_workflow_for_user))
-        .route("/v1/entities/{id}/views", get(list_entity_views_for_user))
+        .route(
+            "/v1/entities/{id}/views",
+            get(list_entity_views_for_user).post(create_entity_view_for_user),
+        )
         .route("/v1/views/{id}", get(get_entity_view_for_user))
         .route(
             "/v1/entities/{id}/form-layout",
@@ -1140,6 +1143,23 @@ async fn list_entity_views_for_user(
     repository::list_entity_views(&state.pool, &id)
         .await
         .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn create_entity_view_for_user(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+    Json(input): Json<CreateViewRequest>,
+) -> Result<(StatusCode, Json<repository::EntityView>), AppError> {
+    // Shared views: any role with view access can save the current filter.
+    // Delete stays admin-only under /v1/meta/views/{id}.
+    repository::check_permission(&state.pool, &id, &current_role(&user), false)
+        .await
+        .map_err(map_db_error)?;
+    repository::create_entity_view(&state.pool, &id, &input.name, &input.config)
+        .await
+        .map(|view| (StatusCode::CREATED, Json(view)))
         .map_err(map_db_error)
 }
 

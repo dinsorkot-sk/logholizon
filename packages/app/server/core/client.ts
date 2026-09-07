@@ -443,6 +443,14 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       request<CoreWorkflowDefinition>(`/v1/entities/${encodeURIComponent(entityId)}/workflow`),
     listEntityViewsForUser: (entityId: string): Promise<CoreEntityView[]> =>
       request<CoreEntityView[]>(`/v1/entities/${encodeURIComponent(entityId)}/views`),
+    createEntityViewForUser: (
+      entityId: string,
+      view: { name: string; config: Record<string, unknown> }
+    ): Promise<CoreEntityView> =>
+      request<CoreEntityView>(`/v1/entities/${encodeURIComponent(entityId)}/views`, {
+        method: 'POST',
+        body: view
+      }),
     getEntityViewForUser: (id: string): Promise<CoreEntityView> =>
       request<CoreEntityView>(`/v1/views/${encodeURIComponent(id)}`),
     exportDocumentsForUser: (entityId: string): Promise<string> =>
