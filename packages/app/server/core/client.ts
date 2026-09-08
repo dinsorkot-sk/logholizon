@@ -8,6 +8,18 @@ export type CoreUserRow = { id: string; username: string; role: string; created_
 
 export type CoreFieldOption = { id: string; value: string; label: string }
 
+export type CoreFieldRules = {
+  is_unique?: boolean
+  min_value?: number | null
+  max_value?: number | null
+  pattern?: string | null
+  min_length?: number | null
+  max_length?: number | null
+  default_value?: string | null
+  auto_number_prefix?: string | null
+  auto_number_width?: number | null
+}
+
 export type CoreField = {
   id: string
   name: string
@@ -17,6 +29,15 @@ export type CoreField = {
   position: number
   ref_entity?: string | null
   computed_expr?: string | null
+  is_unique: boolean
+  min_value?: number | null
+  max_value?: number | null
+  pattern?: string | null
+  min_length?: number | null
+  max_length?: number | null
+  default_value?: string | null
+  auto_number_prefix?: string | null
+  auto_number_width?: number | null
   options: CoreFieldOption[]
 }
 
@@ -218,6 +239,18 @@ export type CoreAutomation = {
   created_at: string
 }
 
+export type CoreModuleAction = {
+  id: string
+  entity_id: string
+  kind: string
+  label: string
+}
+
+export type CoreModuleActionResult = {
+  action: CoreModuleAction
+  document: CoreDocument
+}
+
 export type CreateDocumentInput = {
   id: string
   entity_id: string
@@ -319,12 +352,12 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       request<void>(`/v1/meta/entities/${encodeURIComponent(id)}`, {
         method: 'DELETE'
       }),
-    createField: (entityId: string, field: { name: string; type: string; required: boolean; is_status: boolean; ref_entity?: string | null; computed_expr?: string | null }): Promise<CoreField> =>
+    createField: (entityId: string, field: { name: string; type: string; required: boolean; is_status: boolean; ref_entity?: string | null; computed_expr?: string | null } & CoreFieldRules): Promise<CoreField> =>
       request<CoreField>(`/v1/meta/entities/${encodeURIComponent(entityId)}/fields`, {
         method: 'POST',
         body: field
       }),
-    updateField: (id: string, field: { name: string; type: string; required: boolean; is_status: boolean; ref_entity?: string | null; computed_expr?: string | null }): Promise<CoreField> =>
+    updateField: (id: string, field: { name: string; type: string; required: boolean; is_status: boolean; ref_entity?: string | null; computed_expr?: string | null } & CoreFieldRules): Promise<CoreField> =>
       request<CoreField>(`/v1/meta/fields/${encodeURIComponent(id)}`, {
         method: 'PUT',
         body: field
@@ -661,6 +694,11 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
     createAutomation: (entityId: string, input: { trigger: string; action?: string; target_url: string; active?: boolean }): Promise<CoreAutomation> =>
       request<CoreAutomation>(`/v1/meta/entities/${encodeURIComponent(entityId)}/automations`, { method: 'POST', body: input }),
     deleteAutomation: (id: string): Promise<void> =>
-      request<void>(`/v1/meta/automations/${encodeURIComponent(id)}`, { method: 'DELETE' })
+      request<void>(`/v1/meta/automations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    executeModuleAction: (entityId: string, actionId: string, input?: { document_id?: string; payload?: Record<string, unknown>; expected_updated_at?: string }): Promise<CoreModuleActionResult> =>
+      request<CoreModuleActionResult>(`/v1/entities/${encodeURIComponent(entityId)}/actions/${encodeURIComponent(actionId)}`, {
+        method: 'POST',
+        body: input || {}
+      })
   }
 }

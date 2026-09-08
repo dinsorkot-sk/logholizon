@@ -2,21 +2,31 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 use std::time::Duration;
 
-/// Background webhook delivery worker (Phase 3). Polls pending deliveries,
-/// POSTs each payload with a timeout, and retries with backoff up to the
-/// configured max attempts before marking failed.
+/// Background webhook delivery worker (Phase 3 + generic automations).
+/// Polls pending deliveries, POSTs each payload with a timeout, and retries
+/// with backoff up to the configured max attempts before marking failed.
+/// Notification rules join `_notification_rule`; generic `_automation` rows
+/// reuse `_notification_delivery` with the automation id as `rule_id`.
 pub async fn deliver_pending(
     pool: &SqlitePool,
     timeout_secs: u64,
     max_attempts: i64,
 ) -> Result<usize> {
-    let pending: Vec<(String, String, String)> = sqlx::query_as(
+    let mut pending: Vec<(String, String, String)> = sqlx::query_as(
         "SELECT d.id, r.target_url, d.payload FROM _notification_delivery d \
          JOIN _notification_rule r ON r.id = d.rule_id \
          WHERE d.status = 'pending' ORDER BY d.created_at LIMIT 50",
     )
     .fetch_all(pool)
     .await?;
+    let automation_pending: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT d.id, a.target_url, d.payload FROM _notification_delivery d \
+         JOIN _automation a ON a.id = d.rule_id \
+         WHERE d.status = 'pending' ORDER BY d.created_at LIMIT 50",
+    )
+    .fetch_all(pool)
+    .await?;
+    pending.extend(automation_pending);
     if pending.is_empty() {
         return Ok(0);
     }

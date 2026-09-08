@@ -282,6 +282,10 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
         .route("/v1/dashboard/counts", get(dashboard_counts))
         .route("/v1/dashboard/pm", get(dashboard_pm))
         .route("/v1/reports/aggregate", get(report_aggregate))
+        .route(
+            "/v1/entities/{id}/actions/{action_id}",
+            axum::routing::post(execute_module_action),
+        )
         .layer(middleware::from_fn_with_state(
             AppState {
                 pool: pool.clone(),
@@ -446,6 +450,24 @@ pub struct CreateField {
     pub ref_entity: Option<String>,
     #[serde(default)]
     pub computed_expr: Option<String>,
+    #[serde(default)]
+    pub is_unique: bool,
+    #[serde(default)]
+    pub min_value: Option<f64>,
+    #[serde(default)]
+    pub max_value: Option<f64>,
+    #[serde(default)]
+    pub pattern: Option<String>,
+    #[serde(default)]
+    pub min_length: Option<i64>,
+    #[serde(default)]
+    pub max_length: Option<i64>,
+    #[serde(default)]
+    pub default_value: Option<String>,
+    #[serde(default)]
+    pub auto_number_prefix: Option<String>,
+    #[serde(default)]
+    pub auto_number_width: Option<i64>,
 }
 
 async fn create_field(
@@ -453,7 +475,7 @@ async fn create_field(
     Path(id): Path<String>,
     Json(input): Json<CreateField>,
 ) -> Result<(StatusCode, Json<repository::Field>), AppError> {
-    repository::create_field(
+    repository::create_field_with_rules(
         &state.pool,
         &id,
         &input.name,
@@ -462,6 +484,17 @@ async fn create_field(
         input.is_status,
         input.ref_entity.as_deref(),
         input.computed_expr.as_deref(),
+        &repository::FieldRules {
+            is_unique: input.is_unique,
+            min_value: input.min_value,
+            max_value: input.max_value,
+            pattern: input.pattern.clone(),
+            min_length: input.min_length,
+            max_length: input.max_length,
+            default_value: input.default_value.clone(),
+            auto_number_prefix: input.auto_number_prefix.clone(),
+            auto_number_width: input.auto_number_width,
+        },
     )
     .await
     .map(|field| (StatusCode::CREATED, Json(field)))
@@ -480,6 +513,24 @@ pub struct UpdateField {
     pub ref_entity: Option<String>,
     #[serde(default)]
     pub computed_expr: Option<String>,
+    #[serde(default)]
+    pub is_unique: bool,
+    #[serde(default)]
+    pub min_value: Option<f64>,
+    #[serde(default)]
+    pub max_value: Option<f64>,
+    #[serde(default)]
+    pub pattern: Option<String>,
+    #[serde(default)]
+    pub min_length: Option<i64>,
+    #[serde(default)]
+    pub max_length: Option<i64>,
+    #[serde(default)]
+    pub default_value: Option<String>,
+    #[serde(default)]
+    pub auto_number_prefix: Option<String>,
+    #[serde(default)]
+    pub auto_number_width: Option<i64>,
 }
 
 async fn update_field(
@@ -487,7 +538,7 @@ async fn update_field(
     Path(id): Path<String>,
     Json(input): Json<UpdateField>,
 ) -> Result<Json<repository::Field>, AppError> {
-    repository::update_field(
+    repository::update_field_with_rules(
         &state.pool,
         &id,
         &input.name,
@@ -496,6 +547,17 @@ async fn update_field(
         input.is_status,
         input.ref_entity.as_deref(),
         input.computed_expr.as_deref(),
+        &repository::FieldRules {
+            is_unique: input.is_unique,
+            min_value: input.min_value,
+            max_value: input.max_value,
+            pattern: input.pattern.clone(),
+            min_length: input.min_length,
+            max_length: input.max_length,
+            default_value: input.default_value.clone(),
+            auto_number_prefix: input.auto_number_prefix.clone(),
+            auto_number_width: input.auto_number_width,
+        },
     )
     .await
     .map(Json)
@@ -1434,6 +1496,42 @@ fn current_role(user: &Option<axum::extract::Extension<auth::User>>) -> String {
         .unwrap_or_else(|| "user".to_string())
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ExecuteActionRequest {
+    #[serde(default)]
+    pub document_id: Option<String>,
+    #[serde(default)]
+    pub payload: Option<serde_json::Value>,
+    #[serde(default)]
+    pub expected_updated_at: Option<String>,
+}
+
+async fn execute_module_action(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path((id, action_id)): Path<(String, String)>,
+    Json(input): Json<ExecuteActionRequest>,
+) -> Result<Json<repository::ModuleActionResult>, AppError> {
+    if id.trim().is_empty() || action_id.trim().is_empty() {
+        return Err(AppError::BadRequest(
+            "entity and action are required".into(),
+        ));
+    }
+    repository::execute_module_action(
+        &state.pool,
+        &id,
+        &action_id,
+        input.document_id.as_deref(),
+        input.payload.as_ref(),
+        current_actor(&user).as_deref(),
+        input.expected_updated_at.as_deref(),
+        &current_role(&user),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
+
 fn current_actor(user: &Option<axum::extract::Extension<auth::User>>) -> Option<String> {
     user.as_ref().map(|u| u.username.clone())
 }
@@ -1721,16 +1819,15 @@ async fn delete_document(
     user: Option<axum::extract::Extension<auth::User>>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let existing = repository::get_document(&state.pool, &id)
-        .await
-        .map_err(map_db_error)?;
-    repository::check_permission(&state.pool, &existing.entity_id, &current_role(&user), true)
-        .await
-        .map_err(map_db_error)?;
-    repository::delete_document(&state.pool, &id, current_actor(&user).as_deref())
-        .await
-        .map(|()| StatusCode::NO_CONTENT)
-        .map_err(map_db_error)
+    repository::delete_document_as_role(
+        &state.pool,
+        &id,
+        current_actor(&user).as_deref(),
+        &current_role(&user),
+    )
+    .await
+    .map(|()| StatusCode::NO_CONTENT)
+    .map_err(map_db_error)
 }
 
 #[derive(Debug, Deserialize)]

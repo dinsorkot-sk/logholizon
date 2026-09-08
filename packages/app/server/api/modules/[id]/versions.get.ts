@@ -1,6 +1,6 @@
-import { coreClient } from '../../core/client'
+import { coreClient } from '../../../core/client'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id') || ''
-  return coreClient(event).getModule(id)
+  return coreClient(event).listModuleVersions(id)
 })

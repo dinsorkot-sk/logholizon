@@ -23,6 +23,15 @@ pub struct Field {
     pub position: i64,
     pub ref_entity: Option<String>,
     pub computed_expr: Option<String>,
+    pub is_unique: bool,
+    pub min_value: Option<f64>,
+    pub max_value: Option<f64>,
+    pub pattern: Option<String>,
+    pub min_length: Option<i64>,
+    pub max_length: Option<i64>,
+    pub default_value: Option<String>,
+    pub auto_number_prefix: Option<String>,
+    pub auto_number_width: Option<i64>,
     pub options: Vec<FieldOption>,
 }
 
@@ -62,6 +71,15 @@ pub struct FieldWithPermission {
     pub position: i64,
     pub ref_entity: Option<String>,
     pub computed_expr: Option<String>,
+    pub is_unique: bool,
+    pub min_value: Option<f64>,
+    pub max_value: Option<f64>,
+    pub pattern: Option<String>,
+    pub min_length: Option<i64>,
+    pub max_length: Option<i64>,
+    pub default_value: Option<String>,
+    pub auto_number_prefix: Option<String>,
+    pub auto_number_width: Option<i64>,
     pub options: Vec<FieldOption>,
     pub can_view: bool,
     pub can_edit: bool,
@@ -513,6 +531,7 @@ pub fn validate_module_definition(definition: &Value) -> Result<()> {
                     .unwrap_or("");
                 validate_computed_field(field_type, Some(expr))?;
             }
+            validate_field_rules(field_type, &field_rules_from_definition(field))?;
         }
         if status_count > 1 {
             return Err(AppError::BadRequest(format!(
@@ -775,10 +794,11 @@ async fn materialize_module_definition(
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
                     .map(str::to_string);
+                let rules = field_rules_from_definition(field);
                 let field_id = format!("{entity_id}_{field_name}");
                 sqlx::query(
-                    "INSERT INTO _meta_field (id, entity_id, name, type, required, is_status, position, ref_entity, computed_expr) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
-                     ON CONFLICT(id) DO UPDATE SET type = excluded.type, required = excluded.required, is_status = excluded.is_status, position = excluded.position, ref_entity = excluded.ref_entity, computed_expr = excluded.computed_expr",
+                    "INSERT INTO _meta_field (id, entity_id, name, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                     ON CONFLICT(id) DO UPDATE SET type = excluded.type, required = excluded.required, is_status = excluded.is_status, position = excluded.position, ref_entity = excluded.ref_entity, computed_expr = excluded.computed_expr, is_unique = excluded.is_unique, min_value = excluded.min_value, max_value = excluded.max_value, pattern = excluded.pattern, min_length = excluded.min_length, max_length = excluded.max_length, default_value = excluded.default_value, auto_number_prefix = excluded.auto_number_prefix, auto_number_width = excluded.auto_number_width",
                 )
                 .bind(&field_id)
                 .bind(&entity_id)
@@ -789,6 +809,15 @@ async fn materialize_module_definition(
                 .bind(position as i64)
                 .bind(ref_entity.as_deref())
                 .bind(computed_expr.as_deref())
+                .bind(rules.is_unique as i64)
+                .bind(rules.min_value)
+                .bind(rules.max_value)
+                .bind(rules.pattern.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+                .bind(rules.min_length)
+                .bind(rules.max_length)
+                .bind(rules.default_value.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+                .bind(rules.auto_number_prefix.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+                .bind(rules.auto_number_width)
                 .execute(&mut **tx)
                 .await?;
                 for role in ["admin", "user"] {
@@ -1428,7 +1457,7 @@ pub async fn get_entity_detail(pool: &SqlitePool, entity_id: &str) -> Result<Ent
 
 pub async fn list_fields(pool: &SqlitePool, entity_id: &str) -> Result<Vec<Field>> {
     let rows = sqlx::query(
-        "SELECT id, name, type, required, is_status, position, ref_entity, computed_expr FROM _meta_field WHERE entity_id = ? ORDER BY position, name",
+        "SELECT id, name, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width FROM _meta_field WHERE entity_id = ? ORDER BY position, name",
     )
     .bind(entity_id)
     .fetch_all(pool)
@@ -1447,6 +1476,15 @@ pub async fn list_fields(pool: &SqlitePool, entity_id: &str) -> Result<Vec<Field
             position: row.try_get("position")?,
             ref_entity: row.try_get("ref_entity")?,
             computed_expr: row.try_get("computed_expr")?,
+            is_unique: row.try_get::<i64, _>("is_unique")? != 0,
+            min_value: row.try_get("min_value")?,
+            max_value: row.try_get("max_value")?,
+            pattern: row.try_get("pattern")?,
+            min_length: row.try_get("min_length")?,
+            max_length: row.try_get("max_length")?,
+            default_value: row.try_get("default_value")?,
+            auto_number_prefix: row.try_get("auto_number_prefix")?,
+            auto_number_width: row.try_get("auto_number_width")?,
             options,
         });
     }
@@ -1573,6 +1611,15 @@ pub async fn get_entity_with_permission(
                 position: f.position,
                 ref_entity: f.ref_entity,
                 computed_expr: f.computed_expr,
+                is_unique: f.is_unique,
+                min_value: f.min_value,
+                max_value: f.max_value,
+                pattern: f.pattern,
+                min_length: f.min_length,
+                max_length: f.max_length,
+                default_value: f.default_value,
+                auto_number_prefix: f.auto_number_prefix,
+                auto_number_width: f.auto_number_width,
                 options: f.options,
                 can_view,
                 can_edit,
@@ -2316,6 +2363,19 @@ pub async fn delete_entity(pool: &SqlitePool, id: &str) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct FieldRules {
+    pub is_unique: bool,
+    pub min_value: Option<f64>,
+    pub max_value: Option<f64>,
+    pub pattern: Option<String>,
+    pub min_length: Option<i64>,
+    pub max_length: Option<i64>,
+    pub default_value: Option<String>,
+    pub auto_number_prefix: Option<String>,
+    pub auto_number_width: Option<i64>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn create_field(
     pool: &SqlitePool,
@@ -2327,11 +2387,38 @@ pub async fn create_field(
     ref_entity: Option<&str>,
     computed_expr: Option<&str>,
 ) -> Result<Field> {
+    create_field_with_rules(
+        pool,
+        entity_id,
+        name,
+        field_type,
+        required,
+        is_status,
+        ref_entity,
+        computed_expr,
+        &FieldRules::default(),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn create_field_with_rules(
+    pool: &SqlitePool,
+    entity_id: &str,
+    name: &str,
+    field_type: &str,
+    required: bool,
+    is_status: bool,
+    ref_entity: Option<&str>,
+    computed_expr: Option<&str>,
+    rules: &FieldRules,
+) -> Result<Field> {
     validate_field_name(name)?;
     validate_field_type(field_type)?;
     validate_status_field(pool, entity_id, None, field_type, is_status).await?;
     validate_reference_field(pool, entity_id, field_type, ref_entity).await?;
     validate_computed_field(field_type, computed_expr)?;
+    validate_field_rules(field_type, rules)?;
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _meta_entity WHERE id = ?)")
         .bind(entity_id)
         .fetch_one(pool)
@@ -2347,7 +2434,7 @@ pub async fn create_field(
     .await?;
     let field_id = format!("{entity_id}_{name}");
     sqlx::query(
-        "INSERT INTO _meta_field (id, entity_id, name, type, required, is_status, position, ref_entity, computed_expr) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO _meta_field (id, entity_id, name, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&field_id)
     .bind(entity_id)
@@ -2358,6 +2445,15 @@ pub async fn create_field(
     .bind(position)
     .bind(ref_entity.map(str::trim).filter(|s| !s.is_empty()))
     .bind(computed_expr.map(str::trim).filter(|s| !s.is_empty()))
+    .bind(rules.is_unique as i64)
+    .bind(rules.min_value)
+    .bind(rules.max_value)
+    .bind(rules.pattern.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+    .bind(rules.min_length)
+    .bind(rules.max_length)
+    .bind(rules.default_value.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+    .bind(rules.auto_number_prefix.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+    .bind(rules.auto_number_width)
     .execute(pool)
     .await?;
     // Default field permissions: both roles can view and edit.
@@ -2375,7 +2471,7 @@ pub async fn create_field(
 
 pub async fn get_field(pool: &SqlitePool, field_id: &str) -> Result<Field> {
     let row = sqlx::query(
-        "SELECT id, name, type, required, is_status, position, ref_entity, computed_expr FROM _meta_field WHERE id = ?",
+        "SELECT id, name, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width FROM _meta_field WHERE id = ?",
     )
     .bind(field_id)
     .fetch_optional(pool)
@@ -2392,6 +2488,15 @@ pub async fn get_field(pool: &SqlitePool, field_id: &str) -> Result<Field> {
         position: row.try_get("position")?,
         ref_entity: row.try_get("ref_entity")?,
         computed_expr: row.try_get("computed_expr")?,
+        is_unique: row.try_get::<i64, _>("is_unique")? != 0,
+        min_value: row.try_get("min_value")?,
+        max_value: row.try_get("max_value")?,
+        pattern: row.try_get("pattern")?,
+        min_length: row.try_get("min_length")?,
+        max_length: row.try_get("max_length")?,
+        default_value: row.try_get("default_value")?,
+        auto_number_prefix: row.try_get("auto_number_prefix")?,
+        auto_number_width: row.try_get("auto_number_width")?,
         options,
     })
 }
@@ -2407,6 +2512,32 @@ pub async fn update_field(
     ref_entity: Option<&str>,
     computed_expr: Option<&str>,
 ) -> Result<Field> {
+    update_field_with_rules(
+        pool,
+        field_id,
+        name,
+        field_type,
+        required,
+        is_status,
+        ref_entity,
+        computed_expr,
+        &FieldRules::default(),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn update_field_with_rules(
+    pool: &SqlitePool,
+    field_id: &str,
+    name: &str,
+    field_type: &str,
+    required: bool,
+    is_status: bool,
+    ref_entity: Option<&str>,
+    computed_expr: Option<&str>,
+    rules: &FieldRules,
+) -> Result<Field> {
     validate_field_name(name)?;
     validate_field_type(field_type)?;
     let entity_id: String = sqlx::query_scalar("SELECT entity_id FROM _meta_field WHERE id = ?")
@@ -2417,8 +2548,9 @@ pub async fn update_field(
     validate_status_field(pool, &entity_id, Some(field_id), field_type, is_status).await?;
     validate_reference_field(pool, &entity_id, field_type, ref_entity).await?;
     validate_computed_field(field_type, computed_expr)?;
+    validate_field_rules(field_type, rules)?;
     let result = sqlx::query(
-        "UPDATE _meta_field SET name = ?, type = ?, required = ?, is_status = ?, ref_entity = ?, computed_expr = ? WHERE id = ?",
+        "UPDATE _meta_field SET name = ?, type = ?, required = ?, is_status = ?, ref_entity = ?, computed_expr = ?, is_unique = ?, min_value = ?, max_value = ?, pattern = ?, min_length = ?, max_length = ?, default_value = ?, auto_number_prefix = ?, auto_number_width = ? WHERE id = ?",
     )
     .bind(name)
     .bind(field_type)
@@ -2426,6 +2558,15 @@ pub async fn update_field(
     .bind(is_status as i64)
     .bind(ref_entity.map(str::trim).filter(|s| !s.is_empty()))
     .bind(computed_expr.map(str::trim).filter(|s| !s.is_empty()))
+    .bind(rules.is_unique as i64)
+    .bind(rules.min_value)
+    .bind(rules.max_value)
+    .bind(rules.pattern.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+    .bind(rules.min_length)
+    .bind(rules.max_length)
+    .bind(rules.default_value.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+    .bind(rules.auto_number_prefix.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+    .bind(rules.auto_number_width)
     .bind(field_id)
     .execute(pool)
     .await?;
@@ -2616,6 +2757,199 @@ async fn validate_reference_field(
     Ok(())
 }
 
+fn field_rules_from_definition(field: &Value) -> FieldRules {
+    let rules = field.get("rules");
+    FieldRules {
+        is_unique: field
+            .get("unique")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            || rules
+                .and_then(|rules| rules.get("unique"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        min_value: field
+            .get("min_value")
+            .and_then(Value::as_f64)
+            .or_else(|| {
+                rules
+                    .and_then(|rules| rules.get("min_value"))
+                    .and_then(Value::as_f64)
+            })
+            .or_else(|| {
+                rules
+                    .and_then(|rules| rules.get("min"))
+                    .and_then(Value::as_f64)
+            }),
+        max_value: field
+            .get("max_value")
+            .and_then(Value::as_f64)
+            .or_else(|| {
+                rules
+                    .and_then(|rules| rules.get("max_value"))
+                    .and_then(Value::as_f64)
+            })
+            .or_else(|| {
+                rules
+                    .and_then(|rules| rules.get("max"))
+                    .and_then(Value::as_f64)
+            }),
+        pattern: field
+            .get("pattern")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| {
+                rules
+                    .and_then(|rules| rules.get("pattern"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            }),
+        min_length: field.get("min_length").and_then(Value::as_i64).or_else(|| {
+            rules
+                .and_then(|rules| rules.get("min_length"))
+                .and_then(Value::as_i64)
+        }),
+        max_length: field.get("max_length").and_then(Value::as_i64).or_else(|| {
+            rules
+                .and_then(|rules| rules.get("max_length"))
+                .and_then(Value::as_i64)
+        }),
+        default_value: field
+            .get("default")
+            .and_then(|value| match value {
+                Value::String(text) => Some(text.clone()),
+                Value::Number(number) => Some(number.to_string()),
+                Value::Bool(flag) => Some(flag.to_string()),
+                _ => None,
+            })
+            .or_else(|| {
+                rules
+                    .and_then(|rules| rules.get("default"))
+                    .and_then(|value| match value {
+                        Value::String(text) => Some(text.clone()),
+                        Value::Number(number) => Some(number.to_string()),
+                        Value::Bool(flag) => Some(flag.to_string()),
+                        _ => None,
+                    })
+            }),
+        auto_number_prefix: field
+            .get("auto_number")
+            .and_then(|value| value.get("prefix"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| {
+                rules
+                    .and_then(|rules| rules.get("auto_number"))
+                    .and_then(|value| value.get("prefix"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            }),
+        auto_number_width: field
+            .get("auto_number")
+            .and_then(|value| value.get("width"))
+            .and_then(Value::as_i64)
+            .or_else(|| {
+                rules
+                    .and_then(|rules| rules.get("auto_number"))
+                    .and_then(|value| value.get("width"))
+                    .and_then(Value::as_i64)
+            }),
+    }
+}
+
+fn validate_field_rules(field_type: &str, rules: &FieldRules) -> Result<()> {
+    if let Some(min) = rules.min_value {
+        if !matches!(field_type, "number" | "currency") {
+            return Err(
+                AppError::BadRequest("min_value is only valid for number fields".into()).into(),
+            );
+        }
+        if !min.is_finite() {
+            return Err(AppError::BadRequest("min_value must be finite".into()).into());
+        }
+    }
+    if let Some(max) = rules.max_value {
+        if !matches!(field_type, "number" | "currency") {
+            return Err(
+                AppError::BadRequest("max_value is only valid for number fields".into()).into(),
+            );
+        }
+        if !max.is_finite() {
+            return Err(AppError::BadRequest("max_value must be finite".into()).into());
+        }
+    }
+    if let (Some(min), Some(max)) = (rules.min_value, rules.max_value) {
+        if min > max {
+            return Err(AppError::BadRequest("min_value must be <= max_value".into()).into());
+        }
+    }
+    if let Some(pattern) = rules
+        .pattern
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if !matches!(field_type, "text" | "textarea") {
+            return Err(
+                AppError::BadRequest("pattern is only valid for text fields".into()).into(),
+            );
+        }
+        if pattern.len() > 500 {
+            return Err(AppError::BadRequest("pattern is too long".into()).into());
+        }
+    }
+    if (rules.min_length.is_some() || rules.max_length.is_some())
+        && !matches!(field_type, "text" | "textarea")
+    {
+        return Err(
+            AppError::BadRequest("length limits are only valid for text fields".into()).into(),
+        );
+    }
+    if let Some(min_length) = rules.min_length {
+        if min_length < 0 {
+            return Err(AppError::BadRequest("min_length must be >= 0".into()).into());
+        }
+    }
+    if let Some(max_length) = rules.max_length {
+        if max_length < 0 {
+            return Err(AppError::BadRequest("max_length must be >= 0".into()).into());
+        }
+    }
+    if let (Some(min_length), Some(max_length)) = (rules.min_length, rules.max_length) {
+        if min_length > max_length {
+            return Err(AppError::BadRequest("min_length must be <= max_length".into()).into());
+        }
+    }
+    if let Some(default) = rules
+        .default_value
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if matches!(field_type, "number" | "currency") && default.parse::<f64>().is_err() {
+            return Err(AppError::BadRequest("default_value must be a number".into()).into());
+        }
+        if matches!(field_type, "checkbox" | "boolean")
+            && !matches!(default.to_ascii_lowercase().as_str(), "true" | "false")
+        {
+            return Err(AppError::BadRequest("default_value must be true or false".into()).into());
+        }
+    }
+    if rules.auto_number_prefix.is_some() || rules.auto_number_width.is_some() {
+        if !matches!(field_type, "text") {
+            return Err(
+                AppError::BadRequest("auto_number is only valid for text fields".into()).into(),
+            );
+        }
+        if let Some(width) = rules.auto_number_width {
+            if !(1..=10).contains(&width) {
+                return Err(AppError::BadRequest("auto_number width must be 1..=10".into()).into());
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_computed_field(field_type: &str, computed_expr: Option<&str>) -> Result<()> {
     if field_type != "computed" {
         if computed_expr
@@ -2737,8 +3071,14 @@ pub async fn create_document_as_role(
     }
     // Create: drop hidden fields, but keep view-only (non-editable) fields
     // so the initial values are stored.
-    let payload = filter_hidden_payload(pool, entity_id, payload, role).await?;
-    validate_payload_for_role(pool, entity_id, &payload, role).await?;
+    let filtered = filter_hidden_payload(pool, entity_id, payload, role).await?;
+    let fields = list_fields(pool, entity_id).await?;
+    let with_defaults = apply_field_defaults(&fields, &filtered);
+    let mut with_defaults_object = with_defaults.as_object().cloned().unwrap_or_default();
+    allocate_auto_numbers(pool, entity_id, &mut with_defaults_object).await?;
+    let with_defaults = Value::Object(with_defaults_object);
+    validate_payload_for_role(pool, entity_id, &with_defaults, role).await?;
+    let payload = with_defaults;
     let mut tx = pool.begin().await?;
     sqlx::query("INSERT INTO _doc (id, entity_id, payload) VALUES (?, ?, ?)")
         .bind(id)
@@ -2756,6 +3096,7 @@ pub async fn create_document_as_role(
     .bind(actor)
     .execute(&mut *tx)
     .await?;
+    enqueue_automation_deliveries(&mut tx, entity_id, id, "create", &payload, actor).await?;
     tx.commit().await?;
     get_document(pool, id).await
 }
@@ -3574,7 +3915,7 @@ pub async fn update_document_as_role(
     let merged =
         restore_readonly_fields(pool, &existing.entity_id, &existing.payload, &merged, role)
             .await?;
-    validate_payload_for_role(pool, &existing.entity_id, &merged, role).await?;
+    validate_payload_for_role_excluding(pool, &existing.entity_id, &merged, role, Some(id)).await?;
     let payload = merged;
     let mut tx = pool.begin().await?;
     let result = sqlx::query(
@@ -3601,6 +3942,8 @@ pub async fn update_document_as_role(
     .bind(actor)
     .execute(&mut *tx)
     .await?;
+    enqueue_automation_deliveries(&mut tx, &existing.entity_id, id, "update", &payload, actor)
+        .await?;
     tx.commit().await?;
     get_document(pool, id).await
 }
@@ -3656,7 +3999,7 @@ pub async fn transition_document_as_role(
             object.remove(&field.name);
         }
     }
-    validate_payload_for_role(pool, &existing.entity_id, &next, role).await?;
+    validate_payload_for_role_excluding(pool, &existing.entity_id, &next, role, Some(id)).await?;
     let mut tx = pool.begin().await?;
     let result = sqlx::query(
         "UPDATE _doc SET payload = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ? AND (? IS NULL OR updated_at = ?)",
@@ -3693,6 +4036,8 @@ pub async fn transition_document_as_role(
         actor,
     )
     .await?;
+    enqueue_automation_deliveries(&mut tx, &existing.entity_id, id, "transition", &next, actor)
+        .await?;
     tx.commit().await?;
     get_document(pool, id).await
 }
@@ -3754,6 +4099,226 @@ async fn enqueue_transition_deliveries(
         .await?;
     }
     Ok(())
+}
+
+/// Enqueue one pending webhook delivery per active generic automation.
+/// Runs inside the caller's transaction so the delivery row always matches
+/// its audit row. Reuses the 1MB payload cap from transition deliveries.
+async fn enqueue_automation_deliveries(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    entity_id: &str,
+    doc_id: &str,
+    trigger: &str,
+    payload: &Value,
+    actor: Option<&str>,
+) -> Result<()> {
+    let automations: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, target_url FROM _automation WHERE entity_id = ? AND trigger = ? AND active != 0",
+    )
+    .bind(entity_id)
+    .bind(trigger)
+    .fetch_all(&mut **tx)
+    .await?;
+    for (automation_id, target_url) in automations {
+        let body = serde_json::json!({
+            "entity_id": entity_id,
+            "document_id": doc_id,
+            "trigger": trigger,
+            "target_url": target_url,
+            "actor": actor,
+            "payload": payload,
+        });
+        let body_string = body.to_string();
+        let body_string = if body_string.len() > 1_000_000 {
+            serde_json::json!({
+                "entity_id": entity_id,
+                "document_id": doc_id,
+                "trigger": trigger,
+                "target_url": target_url,
+                "actor": actor,
+                "truncated": true,
+            })
+            .to_string()
+        } else {
+            body_string
+        };
+        sqlx::query(
+            "INSERT INTO _notification_delivery (id, rule_id, document_id, action, payload) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(format!("{doc_id}-{trigger}-automation-{}", chrono_nanos()))
+        .bind(automation_id)
+        .bind(doc_id)
+        .bind(trigger)
+        .bind(body_string)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
+// --- Generic Action Engine (transactional, audited, evented) ---
+
+#[derive(Debug, Serialize)]
+pub struct ModuleAction {
+    pub id: String,
+    pub entity_id: String,
+    pub kind: String,
+    pub label: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ModuleActionResult {
+    pub action: ModuleAction,
+    pub document: Document,
+}
+
+fn module_action_definition(entity_id: &str, action_id: &str) -> Result<ModuleAction> {
+    let (kind, label) = match action_id {
+        "transition" => ("transition", "Transition"),
+        "create" => ("create", "Create"),
+        "update" => ("update", "Update"),
+        "post" => ("post", "Post"),
+        "allocate" => ("allocate", "Allocate"),
+        "convert" => ("convert", "Convert"),
+        "confirm" => ("confirm", "Confirm"),
+        "complete" => ("complete", "Complete"),
+        "close" => ("close", "Close"),
+        _ => {
+            return Err(AppError::BadRequest(format!("unknown action: {action_id}")).into());
+        }
+    };
+    Ok(ModuleAction {
+        id: action_id.to_string(),
+        entity_id: entity_id.to_string(),
+        kind: kind.to_string(),
+        label: label.to_string(),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_module_action(
+    pool: &SqlitePool,
+    entity_id: &str,
+    action_id: &str,
+    document_id: Option<&str>,
+    payload: Option<&Value>,
+    actor: Option<&str>,
+    expected_updated_at: Option<&str>,
+    role: &str,
+) -> Result<ModuleActionResult> {
+    require_entity(pool, entity_id).await?;
+    check_permission(pool, entity_id, role, true).await?;
+    let action = module_action_definition(entity_id, action_id)?;
+    let document = match action.kind.as_str() {
+        "transition" => {
+            let (doc_id, transition) = match (document_id, payload) {
+                (Some(doc_id), Some(payload)) => (
+                    doc_id,
+                    payload
+                        .get("action")
+                        .and_then(Value::as_str)
+                        .unwrap_or(action_id),
+                ),
+                (Some(doc_id), None) => (doc_id, action_id),
+                _ => {
+                    return Err(
+                        AppError::BadRequest("transition requires a document id".into()).into(),
+                    );
+                }
+            };
+            transition_document_as_role(pool, doc_id, transition, actor, expected_updated_at, role)
+                .await?
+        }
+        "create" => {
+            let body = payload
+                .cloned()
+                .unwrap_or(Value::Object(Default::default()));
+            let new_id = document_id
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("{entity_id}_{}", chrono_nanos()));
+            create_document_as_role(pool, &new_id, entity_id, &body, actor, role).await?
+        }
+        "update" => {
+            let doc_id = document_id
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| AppError::BadRequest("update requires a document id".into()))?;
+            let body = payload
+                .cloned()
+                .unwrap_or(Value::Object(Default::default()));
+            update_document_as_role(pool, doc_id, &body, actor, expected_updated_at, role).await?
+        }
+        "post" | "allocate" | "convert" | "confirm" | "complete" | "close" => {
+            let doc_id = document_id
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    AppError::BadRequest(format!("{} requires a document id", action.kind))
+                })?;
+            let existing = get_document(pool, doc_id).await?;
+            if existing.entity_id != entity_id {
+                return Err(
+                    AppError::BadRequest("document belongs to another entity".into()).into(),
+                );
+            }
+            let computed_names: Vec<String> = list_fields(pool, entity_id)
+                .await?
+                .iter()
+                .filter(|f| f.r#type == "computed")
+                .map(|f| f.name.clone())
+                .collect();
+            let mut next = existing.payload.clone();
+            if let Some(object) = next.as_object_mut() {
+                if let Some(extra) = payload.and_then(Value::as_object) {
+                    for (key, value) in extra {
+                        object.insert(key.clone(), value.clone());
+                    }
+                }
+                for name in &computed_names {
+                    object.remove(name);
+                }
+            }
+            validate_payload_for_role_excluding(pool, entity_id, &next, role, Some(doc_id)).await?;
+            let next_string = next.to_string();
+            let mut tx = pool.begin().await?;
+            let result = sqlx::query(
+                "UPDATE _doc SET payload = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ? AND (? IS NULL OR updated_at = ?)",
+            )
+            .bind(&next_string)
+            .bind(doc_id)
+            .bind(expected_updated_at)
+            .bind(expected_updated_at)
+            .execute(&mut *tx)
+            .await?;
+            if result.rows_affected() == 0 {
+                return Err(AppError::Conflict(format!(
+                    "stale record: {doc_id} was modified by another user"
+                ))
+                .into());
+            }
+            sqlx::query(
+                "INSERT INTO _audit_log (id, entity_id, doc_id, action, payload, actor) VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(audit_id(doc_id, &action.kind))
+            .bind(entity_id)
+            .bind(doc_id)
+            .bind(action.kind.clone())
+            .bind(next_string.clone())
+            .bind(actor)
+            .execute(&mut *tx)
+            .await?;
+            enqueue_automation_deliveries(&mut tx, entity_id, doc_id, &action.kind, &next, actor)
+                .await?;
+            tx.commit().await?;
+            get_document(pool, doc_id).await?
+        }
+        _ => {
+            return Err(AppError::BadRequest(format!("unknown action: {action_id}")).into());
+        }
+    };
+    Ok(ModuleActionResult { action, document })
 }
 
 pub async fn get_workflow(pool: &SqlitePool, entity_id: &str) -> Result<WorkflowDefinition> {
@@ -4109,7 +4674,17 @@ pub async fn pm_summary_as_role(
 }
 
 pub async fn delete_document(pool: &SqlitePool, id: &str, actor: Option<&str>) -> Result<()> {
+    delete_document_as_role(pool, id, actor, "admin").await
+}
+
+pub async fn delete_document_as_role(
+    pool: &SqlitePool,
+    id: &str,
+    actor: Option<&str>,
+    role: &str,
+) -> Result<()> {
     let existing = get_document(pool, id).await?;
+    check_permission(pool, &existing.entity_id, role, true).await?;
     let mut tx = pool.begin().await?;
     sqlx::query("DELETE FROM _doc WHERE id = ?")
         .bind(id)
@@ -4124,6 +4699,15 @@ pub async fn delete_document(pool: &SqlitePool, id: &str, actor: Option<&str>) -
     .bind(existing.payload.to_string())
     .bind(actor)
     .execute(&mut *tx)
+    .await?;
+    enqueue_automation_deliveries(
+        &mut tx,
+        &existing.entity_id,
+        id,
+        "delete",
+        &existing.payload,
+        actor,
+    )
     .await?;
     tx.commit().await?;
     Ok(())
@@ -4795,6 +5379,16 @@ async fn validate_payload_for_role(
     payload: &Value,
     role: &str,
 ) -> Result<()> {
+    validate_payload_for_role_excluding(pool, entity_id, payload, role, None).await
+}
+
+async fn validate_payload_for_role_excluding(
+    pool: &SqlitePool,
+    entity_id: &str,
+    payload: &Value,
+    role: &str,
+    exclude_doc_id: Option<&str>,
+) -> Result<()> {
     let object = payload
         .as_object()
         .ok_or_else(|| AppError::BadRequest("payload must be a JSON object".into()))?;
@@ -4824,6 +5418,7 @@ async fn validate_payload_for_role(
         }
         if let Some(value) = value {
             validate_field_value(field, value)?;
+            validate_field_rules_value(pool, entity_id, field, value, exclude_doc_id).await?;
             if field.r#type == "reference" {
                 let target = field.ref_entity.as_deref().unwrap_or_default();
                 let doc_id = value.as_str().unwrap_or_default();
@@ -4848,6 +5443,302 @@ async fn validate_payload_for_role(
         if !visible.iter().any(|f| f.name == *key) {
             return Err(AppError::BadRequest(format!("unknown field: {key}")).into());
         }
+    }
+    Ok(())
+}
+
+async fn validate_field_rules_value(
+    pool: &SqlitePool,
+    entity_id: &str,
+    field: &Field,
+    value: &Value,
+    exclude_doc_id: Option<&str>,
+) -> Result<()> {
+    if field.is_unique {
+        if let Some(text) = value.as_str() {
+            let query = match exclude_doc_id {
+                Some(_) => "SELECT EXISTS(SELECT 1 FROM _doc WHERE entity_id = ? AND id != ? AND json_extract(payload, ?) = ?)",
+                None => "SELECT EXISTS(SELECT 1 FROM _doc WHERE entity_id = ? AND json_extract(payload, ?) = ?)",
+            };
+            let path = format!("$.{}", field.name);
+            let exists: bool = match exclude_doc_id {
+                Some(exclude) => {
+                    sqlx::query_scalar(query)
+                        .bind(entity_id)
+                        .bind(exclude)
+                        .bind(path)
+                        .bind(text)
+                        .fetch_one(pool)
+                        .await?
+                }
+                None => {
+                    sqlx::query_scalar(query)
+                        .bind(entity_id)
+                        .bind(path)
+                        .bind(text)
+                        .fetch_one(pool)
+                        .await?
+                }
+            };
+            if exists {
+                return Err(AppError::Conflict(format!(
+                    "duplicate value for unique field: {}",
+                    field.name
+                ))
+                .into());
+            }
+        } else if let Some(number) = value.as_f64() {
+            let query = match exclude_doc_id {
+                Some(_) => "SELECT EXISTS(SELECT 1 FROM _doc WHERE entity_id = ? AND id != ? AND json_extract(payload, ?) = ?)",
+                None => "SELECT EXISTS(SELECT 1 FROM _doc WHERE entity_id = ? AND json_extract(payload, ?) = ?)",
+            };
+            let path = format!("$.{}", field.name);
+            let exists: bool = match exclude_doc_id {
+                Some(exclude) => {
+                    sqlx::query_scalar(query)
+                        .bind(entity_id)
+                        .bind(exclude)
+                        .bind(path)
+                        .bind(number)
+                        .fetch_one(pool)
+                        .await?
+                }
+                None => {
+                    sqlx::query_scalar(query)
+                        .bind(entity_id)
+                        .bind(path)
+                        .bind(number)
+                        .fetch_one(pool)
+                        .await?
+                }
+            };
+            if exists {
+                return Err(AppError::Conflict(format!(
+                    "duplicate value for unique field: {}",
+                    field.name
+                ))
+                .into());
+            }
+        }
+    }
+    if matches!(field.r#type.as_str(), "number" | "currency") {
+        if let Some(number) = value.as_f64() {
+            if let Some(min) = field.min_value {
+                if number < min {
+                    return Err(AppError::BadRequest(format!(
+                        "value below minimum for field {}: {number} < {min}",
+                        field.name
+                    ))
+                    .into());
+                }
+            }
+            if let Some(max) = field.max_value {
+                if number > max {
+                    return Err(AppError::BadRequest(format!(
+                        "value above maximum for field {}: {number} > {max}",
+                        field.name
+                    ))
+                    .into());
+                }
+            }
+        }
+    }
+    if matches!(field.r#type.as_str(), "text" | "textarea") {
+        if let Some(text) = value.as_str() {
+            let length = text.chars().count() as i64;
+            if let Some(min_length) = field.min_length {
+                if length < min_length {
+                    return Err(AppError::BadRequest(format!(
+                        "value too short for field {}: {length} < {min_length}",
+                        field.name
+                    ))
+                    .into());
+                }
+            }
+            if let Some(max_length) = field.max_length {
+                if length > max_length {
+                    return Err(AppError::BadRequest(format!(
+                        "value too long for field {}: {length} > {max_length}",
+                        field.name
+                    ))
+                    .into());
+                }
+            }
+            if let Some(pattern) = field
+                .pattern
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                if !matches_simple_pattern(pattern, text) {
+                    return Err(AppError::BadRequest(format!(
+                        "value does not match pattern for field {}",
+                        field.name
+                    ))
+                    .into());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Minimal pattern matcher (no extra dependency): supports `^`, `$`, `.*`,
+/// `.+`, literal prefixes/suffixes, and character classes like `[0-9]+`.
+/// Anything else falls back to substring matching so rules stay predictable.
+fn matches_simple_pattern(pattern: &str, text: &str) -> bool {
+    let pattern = pattern.trim();
+    if pattern.is_empty() {
+        return true;
+    }
+    if pattern == ".*" || pattern == ".+" {
+        return !text.is_empty() || pattern == ".*";
+    }
+    let anchored_start = pattern.starts_with('^');
+    let anchored_end = pattern.ends_with('$');
+    let core = pattern
+        .strip_prefix('^')
+        .unwrap_or(pattern)
+        .strip_suffix('$')
+        .unwrap_or_else(|| pattern.strip_prefix('^').unwrap_or(pattern));
+    if core.contains("[0-9]") {
+        let digits_only = core
+            .replace("[0-9]+", "")
+            .replace("[0-9]*", "")
+            .replace("[0-9]", "");
+        let has_plus = core.contains("[0-9]+");
+        let letters: String = text.chars().filter(|c| !c.is_ascii_digit()).collect();
+        let digits: String = text.chars().filter(|c| c.is_ascii_digit()).collect();
+        if has_plus && digits.is_empty() {
+            return false;
+        }
+        if digits_only.is_empty() {
+            return text.chars().all(|c| c.is_ascii_digit()) && !text.is_empty();
+        }
+        if anchored_start && anchored_end {
+            return text.starts_with(&digits_only)
+                || text.ends_with(&digits_only)
+                || letters == digits_only;
+        }
+        return text.contains(&digits_only);
+    }
+    if core.contains(".*") {
+        let parts: Vec<&str> = core.split(".*").collect();
+        if anchored_start && !text.starts_with(parts[0]) {
+            return false;
+        }
+        if anchored_end && !text.ends_with(parts[parts.len() - 1]) {
+            return false;
+        }
+        let mut rest = text;
+        for (index, part) in parts.iter().enumerate() {
+            if part.is_empty() {
+                continue;
+            }
+            match rest.find(part) {
+                Some(position) => {
+                    if index == 0 && anchored_start && position != 0 {
+                        return false;
+                    }
+                    rest = &rest[position + part.len()..];
+                }
+                None => return false,
+            }
+        }
+        return true;
+    }
+    if anchored_start && anchored_end {
+        return text == core;
+    }
+    if anchored_start {
+        return text.starts_with(core);
+    }
+    if anchored_end {
+        return text.ends_with(core);
+    }
+    text.contains(core)
+}
+
+fn field_default_payload(field: &Field) -> Option<Value> {
+    if field.auto_number_prefix.is_some() || field.auto_number_width.is_some() {
+        return None;
+    }
+    let default = field
+        .default_value
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?;
+    match field.r#type.as_str() {
+        "number" | "currency" => default
+            .parse::<f64>()
+            .ok()
+            .and_then(serde_json::Number::from_f64)
+            .map(Value::Number),
+        "checkbox" | "boolean" => match default.to_ascii_lowercase().as_str() {
+            "true" => Some(Value::Bool(true)),
+            "false" => Some(Value::Bool(false)),
+            _ => None,
+        },
+        _ => Some(Value::String(default.to_string())),
+    }
+}
+
+fn apply_field_defaults(fields: &[Field], payload: &Value) -> Value {
+    let Some(object) = payload.as_object() else {
+        return payload.clone();
+    };
+    let mut next = object.clone();
+    for field in fields {
+        if field.r#type == "computed" || next.contains_key(&field.name) {
+            continue;
+        }
+        if let Some(default) = field_default_payload(field) {
+            next.insert(field.name.clone(), default);
+        }
+    }
+    Value::Object(next)
+}
+
+async fn allocate_auto_numbers(
+    pool: &SqlitePool,
+    entity_id: &str,
+    payload: &mut serde_json::Map<String, Value>,
+) -> Result<()> {
+    let fields = list_fields(pool, entity_id).await?;
+    let numbered: Vec<(String, Option<String>, Option<i64>)> = fields
+        .iter()
+        .filter(|f| {
+            f.r#type == "text" && (f.auto_number_prefix.is_some() || f.auto_number_width.is_some())
+        })
+        .filter(|f| !payload.contains_key(&f.name))
+        .map(|f| {
+            (
+                f.name.clone(),
+                f.auto_number_prefix.clone(),
+                f.auto_number_width,
+            )
+        })
+        .collect();
+    for (name, prefix, width) in numbered {
+        // Single-connection in-memory pools deadlock if a write tx opens
+        // while this read is outstanding; allocate outside any tx.
+        let next_value: i64 = sqlx::query_scalar(
+            "INSERT INTO _number_counter (entity_id, field_name, next_value) VALUES (?, ?, 2) \
+             ON CONFLICT(entity_id, field_name) DO UPDATE SET next_value = next_value + 1 \
+             RETURNING next_value - 1",
+        )
+        .bind(entity_id)
+        .bind(&name)
+        .fetch_one(pool)
+        .await?;
+        let prefix = prefix.as_deref().unwrap_or("");
+        let formatted = match width {
+            Some(width) if width > 0 => {
+                format!("{prefix}{next_value:0>width$}", width = width as usize)
+            }
+            _ => format!("{prefix}{next_value}"),
+        };
+        payload.insert(name, Value::String(formatted));
     }
     Ok(())
 }

@@ -242,3 +242,307 @@ async fn module_registry_publish_rollback() {
         .unwrap()
         .is_empty());
 }
+
+#[tokio::test]
+async fn business_rules_validate() {
+    let pool = setup().await;
+    repository::create_entity(&pool, "rules_widget", "rules_widget", "Rules Widget")
+        .await
+        .unwrap();
+    repository::create_field(
+        &pool,
+        "rules_widget",
+        "title",
+        "text",
+        true,
+        false,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    repository::create_field_with_rules(
+        &pool,
+        "rules_widget",
+        "sku",
+        "text",
+        true,
+        false,
+        None,
+        None,
+        &repository::FieldRules {
+            is_unique: true,
+            pattern: Some("^SKU-.*".to_string()),
+            min_length: Some(5),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    repository::create_field_with_rules(
+        &pool,
+        "rules_widget",
+        "price",
+        "number",
+        false,
+        false,
+        None,
+        None,
+        &repository::FieldRules {
+            min_value: Some(0.0),
+            max_value: Some(100.0),
+            default_value: Some("9".to_string()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    repository::create_field_with_rules(
+        &pool,
+        "rules_widget",
+        "ticket",
+        "text",
+        false,
+        false,
+        None,
+        None,
+        &repository::FieldRules {
+            auto_number_prefix: Some("T-".to_string()),
+            auto_number_width: Some(4),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    // Defaults + auto-number apply on create.
+    let created = repository::create_document(
+        &pool,
+        "rules-1",
+        "rules_widget",
+        &json!({"title": "Widget", "sku": "SKU-001"}),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        created.payload.get("price").and_then(|v| v.as_f64()),
+        Some(9.0)
+    );
+    assert_eq!(
+        created.payload.get("ticket").and_then(|v| v.as_str()),
+        Some("T-0001")
+    );
+    let created_two = repository::create_document(
+        &pool,
+        "rules-2",
+        "rules_widget",
+        &json!({"title": "Widget 2", "sku": "SKU-002"}),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        created_two.payload.get("ticket").and_then(|v| v.as_str()),
+        Some("T-0002")
+    );
+
+    // Unique + pattern + range reject bad payloads.
+    assert!(repository::create_document(
+        &pool,
+        "rules-dup",
+        "rules_widget",
+        &json!({"title": "Dup", "sku": "SKU-001"}),
+        None,
+    )
+    .await
+    .is_err());
+    assert!(repository::create_document(
+        &pool,
+        "rules-bad-pattern",
+        "rules_widget",
+        &json!({"title": "Bad", "sku": "BAD-1"}),
+        None,
+    )
+    .await
+    .is_err());
+    assert!(repository::create_document(
+        &pool,
+        "rules-bad-range",
+        "rules_widget",
+        &json!({"title": "Bad", "sku": "SKU-009", "price": 101.0}),
+        None,
+    )
+    .await
+    .is_err());
+
+    // Unique excludes self on update.
+    repository::update_document(&pool, "rules-1", &json!({"price": 10.0}), None, None)
+        .await
+        .unwrap();
+    assert!(
+        repository::update_document(&pool, "rules-1", &json!({"sku": "SKU-002"}), None, None)
+            .await
+            .is_err()
+    );
+
+    // Invalid rule shapes are rejected at field creation.
+    assert!(repository::create_field_with_rules(
+        &pool,
+        "rules_widget",
+        "bad_range",
+        "number",
+        false,
+        false,
+        None,
+        None,
+        &repository::FieldRules {
+            min_value: Some(10.0),
+            max_value: Some(1.0),
+            ..Default::default()
+        },
+    )
+    .await
+    .is_err());
+}
+
+#[tokio::test]
+async fn action_transactional_audit_event() {
+    let pool = setup().await;
+    let definition = vehicle_definition();
+    let module = repository::create_module(
+        &pool,
+        "vehicle",
+        "Vehicle Management",
+        None,
+        None,
+        None,
+        "alice",
+        &definition,
+        Some("alice"),
+    )
+    .await
+    .unwrap();
+    repository::publish_module(&pool, &module.id, "alice", "user", Some("alice"))
+        .await
+        .unwrap();
+    let vehicle_entity = format!("{}_vehicle", module.id);
+    let driver_entity = format!("{}_driver", module.id);
+    repository::create_document(
+        &pool,
+        "drv-action",
+        &driver_entity,
+        &json!({"code": "D9", "name": "Bo", "status": "active"}),
+        Some("alice"),
+    )
+    .await
+    .unwrap();
+
+    // Generic create action writes _doc + audit.
+    let created = repository::execute_module_action(
+        &pool,
+        &vehicle_entity,
+        "create",
+        Some("veh-action-1"),
+        Some(&json!({"code": "V9", "plate_number": "ZZ-9", "vehicle_type": "van", "status": "active", "driver": "drv-action"})),
+        Some("alice"),
+        None,
+        "admin",
+    )
+    .await
+    .unwrap();
+    assert_eq!(created.document.id, "veh-action-1");
+
+    // Custom close action stamps audit without ERP tables.
+    let closed = repository::execute_module_action(
+        &pool,
+        &vehicle_entity,
+        "close",
+        Some("veh-action-1"),
+        Some(&json!({"code": "V9"})),
+        Some("alice"),
+        None,
+        "admin",
+    )
+    .await
+    .unwrap();
+    assert!(closed.document.payload.get("code").is_some());
+
+    // Unknown actions are rejected.
+    assert!(repository::execute_module_action(
+        &pool,
+        &vehicle_entity,
+        "nope",
+        Some("veh-action-1"),
+        None,
+        Some("alice"),
+        None,
+        "admin",
+    )
+    .await
+    .is_err());
+
+    // Audit covers the action trail (query raw rows to avoid redaction parse).
+    let actions: Vec<String> =
+        sqlx::query_scalar("SELECT action FROM _audit_log WHERE doc_id = ? ORDER BY rowid")
+            .bind("veh-action-1")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(actions.contains(&"create".to_string()), "{actions:?}");
+    assert!(actions.contains(&"close".to_string()), "{actions:?}");
+}
+
+#[tokio::test]
+async fn automation_triggers() {
+    let pool = setup().await;
+    repository::create_entity(&pool, "auto_widget", "auto_widget", "Auto Widget")
+        .await
+        .unwrap();
+    repository::create_field(
+        &pool,
+        "auto_widget",
+        "title",
+        "text",
+        true,
+        false,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    for trigger in ["create", "update", "delete"] {
+        repository::create_automation(
+            &pool,
+            "auto_widget",
+            trigger,
+            "webhook",
+            "https://example.test/hook",
+            true,
+        )
+        .await
+        .unwrap();
+    }
+    repository::create_document(
+        &pool,
+        "auto-1",
+        "auto_widget",
+        &json!({"title": "Hi"}),
+        None,
+    )
+    .await
+    .unwrap();
+    repository::update_document(&pool, "auto-1", &json!({"title": "Yo"}), None, None)
+        .await
+        .unwrap();
+    repository::delete_document(&pool, "auto-1", None)
+        .await
+        .unwrap();
+    let deliveries = repository::list_notification_deliveries(&pool, 10, 0)
+        .await
+        .unwrap();
+    let actions: Vec<String> = deliveries.items.iter().map(|d| d.action.clone()).collect();
+    assert!(actions.contains(&"create".to_string()));
+    assert!(actions.contains(&"update".to_string()));
+    assert!(actions.contains(&"delete".to_string()));
+}
