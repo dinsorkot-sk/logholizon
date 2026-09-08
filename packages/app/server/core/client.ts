@@ -132,6 +132,16 @@ export type CoreStockLedgerEntry = { id: string; company_id: string; product_id:
 export type CorePaymentAllocation = { id: string; payment_id: string; invoice_id: string; amount: number; created_at: string }
 export type CoreTradeLine = { id: string; trade_doc_id: string; product_id?: string | null; description: string; qty: number; uom_id?: string | null; qty_base: number; unit_price: number; tax_rule_id?: string | null; line_total: number; tax: number }
 export type CoreTradeDoc = { id: string; company_id: string; kind: string; doc_type: string; status: string; partner: string; currency: string; entry_date: string; source_id?: string | null; invoice_id?: string | null; actor?: string | null; created_at: string; lines: CoreTradeLine[]; subtotal: number; tax_total: number }
+export type CoreEmployee = { id: string; company_id: string; code: string; name: string; base_salary: number; currency: string; hire_date: string; status: string; created_at: string }
+export type CoreLeaveRequest = { id: string; company_id: string; employee_id: string; kind: string; from_date: string; to_date: string; status: string; actor?: string | null; created_at: string }
+export type CorePayslip = { id: string; run_id: string; employee_id: string; gross: number; deductions: number; net: number; entry_id?: string | null; created_at: string }
+export type CorePayrollRun = { id: string; company_id: string; period: string; entry_date: string; status: string; actor?: string | null; created_at: string; payslips: CorePayslip[]; total_gross: number; total_net: number }
+export type CoreBomLine = { id: string; bom_id: string; component_id: string; qty: number; uom_id?: string | null; qty_base: number }
+export type CoreBom = { id: string; company_id: string; product_id: string; name: string; version: number; status: string; created_at: string; lines: CoreBomLine[] }
+export type CoreMfgOrder = { id: string; company_id: string; bom_id: string; product_id: string; qty: number; qty_base: number; warehouse_id: string; status: string; entry_date: string; entry_id?: string | null; actor?: string | null; created_at: string }
+export type CorePosLine = { id: string; order_id: string; product_id: string; description: string; qty: number; uom_id?: string | null; qty_base: number; unit_price: number; tax_rule_id?: string | null; line_total: number; tax: number }
+export type CorePosOrder = { id: string; session_id: string; partner: string; currency: string; status: string; tendered: number; change_due: number; entry_id?: string | null; actor?: string | null; created_at: string; lines: CorePosLine[]; subtotal: number; tax_total: number; total: number }
+export type CorePosSession = { id: string; company_id: string; name: string; warehouse_id: string; opening_cash: number; closing_cash?: number | null; status: string; entry_date: string; actor?: string | null; created_at: string; order_count: number; sales_total: number }
 export type CorePayment = { id: string; company_id: string; kind: string; partner: string; currency: string; amount: number; entry_id?: string | null; entry_date: string; actor?: string | null; created_at: string; allocations: CorePaymentAllocation[]; allocated: number; remaining: number }
 
 export type CoreGlobalAuditEntry = {
@@ -765,6 +775,117 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
     tradeToInvoice: (tradeId: string): Promise<CoreTradeDoc> =>
       request<CoreTradeDoc>(`/v1/admin/trade/${encodeURIComponent(tradeId)}/to-invoice`, {
         method: 'POST'
+      }),
+    listEmployees: (companyId: string): Promise<CoreEmployee[]> =>
+      request<CoreEmployee[]>(`/v1/admin/companies/${encodeURIComponent(companyId)}/employees`),
+    createEmployee: (
+      companyId: string,
+      input: { code: string; name: string; base_salary: number; currency: string; hire_date: string }
+    ): Promise<CoreEmployee> =>
+      request<CoreEmployee>(`/v1/admin/companies/${encodeURIComponent(companyId)}/employees`, {
+        method: 'POST',
+        body: input
+      }),
+    listLeaveRequests: (companyId: string): Promise<CoreLeaveRequest[]> =>
+      request<CoreLeaveRequest[]>(`/v1/admin/companies/${encodeURIComponent(companyId)}/leaves`),
+    requestLeave: (
+      companyId: string,
+      input: { employee_id: string; kind: string; from_date: string; to_date: string }
+    ): Promise<CoreLeaveRequest> =>
+      request<CoreLeaveRequest>(`/v1/admin/companies/${encodeURIComponent(companyId)}/leaves`, {
+        method: 'POST',
+        body: input
+      }),
+    approveLeave: (leaveId: string): Promise<CoreLeaveRequest> =>
+      request<CoreLeaveRequest>(`/v1/admin/leaves/${encodeURIComponent(leaveId)}/approve`, {
+        method: 'POST'
+      }),
+    rejectLeave: (leaveId: string): Promise<CoreLeaveRequest> =>
+      request<CoreLeaveRequest>(`/v1/admin/leaves/${encodeURIComponent(leaveId)}/reject`, {
+        method: 'POST'
+      }),
+    listPayrollRuns: (companyId: string): Promise<CorePayrollRun[]> =>
+      request<CorePayrollRun[]>(`/v1/admin/companies/${encodeURIComponent(companyId)}/payroll-runs`),
+    createPayrollRun: (
+      companyId: string,
+      input: { period: string; entry_date: string }
+    ): Promise<CorePayrollRun> =>
+      request<CorePayrollRun>(`/v1/admin/companies/${encodeURIComponent(companyId)}/payroll-runs`, {
+        method: 'POST',
+        body: input
+      }),
+    addPayslip: (
+      runId: string,
+      input: { employee_id: string; gross: number; deductions: number }
+    ): Promise<CorePayslip> =>
+      request<CorePayslip>(`/v1/admin/payroll-runs/${encodeURIComponent(runId)}/payslips`, {
+        method: 'POST',
+        body: input
+      }),
+    postPayrollRun: (runId: string): Promise<CorePayrollRun> =>
+      request<CorePayrollRun>(`/v1/admin/payroll-runs/${encodeURIComponent(runId)}/post`, {
+        method: 'POST'
+      }),
+    listBoms: (companyId: string): Promise<CoreBom[]> =>
+      request<CoreBom[]>(`/v1/admin/companies/${encodeURIComponent(companyId)}/boms`),
+    createBom: (
+      companyId: string,
+      input: { product_id: string; name: string; lines: { component_id: string; qty: number; uom_id?: string }[] }
+    ): Promise<CoreBom> =>
+      request<CoreBom>(`/v1/admin/companies/${encodeURIComponent(companyId)}/boms`, {
+        method: 'POST',
+        body: input
+      }),
+    activateBom: (bomId: string): Promise<CoreBom> =>
+      request<CoreBom>(`/v1/admin/boms/${encodeURIComponent(bomId)}/activate`, {
+        method: 'POST'
+      }),
+    listMfgOrders: (companyId: string): Promise<CoreMfgOrder[]> =>
+      request<CoreMfgOrder[]>(`/v1/admin/companies/${encodeURIComponent(companyId)}/mfg-orders`),
+    createMfgOrder: (
+      companyId: string,
+      input: { bom_id: string; qty: number; warehouse_id: string; entry_date: string }
+    ): Promise<CoreMfgOrder> =>
+      request<CoreMfgOrder>(`/v1/admin/companies/${encodeURIComponent(companyId)}/mfg-orders`, {
+        method: 'POST',
+        body: input
+      }),
+    confirmMfgOrder: (orderId: string): Promise<CoreMfgOrder> =>
+      request<CoreMfgOrder>(`/v1/admin/mfg-orders/${encodeURIComponent(orderId)}/confirm`, {
+        method: 'POST'
+      }),
+    completeMfgOrder: (orderId: string): Promise<CoreMfgOrder> =>
+      request<CoreMfgOrder>(`/v1/admin/mfg-orders/${encodeURIComponent(orderId)}/complete`, {
+        method: 'POST'
+      }),
+    listPosSessions: (companyId: string): Promise<CorePosSession[]> =>
+      request<CorePosSession[]>(`/v1/admin/companies/${encodeURIComponent(companyId)}/pos-sessions`),
+    openPosSession: (
+      companyId: string,
+      input: { name: string; warehouse_id: string; opening_cash: number; entry_date: string }
+    ): Promise<CorePosSession> =>
+      request<CorePosSession>(`/v1/admin/companies/${encodeURIComponent(companyId)}/pos-sessions`, {
+        method: 'POST',
+        body: input
+      }),
+    listPosOrders: (sessionId: string): Promise<CorePosOrder[]> =>
+      request<CorePosOrder[]>(`/v1/admin/pos-sessions/${encodeURIComponent(sessionId)}/orders`),
+    createPosOrder: (
+      sessionId: string,
+      input: { partner?: string; currency: string; tendered: number; lines: { product_id: string; description: string; qty: number; uom_id?: string; unit_price: number; tax_rule_id?: string }[] }
+    ): Promise<CorePosOrder> =>
+      request<CorePosOrder>(`/v1/admin/pos-sessions/${encodeURIComponent(sessionId)}/orders`, {
+        method: 'POST',
+        body: input
+      }),
+    voidPosOrder: (orderId: string): Promise<CorePosOrder> =>
+      request<CorePosOrder>(`/v1/admin/pos-orders/${encodeURIComponent(orderId)}/void`, {
+        method: 'POST'
+      }),
+    closePosSession: (sessionId: string, closingCash: number): Promise<CorePosSession> =>
+      request<CorePosSession>(`/v1/admin/pos-sessions/${encodeURIComponent(sessionId)}/close`, {
+        method: 'POST',
+        body: { closing_cash: closingCash }
       })
   }
 }

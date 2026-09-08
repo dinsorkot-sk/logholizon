@@ -17,6 +17,9 @@ const mainLinks = computed<NavigationMenuItem[]>(() => {
     { label: 'Stock', icon: 'i-lucide-package', to: '/app/stock' },
     { label: 'Sales', icon: 'i-lucide-shopping-cart', to: '/app/sales' },
     { label: 'Purchases', icon: 'i-lucide-truck', to: '/app/purchases' },
+    { label: 'HR', icon: 'i-lucide-users', to: '/app/hr' },
+    { label: 'Manufacturing', icon: 'i-lucide-factory', to: '/app/manufacturing' },
+    { label: 'POS', icon: 'i-lucide-scan-barcode', to: '/app/pos' },
     { label: 'Reports', icon: 'i-lucide-chart-bar', to: '/app/reports' }
   ]
   if (isAdmin.value) {
@@ -74,6 +77,9 @@ const commandGroups = computed<CommandPaletteGroup[]>(() => {
     { label: 'Stock', icon: 'i-lucide-package', to: '/app/stock' },
     { label: 'Sales', icon: 'i-lucide-shopping-cart', to: '/app/sales' },
     { label: 'Purchases', icon: 'i-lucide-truck', to: '/app/purchases' },
+    { label: 'HR', icon: 'i-lucide-users', to: '/app/hr' },
+    { label: 'Manufacturing', icon: 'i-lucide-factory', to: '/app/manufacturing' },
+    { label: 'POS', icon: 'i-lucide-scan-barcode', to: '/app/pos' },
     { label: 'Reports', icon: 'i-lucide-chart-bar', to: '/app/reports', kbds: ['g', 'r'] }
   ]
   if (isAdmin.value) {
