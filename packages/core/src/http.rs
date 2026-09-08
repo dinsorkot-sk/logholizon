@@ -86,158 +86,42 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
             axum::routing::post(reset_user_password),
         )
         .route("/v1/admin/status", get(admin_status))
-        .route(
-            "/v1/admin/companies",
-            get(list_companies).post(create_company),
-        )
-        .route(
-            "/v1/admin/currencies",
-            get(list_currencies).post(create_currency),
-        )
-        .route(
-            "/v1/admin/companies/{id}/fx-rates",
-            get(list_fx_rates).post(set_fx_rate),
-        )
-        .route("/v1/admin/convert", get(convert_money))
-        .route(
-            "/v1/admin/companies/{id}/tax-rules",
-            get(list_tax_rules).post(create_tax_rule),
-        )
-        .route(
-            "/v1/admin/companies/{id}/accounts",
-            get(list_gl_accounts).post(create_gl_account),
-        )
-        .route(
-            "/v1/admin/companies/{id}/entries",
-            get(list_journal_entries).post(post_journal_entry),
-        )
-        .route(
-            "/v1/admin/entries/{id}/void",
-            axum::routing::post(void_journal_entry),
-        )
-        .route("/v1/admin/companies/{id}/trial-balance", get(trial_balance))
-        .route(
-            "/v1/admin/companies/{id}/locks",
-            get(list_period_locks).post(lock_period),
-        )
-        .route(
-            "/v1/admin/companies/{id}/invoices",
-            get(list_invoices).post(create_invoice),
-        )
-        .route(
-            "/v1/admin/invoices/{id}/post",
-            axum::routing::post(post_invoice),
-        )
-        .route(
-            "/v1/admin/invoices/{id}/void",
-            axum::routing::post(void_invoice),
-        )
-        .route(
-            "/v1/admin/companies/{id}/payments",
-            get(list_payments).post(create_payment),
-        )
-        .route(
-            "/v1/admin/payments/{id}/allocate",
-            axum::routing::post(allocate_payment),
-        )
-        .route(
-            "/v1/admin/companies/{id}/uoms",
-            get(list_uoms).post(create_uom),
-        )
-        .route("/v1/admin/convert-uom", get(convert_uom))
-        .route(
-            "/v1/admin/companies/{id}/stock-balances",
-            get(list_stock_balances),
-        )
-        .route(
-            "/v1/admin/companies/{id}/stock-ledger",
-            get(list_stock_ledger).post(apply_stock_move),
-        )
-        .route(
-            "/v1/admin/companies/{id}/trade-docs",
-            get(list_trade_docs).post(create_trade_doc),
-        )
-        .route(
-            "/v1/admin/trade/{id}/convert",
-            axum::routing::post(convert_trade_doc),
-        )
-        .route(
-            "/v1/admin/trade/{id}/confirm",
-            axum::routing::post(confirm_trade_doc),
-        )
-        .route(
-            "/v1/admin/trade/{id}/to-invoice",
-            axum::routing::post(trade_to_invoice),
-        )
-        .route(
-            "/v1/admin/companies/{id}/employees",
-            get(list_employees).post(create_employee),
-        )
-        .route(
-            "/v1/admin/companies/{id}/leaves",
-            get(list_leave_requests).post(request_leave),
-        )
-        .route(
-            "/v1/admin/leaves/{id}/approve",
-            axum::routing::post(approve_leave),
-        )
-        .route(
-            "/v1/admin/leaves/{id}/reject",
-            axum::routing::post(reject_leave),
-        )
-        .route(
-            "/v1/admin/companies/{id}/payroll-runs",
-            get(list_payroll_runs).post(create_payroll_run),
-        )
-        .route(
-            "/v1/admin/payroll-runs/{id}/payslips",
-            axum::routing::post(add_payslip),
-        )
-        .route(
-            "/v1/admin/payroll-runs/{id}/post",
-            axum::routing::post(post_payroll_run),
-        )
-        .route(
-            "/v1/admin/companies/{id}/boms",
-            get(list_boms).post(create_bom),
-        )
-        .route(
-            "/v1/admin/boms/{id}/activate",
-            axum::routing::post(activate_bom),
-        )
-        .route(
-            "/v1/admin/companies/{id}/mfg-orders",
-            get(list_mfg_orders).post(create_mfg_order),
-        )
-        .route(
-            "/v1/admin/mfg-orders/{id}/confirm",
-            axum::routing::post(confirm_mfg_order),
-        )
-        .route(
-            "/v1/admin/mfg-orders/{id}/complete",
-            axum::routing::post(complete_mfg_order),
-        )
-        .route(
-            "/v1/admin/companies/{id}/pos-sessions",
-            get(list_pos_sessions).post(open_pos_session),
-        )
-        .route(
-            "/v1/admin/pos-sessions/{id}/orders",
-            get(list_pos_orders).post(create_pos_order),
-        )
-        .route(
-            "/v1/admin/pos-orders/{id}/void",
-            axum::routing::post(void_pos_order),
-        )
-        .route(
-            "/v1/admin/pos-sessions/{id}/close",
-            axum::routing::post(close_pos_session),
-        )
         .route("/v1/admin/backup", axum::routing::post(admin_backup))
         .route("/v1/admin/backups", get(admin_list_backups))
         .route("/v1/admin/backups/{name}", get(admin_download_backup))
         .route("/v1/admin/restore", axum::routing::post(admin_restore))
         .route("/v1/admin/restart", axum::routing::post(admin_restart))
+        .route("/v1/modules", get(list_modules).post(create_module))
+        .route(
+            "/v1/modules/{id}",
+            get(get_module).put(update_module).delete(delete_module),
+        )
+        .route("/v1/modules/{id}/manifest", get(get_module_manifest))
+        .route(
+            "/v1/modules/{id}/publish",
+            axum::routing::post(publish_module),
+        )
+        .route(
+            "/v1/modules/{id}/archive",
+            axum::routing::post(archive_module),
+        )
+        .route(
+            "/v1/modules/{id}/restore",
+            axum::routing::post(restore_module),
+        )
+        .route("/v1/modules/{id}/versions", get(list_module_versions))
+        .route(
+            "/v1/modules/{id}/rollback",
+            axum::routing::post(rollback_module),
+        )
+        .route(
+            "/v1/meta/entities/{id}/automations",
+            get(list_automations).post(create_automation),
+        )
+        .route(
+            "/v1/meta/automations/{id}",
+            axum::routing::delete(delete_automation),
+        )
         .route("/v1/meta/entities", get(list_entities).post(create_entity))
         .route(
             "/v1/meta/entities/{id}",
@@ -670,6 +554,294 @@ async fn delete_field_option(
         .await
         .map(|()| StatusCode::NO_CONTENT)
         .map_err(map_db_error)
+}
+
+// --- User-defined modules: registry, manifest, publish lifecycle ---
+
+#[derive(Debug, Deserialize)]
+pub struct CreateModuleRequest {
+    pub name: String,
+    pub label: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub definition: serde_json::Value,
+}
+
+async fn list_modules(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+) -> Result<Json<Vec<repository::Module>>, AppError> {
+    let user = user.as_ref().map(|u| u.0.clone());
+    let (owner, role) = match &user {
+        Some(user) => (user.username.as_str(), user.role.as_str()),
+        None => ("", "user"),
+    };
+    repository::list_modules(&state.pool, owner, role)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn create_module(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Json(input): Json<CreateModuleRequest>,
+) -> Result<(StatusCode, Json<repository::Module>), AppError> {
+    let definition = if input.definition.is_null() {
+        serde_json::json!({"entities": []})
+    } else {
+        input.definition
+    };
+    repository::create_module(
+        &state.pool,
+        &input.name,
+        &input.label,
+        input.description.as_deref(),
+        input.icon.as_deref(),
+        input.color.as_deref(),
+        &current_owner(&user),
+        &definition,
+        current_actor(&user).as_deref(),
+    )
+    .await
+    .map(|module| (StatusCode::CREATED, Json(module)))
+    .map_err(map_db_error)
+}
+
+async fn get_module(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::Module>, AppError> {
+    repository::get_module(
+        &state.pool,
+        &id,
+        &current_owner(&user),
+        &current_role(&user),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateModuleRequest {
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub definition: Option<serde_json::Value>,
+}
+
+async fn update_module(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+    Json(input): Json<UpdateModuleRequest>,
+) -> Result<Json<repository::Module>, AppError> {
+    repository::update_module_draft(
+        &state.pool,
+        &id,
+        input.label.as_deref(),
+        input.description.as_deref(),
+        input.icon.as_deref(),
+        input.color.as_deref(),
+        input.definition.as_ref(),
+        &current_owner(&user),
+        &current_role(&user),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
+
+async fn delete_module(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    repository::delete_module(
+        &state.pool,
+        &id,
+        &current_owner(&user),
+        &current_role(&user),
+    )
+    .await
+    .map(|()| StatusCode::NO_CONTENT)
+    .map_err(map_db_error)
+}
+
+async fn get_module_manifest(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::Module>, AppError> {
+    repository::get_module_manifest(
+        &state.pool,
+        &id,
+        &current_owner(&user),
+        &current_role(&user),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
+
+async fn publish_module(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::Module>, AppError> {
+    repository::publish_module(
+        &state.pool,
+        &id,
+        &current_owner(&user),
+        &current_role(&user),
+        current_actor(&user).as_deref(),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
+
+async fn archive_module(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::Module>, AppError> {
+    repository::archive_module(
+        &state.pool,
+        &id,
+        &current_owner(&user),
+        &current_role(&user),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
+
+async fn restore_module(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::Module>, AppError> {
+    repository::restore_module(
+        &state.pool,
+        &id,
+        &current_owner(&user),
+        &current_role(&user),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
+
+async fn list_module_versions(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<repository::ModuleVersion>>, AppError> {
+    repository::list_module_versions(
+        &state.pool,
+        &id,
+        &current_owner(&user),
+        &current_role(&user),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RollbackModuleRequest {
+    pub version: i64,
+}
+
+async fn rollback_module(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+    Json(input): Json<RollbackModuleRequest>,
+) -> Result<Json<repository::Module>, AppError> {
+    repository::rollback_module(
+        &state.pool,
+        &id,
+        input.version,
+        &current_owner(&user),
+        &current_role(&user),
+        current_actor(&user).as_deref(),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
+
+async fn list_automations(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<repository::Automation>>, AppError> {
+    repository::list_automations(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateAutomationRequest {
+    pub trigger: String,
+    #[serde(default = "default_automation_action")]
+    pub action: String,
+    pub target_url: String,
+    #[serde(default = "default_true")]
+    pub active: bool,
+}
+
+fn default_automation_action() -> String {
+    "webhook".to_string()
+}
+
+async fn create_automation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CreateAutomationRequest>,
+) -> Result<(StatusCode, Json<repository::Automation>), AppError> {
+    repository::create_automation(
+        &state.pool,
+        &id,
+        &input.trigger,
+        &input.action,
+        &input.target_url,
+        input.active,
+    )
+    .await
+    .map(|automation| (StatusCode::CREATED, Json(automation)))
+    .map_err(map_db_error)
+}
+
+async fn delete_automation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    repository::delete_automation(&state.pool, &id)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(map_db_error)
+}
+
+fn current_owner(user: &Option<axum::extract::Extension<auth::User>>) -> String {
+    user.as_ref()
+        .map(|u| u.username.clone())
+        .unwrap_or_default()
 }
 
 async fn get_workflow(
@@ -1997,1141 +2169,6 @@ async fn reset_user_password(
 }
 
 // --- Admin: status / backup / restore ---
-
-// --- M2 foundation: companies, currencies, FX, tax ---
-
-async fn list_companies(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<repository::Company>>, AppError> {
-    repository::list_companies(&state.pool)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateCompanyRequest {
-    pub name: String,
-    pub base_currency: String,
-}
-
-async fn create_company(
-    State(state): State<AppState>,
-    Json(input): Json<CreateCompanyRequest>,
-) -> Result<(StatusCode, Json<repository::Company>), AppError> {
-    repository::create_company(&state.pool, &input.name, &input.base_currency)
-        .await
-        .map(|company| (StatusCode::CREATED, Json(company)))
-        .map_err(map_db_error)
-}
-
-async fn list_currencies(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<repository::Currency>>, AppError> {
-    repository::list_currencies(&state.pool)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateCurrencyRequest {
-    pub code: String,
-    pub name: String,
-    #[serde(default = "default_currency_decimals")]
-    pub decimals: i64,
-}
-
-fn default_currency_decimals() -> i64 {
-    2
-}
-
-async fn create_currency(
-    State(state): State<AppState>,
-    Json(input): Json<CreateCurrencyRequest>,
-) -> Result<(StatusCode, Json<repository::Currency>), AppError> {
-    repository::create_currency(&state.pool, &input.code, &input.name, input.decimals)
-        .await
-        .map(|currency| (StatusCode::CREATED, Json(currency)))
-        .map_err(map_db_error)
-}
-
-async fn list_fx_rates(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<repository::FxRate>>, AppError> {
-    repository::list_fx_rates(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SetFxRateRequest {
-    pub from_currency: String,
-    pub to_currency: String,
-    pub rate: f64,
-    pub rate_date: String,
-}
-
-async fn set_fx_rate(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(input): Json<SetFxRateRequest>,
-) -> Result<(StatusCode, Json<repository::FxRate>), AppError> {
-    repository::set_fx_rate(
-        &state.pool,
-        &id,
-        &input.from_currency,
-        &input.to_currency,
-        input.rate,
-        &input.rate_date,
-    )
-    .await
-    .map(|fx| (StatusCode::CREATED, Json(fx)))
-    .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ConvertMoneyQuery {
-    pub company_id: String,
-    pub amount: i64,
-    pub from_currency: String,
-    pub to_currency: String,
-}
-
-async fn convert_money(
-    State(state): State<AppState>,
-    Query(query): Query<ConvertMoneyQuery>,
-) -> Result<Json<repository::MoneyConverted>, AppError> {
-    if query.amount < 0 {
-        return Err(AppError::BadRequest("amount must be >= 0".into()));
-    }
-    repository::convert_money(
-        &state.pool,
-        &query.company_id,
-        query.amount,
-        &query.from_currency,
-        &query.to_currency,
-    )
-    .await
-    .map(Json)
-    .map_err(map_db_error)
-}
-
-async fn list_tax_rules(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<repository::TaxRule>>, AppError> {
-    repository::list_tax_rules(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateTaxRuleRequest {
-    pub name: String,
-    pub rate: f64,
-    #[serde(default)]
-    pub is_inclusive: bool,
-    #[serde(default)]
-    pub is_withholding: bool,
-}
-
-async fn create_tax_rule(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(input): Json<CreateTaxRuleRequest>,
-) -> Result<(StatusCode, Json<repository::TaxRule>), AppError> {
-    repository::create_tax_rule(
-        &state.pool,
-        &id,
-        &input.name,
-        input.rate,
-        input.is_inclusive,
-        input.is_withholding,
-    )
-    .await
-    .map(|rule| (StatusCode::CREATED, Json(rule)))
-    .map_err(map_db_error)
-}
-
-async fn list_gl_accounts(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<repository::GlAccount>>, AppError> {
-    repository::list_gl_accounts(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateGlAccountRequest {
-    pub code: String,
-    pub name: String,
-    #[serde(rename = "type")]
-    pub account_type: String,
-}
-
-async fn create_gl_account(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(input): Json<CreateGlAccountRequest>,
-) -> Result<(StatusCode, Json<repository::GlAccount>), AppError> {
-    repository::create_gl_account(
-        &state.pool,
-        &id,
-        &input.code,
-        &input.name,
-        &input.account_type,
-    )
-    .await
-    .map(|account| (StatusCode::CREATED, Json(account)))
-    .map_err(map_db_error)
-}
-
-async fn list_journal_entries(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<repository::JournalEntry>>, AppError> {
-    repository::list_journal_entries(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct JournalLineRequest {
-    pub account_id: String,
-    #[serde(default)]
-    pub debit: i64,
-    #[serde(default)]
-    pub credit: i64,
-    #[serde(default)]
-    pub memo: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PostJournalRequest {
-    #[serde(default)]
-    pub memo: String,
-    pub entry_date: String,
-    pub lines: Vec<JournalLineRequest>,
-}
-
-async fn post_journal_entry(
-    State(state): State<AppState>,
-    user: Option<axum::extract::Extension<auth::User>>,
-    Path(id): Path<String>,
-    Json(input): Json<PostJournalRequest>,
-) -> Result<(StatusCode, Json<repository::JournalEntry>), AppError> {
-    let lines: Vec<repository::JournalLineInput> = input
-        .lines
-        .into_iter()
-        .map(|line| repository::JournalLineInput {
-            account_id: line.account_id,
-            debit: line.debit,
-            credit: line.credit,
-            memo: line.memo,
-        })
-        .collect();
-    repository::post_journal_entry(
-        &state.pool,
-        &id,
-        &input.memo,
-        &input.entry_date,
-        &lines,
-        current_actor(&user).as_deref(),
-    )
-    .await
-    .map(|entry| (StatusCode::CREATED, Json(entry)))
-    .map_err(map_db_error)
-}
-
-async fn void_journal_entry(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<repository::JournalEntry>, AppError> {
-    repository::void_journal_entry(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-async fn trial_balance(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<repository::TrialBalance>, AppError> {
-    repository::trial_balance(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-async fn list_period_locks(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<repository::PeriodLock>>, AppError> {
-    repository::list_period_locks(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct LockPeriodRequest {
-    pub period: String,
-}
-
-async fn lock_period(
-    State(state): State<AppState>,
-    user: Option<axum::extract::Extension<auth::User>>,
-    Path(id): Path<String>,
-    Json(input): Json<LockPeriodRequest>,
-) -> Result<(StatusCode, Json<repository::PeriodLock>), AppError> {
-    repository::lock_period(
-        &state.pool,
-        &id,
-        &input.period,
-        current_actor(&user).as_deref(),
-    )
-    .await
-    .map(|lock| (StatusCode::CREATED, Json(lock)))
-    .map_err(map_db_error)
-}
-
-async fn list_invoices(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<repository::Invoice>>, AppError> {
-    repository::list_invoices(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct InvoiceLineRequest {
-    pub description: String,
-    pub quantity: i64,
-    pub unit_price: i64,
-    #[serde(default)]
-    pub tax_rule_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateInvoiceRequest {
-    pub kind: String,
-    pub partner: String,
-    pub currency: String,
-    pub entry_date: String,
-    pub lines: Vec<InvoiceLineRequest>,
-}
-
-async fn create_invoice(
-    State(state): State<AppState>,
-    user: Option<axum::extract::Extension<auth::User>>,
-    Path(id): Path<String>,
-    Json(input): Json<CreateInvoiceRequest>,
-) -> Result<(StatusCode, Json<repository::Invoice>), AppError> {
-    let lines: Vec<repository::InvoiceLineInput> = input
-        .lines
-        .into_iter()
-        .map(|line| repository::InvoiceLineInput {
-            description: line.description,
-            quantity: line.quantity,
-            unit_price: line.unit_price,
-            tax_rule_id: line.tax_rule_id,
-        })
-        .collect();
-    repository::create_invoice(
-        &state.pool,
-        &id,
-        &input.kind,
-        &input.partner,
-        &input.currency,
-        &input.entry_date,
-        &lines,
-        current_actor(&user).as_deref(),
-    )
-    .await
-    .map(|invoice| (StatusCode::CREATED, Json(invoice)))
-    .map_err(map_db_error)
-}
-
-async fn post_invoice(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<repository::Invoice>, AppError> {
-    repository::post_invoice(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-async fn void_invoice(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<repository::Invoice>, AppError> {
-    repository::void_invoice(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-async fn list_payments(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<repository::Payment>>, AppError> {
-    repository::list_payments(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreatePaymentRequest {
-    pub kind: String,
-    pub partner: String,
-    pub currency: String,
-    pub amount: i64,
-    pub entry_date: String,
-}
-
-async fn create_payment(
-    State(state): State<AppState>,
-    user: Option<axum::extract::Extension<auth::User>>,
-    Path(id): Path<String>,
-    Json(input): Json<CreatePaymentRequest>,
-) -> Result<(StatusCode, Json<repository::Payment>), AppError> {
-    repository::create_payment(
-        &state.pool,
-        &id,
-        &input.kind,
-        &input.partner,
-        &input.currency,
-        input.amount,
-        &input.entry_date,
-        current_actor(&user).as_deref(),
-    )
-    .await
-    .map(|payment| (StatusCode::CREATED, Json(payment)))
-    .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AllocatePaymentRequest {
-    pub invoice_id: String,
-    pub amount: i64,
-}
-
-async fn allocate_payment(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(input): Json<AllocatePaymentRequest>,
-) -> Result<Json<repository::Payment>, AppError> {
-    repository::allocate_payment(&state.pool, &id, &input.invoice_id, input.amount)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-// --- Stock ledger: UOM, on-hand balances, moving-average valuation ---
-
-async fn list_uoms(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<repository::Uom>>, AppError> {
-    repository::list_uoms(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateUomRequest {
-    pub code: String,
-    pub name: String,
-    pub dimension: String,
-    pub factor_to_base: f64,
-    #[serde(default)]
-    pub is_base: bool,
-}
-
-async fn create_uom(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(input): Json<CreateUomRequest>,
-) -> Result<(StatusCode, Json<repository::Uom>), AppError> {
-    repository::create_uom(
-        &state.pool,
-        &id,
-        &input.code,
-        &input.name,
-        &input.dimension,
-        input.factor_to_base,
-        input.is_base,
-    )
-    .await
-    .map(|uom| (StatusCode::CREATED, Json(uom)))
-    .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ConvertUomQuery {
-    pub company_id: String,
-    pub qty: f64,
-    pub from_uom_id: String,
-    pub to_uom_id: String,
-}
-
-async fn convert_uom(
-    State(state): State<AppState>,
-    Query(query): Query<ConvertUomQuery>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    repository::convert_uom(
-        &state.pool,
-        &query.company_id,
-        query.qty,
-        &query.from_uom_id,
-        &query.to_uom_id,
-    )
-    .await
-    .map(|qty| Json(json!({ "qty": qty })))
-    .map_err(map_db_error)
-}
-
-async fn list_stock_balances(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<repository::StockBalance>>, AppError> {
-    repository::list_stock_balances(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ListStockLedgerQuery {
-    #[serde(default)]
-    pub product_id: Option<String>,
-    #[serde(default)]
-    pub warehouse_id: Option<String>,
-    #[serde(default = "default_stock_limit")]
-    pub limit: i64,
-}
-
-fn default_stock_limit() -> i64 {
-    50
-}
-
-async fn list_stock_ledger(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Query(query): Query<ListStockLedgerQuery>,
-) -> Result<Json<Vec<repository::StockLedgerEntry>>, AppError> {
-    repository::list_stock_ledger(
-        &state.pool,
-        &id,
-        query.product_id.as_deref(),
-        query.warehouse_id.as_deref(),
-        query.limit,
-    )
-    .await
-    .map(Json)
-    .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ApplyStockMoveRequest {
-    pub product_id: String,
-    pub warehouse_id: String,
-    pub move_type: String,
-    pub qty: f64,
-    #[serde(default)]
-    pub uom_id: Option<String>,
-    #[serde(default)]
-    pub unit_cost: i64,
-    pub entry_date: String,
-    #[serde(default)]
-    pub move_doc_id: Option<String>,
-}
-
-async fn apply_stock_move(
-    State(state): State<AppState>,
-    user: Option<axum::extract::Extension<auth::User>>,
-    Path(id): Path<String>,
-    Json(input): Json<ApplyStockMoveRequest>,
-) -> Result<(StatusCode, Json<repository::StockLedgerEntry>), AppError> {
-    repository::apply_stock_move(
-        &state.pool,
-        &id,
-        &input.product_id,
-        &input.warehouse_id,
-        &input.move_type,
-        input.qty,
-        input.uom_id.as_deref(),
-        input.unit_cost,
-        &input.entry_date,
-        input.move_doc_id.as_deref(),
-        current_actor(&user).as_deref(),
-    )
-    .await
-    .map(|entry| (StatusCode::CREATED, Json(entry)))
-    .map_err(map_db_error)
-}
-
-// --- Trade docs: lead/quotation/order chain with convert/confirm/to-invoice ---
-
-#[derive(Debug, Deserialize)]
-pub struct ListTradeDocsQuery {
-    #[serde(default)]
-    pub doc_type: Option<String>,
-}
-
-async fn list_trade_docs(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Query(query): Query<ListTradeDocsQuery>,
-) -> Result<Json<Vec<repository::TradeDoc>>, AppError> {
-    repository::list_trade_docs(&state.pool, &id, query.doc_type.as_deref())
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct TradeLineRequest {
-    #[serde(default)]
-    pub product_id: Option<String>,
-    pub description: String,
-    pub qty: f64,
-    #[serde(default)]
-    pub uom_id: Option<String>,
-    pub unit_price: i64,
-    #[serde(default)]
-    pub tax_rule_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateTradeRequest {
-    pub kind: String,
-    pub doc_type: String,
-    #[serde(default)]
-    pub status: Option<String>,
-    pub partner: String,
-    pub currency: String,
-    pub entry_date: String,
-    #[serde(default)]
-    pub source_id: Option<String>,
-    #[serde(default)]
-    pub lines: Vec<TradeLineRequest>,
-}
-
-async fn create_trade_doc(
-    State(state): State<AppState>,
-    user: Option<axum::extract::Extension<auth::User>>,
-    Path(id): Path<String>,
-    Json(input): Json<CreateTradeRequest>,
-) -> Result<(StatusCode, Json<repository::TradeDoc>), AppError> {
-    let lines: Vec<repository::TradeLineInput> = input
-        .lines
-        .into_iter()
-        .map(|line| repository::TradeLineInput {
-            product_id: line.product_id,
-            description: line.description,
-            qty: line.qty,
-            uom_id: line.uom_id,
-            unit_price: line.unit_price,
-            tax_rule_id: line.tax_rule_id,
-        })
-        .collect();
-    repository::create_trade_doc(
-        &state.pool,
-        &id,
-        &input.kind,
-        &input.doc_type,
-        input.status.as_deref(),
-        &input.partner,
-        &input.currency,
-        &input.entry_date,
-        input.source_id.as_deref(),
-        &lines,
-        current_actor(&user).as_deref(),
-    )
-    .await
-    .map(|doc| (StatusCode::CREATED, Json(doc)))
-    .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ConvertTradeRequest {
-    #[serde(default)]
-    pub entry_date: Option<String>,
-}
-
-async fn convert_trade_doc(
-    State(state): State<AppState>,
-    user: Option<axum::extract::Extension<auth::User>>,
-    Path(id): Path<String>,
-    Json(input): Json<ConvertTradeRequest>,
-) -> Result<(StatusCode, Json<repository::TradeDoc>), AppError> {
-    repository::convert_lead_to_quotation(
-        &state.pool,
-        &id,
-        input.entry_date.as_deref(),
-        current_actor(&user).as_deref(),
-    )
-    .await
-    .map(|doc| (StatusCode::CREATED, Json(doc)))
-    .map_err(map_db_error)
-}
-
-async fn confirm_trade_doc(
-    State(state): State<AppState>,
-    user: Option<axum::extract::Extension<auth::User>>,
-    Path(id): Path<String>,
-    Json(input): Json<ConvertTradeRequest>,
-) -> Result<(StatusCode, Json<repository::TradeDoc>), AppError> {
-    repository::confirm_quotation_to_order(
-        &state.pool,
-        &id,
-        input.entry_date.as_deref(),
-        current_actor(&user).as_deref(),
-    )
-    .await
-    .map(|doc| (StatusCode::CREATED, Json(doc)))
-    .map_err(map_db_error)
-}
-
-async fn trade_to_invoice(
-    State(state): State<AppState>,
-    user: Option<axum::extract::Extension<auth::User>>,
-    Path(id): Path<String>,
-) -> Result<(StatusCode, Json<repository::TradeDoc>), AppError> {
-    repository::invoice_from_order(&state.pool, &id, current_actor(&user).as_deref())
-        .await
-        .map(|doc| (StatusCode::CREATED, Json(doc)))
-        .map_err(map_db_error)
-}
-
-// --- HR MVP: employees, leaves, payroll runs ---
-
-async fn list_employees(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<repository::Employee>>, AppError> {
-    repository::list_employees(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateEmployeeRequest {
-    pub code: String,
-    pub name: String,
-    pub base_salary: i64,
-    pub currency: String,
-    pub hire_date: String,
-}
-
-async fn create_employee(
-    State(state): State<AppState>,
-    user: Option<axum::extract::Extension<auth::User>>,
-    Path(id): Path<String>,
-    Json(input): Json<CreateEmployeeRequest>,
-) -> Result<(StatusCode, Json<repository::Employee>), AppError> {
-    repository::create_employee(
-        &state.pool,
-        &id,
-        &input.code,
-        &input.name,
-        input.base_salary,
-        &input.currency,
-        &input.hire_date,
-        current_actor(&user).as_deref(),
-    )
-    .await
-    .map(|employee| (StatusCode::CREATED, Json(employee)))
-    .map_err(map_db_error)
-}
-
-async fn list_leave_requests(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<repository::LeaveRequest>>, AppError> {
-    repository::list_leave_requests(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RequestLeaveBody {
-    pub employee_id: String,
-    pub kind: String,
-    pub from_date: String,
-    pub to_date: String,
-}
-
-async fn request_leave(
-    State(state): State<AppState>,
-    user: Option<axum::extract::Extension<auth::User>>,
-    Path(id): Path<String>,
-    Json(input): Json<RequestLeaveBody>,
-) -> Result<(StatusCode, Json<repository::LeaveRequest>), AppError> {
-    repository::request_leave(
-        &state.pool,
-        &id,
-        &input.employee_id,
-        &input.kind,
-        &input.from_date,
-        &input.to_date,
-        current_actor(&user).as_deref(),
-    )
-    .await
-    .map(|leave| (StatusCode::CREATED, Json(leave)))
-    .map_err(map_db_error)
-}
-
-async fn approve_leave(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<repository::LeaveRequest>, AppError> {
-    repository::decide_leave(&state.pool, &id, true)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-async fn reject_leave(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<repository::LeaveRequest>, AppError> {
-    repository::decide_leave(&state.pool, &id, false)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-async fn list_payroll_runs(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<repository::PayrollRun>>, AppError> {
-    repository::list_payroll_runs(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreatePayrollRunRequest {
-    pub period: String,
-    pub entry_date: String,
-}
-
-async fn create_payroll_run(
-    State(state): State<AppState>,
-    user: Option<axum::extract::Extension<auth::User>>,
-    Path(id): Path<String>,
-    Json(input): Json<CreatePayrollRunRequest>,
-) -> Result<(StatusCode, Json<repository::PayrollRun>), AppError> {
-    repository::create_payroll_run(
-        &state.pool,
-        &id,
-        &input.period,
-        &input.entry_date,
-        current_actor(&user).as_deref(),
-    )
-    .await
-    .map(|run| (StatusCode::CREATED, Json(run)))
-    .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AddPayslipRequest {
-    pub employee_id: String,
-    pub gross: i64,
-    pub deductions: i64,
-}
-
-async fn add_payslip(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(input): Json<AddPayslipRequest>,
-) -> Result<(StatusCode, Json<repository::Payslip>), AppError> {
-    repository::add_payslip(
-        &state.pool,
-        &id,
-        &input.employee_id,
-        input.gross,
-        input.deductions,
-    )
-    .await
-    .map(|slip| (StatusCode::CREATED, Json(slip)))
-    .map_err(map_db_error)
-}
-
-async fn post_payroll_run(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<repository::PayrollRun>, AppError> {
-    repository::post_payroll_run(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-// --- Manufacturing MVP: BOMs plus orders ---
-
-async fn list_boms(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<repository::Bom>>, AppError> {
-    repository::list_boms(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct BomLineBody {
-    pub component_id: String,
-    pub qty: f64,
-    #[serde(default)]
-    pub uom_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateBomRequest {
-    pub product_id: String,
-    pub name: String,
-    pub lines: Vec<BomLineBody>,
-}
-
-async fn create_bom(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(input): Json<CreateBomRequest>,
-) -> Result<(StatusCode, Json<repository::Bom>), AppError> {
-    if !id.trim().is_empty() && input.product_id.trim().is_empty() {
-        return Err(AppError::BadRequest("product_id is required".into()));
-    }
-    let lines: Vec<repository::BomLineInput> = input
-        .lines
-        .into_iter()
-        .map(|line| repository::BomLineInput {
-            component_id: line.component_id,
-            qty: line.qty,
-            uom_id: line.uom_id,
-        })
-        .collect();
-    repository::create_bom(&state.pool, &id, &input.product_id, &input.name, &lines)
-        .await
-        .map(|bom| (StatusCode::CREATED, Json(bom)))
-        .map_err(map_db_error)
-}
-
-async fn activate_bom(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<repository::Bom>, AppError> {
-    repository::activate_bom(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-async fn list_mfg_orders(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<repository::MfgOrder>>, AppError> {
-    repository::list_mfg_orders(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateMfgOrderRequest {
-    pub bom_id: String,
-    pub qty: f64,
-    pub warehouse_id: String,
-    pub entry_date: String,
-}
-
-async fn create_mfg_order(
-    State(state): State<AppState>,
-    user: Option<axum::extract::Extension<auth::User>>,
-    Path(id): Path<String>,
-    Json(input): Json<CreateMfgOrderRequest>,
-) -> Result<(StatusCode, Json<repository::MfgOrder>), AppError> {
-    repository::create_mfg_order(
-        &state.pool,
-        &id,
-        &input.bom_id,
-        input.qty,
-        &input.warehouse_id,
-        &input.entry_date,
-        current_actor(&user).as_deref(),
-    )
-    .await
-    .map(|order| (StatusCode::CREATED, Json(order)))
-    .map_err(map_db_error)
-}
-
-async fn confirm_mfg_order(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<repository::MfgOrder>, AppError> {
-    repository::confirm_mfg_order(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-async fn complete_mfg_order(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<repository::MfgOrder>, AppError> {
-    repository::complete_mfg_order(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-// --- POS MVP: sessions plus orders ---
-
-async fn list_pos_sessions(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<repository::PosSession>>, AppError> {
-    repository::list_pos_sessions(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct OpenPosSessionRequest {
-    pub name: String,
-    pub warehouse_id: String,
-    pub opening_cash: i64,
-    pub entry_date: String,
-}
-
-async fn open_pos_session(
-    State(state): State<AppState>,
-    user: Option<axum::extract::Extension<auth::User>>,
-    Path(id): Path<String>,
-    Json(input): Json<OpenPosSessionRequest>,
-) -> Result<(StatusCode, Json<repository::PosSession>), AppError> {
-    repository::open_pos_session(
-        &state.pool,
-        &id,
-        &input.name,
-        &input.warehouse_id,
-        input.opening_cash,
-        &input.entry_date,
-        current_actor(&user).as_deref(),
-    )
-    .await
-    .map(|session| (StatusCode::CREATED, Json(session)))
-    .map_err(map_db_error)
-}
-
-async fn list_pos_orders(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<repository::PosOrder>>, AppError> {
-    repository::list_pos_orders(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PosLineBody {
-    pub product_id: String,
-    pub description: String,
-    pub qty: f64,
-    #[serde(default)]
-    pub uom_id: Option<String>,
-    pub unit_price: i64,
-    #[serde(default)]
-    pub tax_rule_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreatePosOrderRequest {
-    #[serde(default)]
-    pub partner: Option<String>,
-    pub currency: String,
-    pub tendered: i64,
-    pub lines: Vec<PosLineBody>,
-}
-
-async fn create_pos_order(
-    State(state): State<AppState>,
-    user: Option<axum::extract::Extension<auth::User>>,
-    Path(id): Path<String>,
-    Json(input): Json<CreatePosOrderRequest>,
-) -> Result<(StatusCode, Json<repository::PosOrder>), AppError> {
-    let lines: Vec<repository::PosLineInput> = input
-        .lines
-        .into_iter()
-        .map(|line| repository::PosLineInput {
-            product_id: line.product_id,
-            description: line.description,
-            qty: line.qty,
-            uom_id: line.uom_id,
-            unit_price: line.unit_price,
-            tax_rule_id: line.tax_rule_id,
-        })
-        .collect();
-    repository::create_pos_order(
-        &state.pool,
-        &id,
-        input.partner.as_deref(),
-        &input.currency,
-        input.tendered,
-        &lines,
-        current_actor(&user).as_deref(),
-    )
-    .await
-    .map(|order| (StatusCode::CREATED, Json(order)))
-    .map_err(map_db_error)
-}
-
-async fn void_pos_order(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<repository::PosOrder>, AppError> {
-    repository::void_pos_order(&state.pool, &id)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ClosePosSessionRequest {
-    pub closing_cash: i64,
-}
-
-async fn close_pos_session(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(input): Json<ClosePosSessionRequest>,
-) -> Result<Json<repository::PosSession>, AppError> {
-    repository::close_pos_session(&state.pool, &id, input.closing_cash)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
-}
-
 fn database_path(state: &AppState) -> Result<std::path::PathBuf, AppError> {
     crate::db::database_path(&state.config.database_url)
         .map(std::path::Path::to_path_buf)

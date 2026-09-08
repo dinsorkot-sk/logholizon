@@ -171,7 +171,6 @@ pub async fn seed(pool: &SqlitePool) -> Result<()> {
             .bind(id).bind(from_state).bind(to_state).bind(action).execute(&mut *tx).await?;
     }
     seed_inventory_module(&mut tx).await?;
-    seed_accounting_module(&mut tx).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -481,87 +480,6 @@ async fn seed_inventory_module(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>) -> 
     }
     Ok(())
 }
-
-/// Accounting sample module: base currencies plus a demo company with a
-/// minimal chart of accounts.
-async fn seed_accounting_module(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>) -> Result<()> {
-    for (code, name, decimals) in [("THB", "Thai Baht", 2), ("USD", "US Dollar", 2)] {
-        sqlx::query("INSERT OR IGNORE INTO _currency (code, name, decimals) VALUES (?, ?, ?)")
-            .bind(code)
-            .bind(name)
-            .bind(decimals)
-            .execute(&mut **tx)
-            .await?;
-    }
-    sqlx::query("INSERT OR IGNORE INTO _company (id, name, base_currency) VALUES ('company_acme', 'Acme Co.', 'THB')")
-        .execute(&mut **tx)
-        .await?;
-    for (id, code, name, account_type) in [
-        ("company_acme_gl_1000", "1000", "Cash", "asset"),
-        ("company_acme_gl_1100", "1100", "Receivables", "asset"),
-        ("company_acme_gl_1400", "1400", "Inventory", "asset"),
-        ("company_acme_gl_1410", "1410", "Work in Progress", "asset"),
-        ("company_acme_gl_2100", "2100", "Payables", "liability"),
-        (
-            "company_acme_gl_2200",
-            "2200",
-            "Salary Payable",
-            "liability",
-        ),
-        ("company_acme_gl_4000", "4000", "Revenue", "income"),
-        ("company_acme_gl_5000", "5000", "Purchases", "expense"),
-        (
-            "company_acme_gl_5100",
-            "5100",
-            "Cost of Goods Sold",
-            "expense",
-        ),
-        ("company_acme_gl_5290", "5290", "Cash Short", "expense"),
-        ("company_acme_gl_6000", "6000", "Salaries", "expense"),
-    ] {
-        sqlx::query(
-            "INSERT OR IGNORE INTO _gl_account (id, company_id, code, name, type) VALUES (?, 'company_acme', ?, ?, ?)",
-        )
-        .bind(id)
-        .bind(code)
-        .bind(name)
-        .bind(account_type)
-        .execute(&mut **tx)
-        .await?;
-    }
-    // Stock UOM seed: full dimensions with one base unit each.
-    for (id, code, name, dimension, factor, is_base) in [
-        ("company_acme_uom_pcs", "PCS", "Pieces", "qty", 1.0, 1),
-        ("company_acme_uom_box", "BOX", "Box", "qty", 12.0, 0),
-        ("company_acme_uom_kg", "KG", "Kilogram", "weight", 1.0, 1),
-        ("company_acme_uom_g", "G", "Gram", "weight", 0.001, 0),
-        ("company_acme_uom_m", "M", "Meter", "length", 1.0, 1),
-        ("company_acme_uom_cm", "CM", "Centimeter", "length", 0.01, 0),
-        ("company_acme_uom_l", "L", "Liter", "volume", 1.0, 1),
-        (
-            "company_acme_uom_ml",
-            "ML",
-            "Milliliter",
-            "volume",
-            0.001,
-            0,
-        ),
-    ] {
-        sqlx::query(
-            "INSERT OR IGNORE INTO _uom (id, company_id, code, name, dimension, factor_to_base, is_base) VALUES (?, 'company_acme', ?, ?, ?, ?, ?)",
-        )
-        .bind(id)
-        .bind(code)
-        .bind(name)
-        .bind(dimension)
-        .bind(factor)
-        .bind(is_base)
-        .execute(&mut **tx)
-        .await?;
-    }
-    Ok(())
-}
-
 /// Demo data for trying out the product: users + sample documents.
 /// Idempotent: existing users/documents are left untouched.
 pub async fn seed_demo(pool: &SqlitePool) -> Result<()> {

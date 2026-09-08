@@ -12,18 +12,11 @@ const mainLinks = computed<NavigationMenuItem[]>(() => {
   const links: NavigationMenuItem[] = [
     { label: 'Apps', icon: 'i-lucide-layout-grid', to: '/apps' },
     { label: 'Dashboard', icon: 'i-lucide-house', to: '/dashboard' },
-    { label: 'PM Dashboard', icon: 'i-lucide-clipboard-list', to: '/app/pm' },
-    { label: 'Accounting', icon: 'i-lucide-calculator', to: '/app/accounting' },
-    { label: 'Stock', icon: 'i-lucide-package', to: '/app/stock' },
-    { label: 'Sales', icon: 'i-lucide-shopping-cart', to: '/app/sales' },
-    { label: 'Purchases', icon: 'i-lucide-truck', to: '/app/purchases' },
-    { label: 'HR', icon: 'i-lucide-users', to: '/app/hr' },
-    { label: 'Manufacturing', icon: 'i-lucide-factory', to: '/app/manufacturing' },
-    { label: 'POS', icon: 'i-lucide-scan-barcode', to: '/app/pos' },
     { label: 'Reports', icon: 'i-lucide-chart-bar', to: '/app/reports' }
   ]
   if (isAdmin.value) {
     links.push(
+      { label: 'Module Builder', icon: 'i-lucide-box', to: '/admin/modules' },
       { label: 'Entity Manager', icon: 'i-lucide-layout-grid', to: '/admin/meta/entity' },
       { label: 'Workflow Builder', icon: 'i-lucide-git-branch', to: '/admin/meta/workflow' },
       { label: 'Users', icon: 'i-lucide-users', to: '/admin/users' },
@@ -72,18 +65,11 @@ const commandGroups = computed<CommandPaletteGroup[]>(() => {
   const nav: CommandPaletteGroup['items'] = [
     { label: 'Apps', icon: 'i-lucide-layout-grid', to: '/apps', kbds: ['g', 'a'] },
     { label: 'Dashboard', icon: 'i-lucide-house', to: '/dashboard', kbds: ['g', 'd'] },
-    { label: 'PM Dashboard', icon: 'i-lucide-clipboard-list', to: '/app/pm', kbds: ['g', 'p'] },
-    { label: 'Accounting', icon: 'i-lucide-calculator', to: '/app/accounting', kbds: ['g', 'c'] },
-    { label: 'Stock', icon: 'i-lucide-package', to: '/app/stock' },
-    { label: 'Sales', icon: 'i-lucide-shopping-cart', to: '/app/sales' },
-    { label: 'Purchases', icon: 'i-lucide-truck', to: '/app/purchases' },
-    { label: 'HR', icon: 'i-lucide-users', to: '/app/hr' },
-    { label: 'Manufacturing', icon: 'i-lucide-factory', to: '/app/manufacturing' },
-    { label: 'POS', icon: 'i-lucide-scan-barcode', to: '/app/pos' },
     { label: 'Reports', icon: 'i-lucide-chart-bar', to: '/app/reports', kbds: ['g', 'r'] }
   ]
   if (isAdmin.value) {
     nav.push(
+      { label: 'Module Builder', icon: 'i-lucide-box', to: '/admin/modules', kbds: ['g', 'm'] },
       { label: 'Entity Manager', icon: 'i-lucide-layout-grid', to: '/admin/meta/entity', kbds: ['g', 'e'] },
       { label: 'Workflow Builder', icon: 'i-lucide-git-branch', to: '/admin/meta/workflow', kbds: ['g', 'w'] },
       { label: 'Users', icon: 'i-lucide-users', to: '/admin/users', kbds: ['g', 'u'] },

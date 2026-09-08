@@ -177,192 +177,6 @@ pub struct DocAttachmentData {
     pub data: Vec<u8>,
 }
 
-/// M2 foundation: company plus currency plus FX plus tax rule.
-/// Money uses integer minor units plus ISO code; no doc scoping yet.
-#[derive(Debug, Serialize)]
-pub struct Company {
-    pub id: String,
-    pub name: String,
-    pub base_currency: String,
-    pub created_at: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct Currency {
-    pub code: String,
-    pub name: String,
-    pub decimals: i64,
-    pub created_at: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct FxRate {
-    pub id: String,
-    pub company_id: String,
-    pub from_currency: String,
-    pub to_currency: String,
-    pub rate: f64,
-    pub rate_date: String,
-    pub created_at: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct TaxRule {
-    pub id: String,
-    pub company_id: String,
-    pub name: String,
-    pub rate: f64,
-    pub is_inclusive: bool,
-    pub is_withholding: bool,
-    pub created_at: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct MoneyConverted {
-    pub amount: i64,
-    pub currency: String,
-    pub rate: f64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct TaxComputed {
-    pub net: i64,
-    pub tax: i64,
-    pub gross: i64,
-}
-
-/// M3 core ledger: CoA plus balanced journal entries plus trial balance
-/// plus period locks. Money in integer minor units per company.
-#[derive(Debug, Serialize)]
-pub struct GlAccount {
-    pub id: String,
-    pub company_id: String,
-    pub code: String,
-    pub name: String,
-    #[serde(rename = "type")]
-    pub account_type: String,
-    pub created_at: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct JournalLine {
-    pub id: String,
-    pub entry_id: String,
-    pub account_id: String,
-    pub account_code: String,
-    pub account_name: String,
-    pub debit: i64,
-    pub credit: i64,
-    pub memo: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct JournalEntry {
-    pub id: String,
-    pub company_id: String,
-    pub memo: String,
-    pub entry_date: String,
-    pub status: String,
-    pub actor: Option<String>,
-    pub created_at: String,
-    pub lines: Vec<JournalLine>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct TrialBalanceRow {
-    pub account_id: String,
-    pub code: String,
-    pub name: String,
-    #[serde(rename = "type")]
-    pub account_type: String,
-    pub debit: i64,
-    pub credit: i64,
-    pub balance: i64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct TrialBalance {
-    pub company_id: String,
-    pub total_debit: i64,
-    pub total_credit: i64,
-    pub rows: Vec<TrialBalanceRow>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PeriodLock {
-    pub company_id: String,
-    pub period: String,
-    pub actor: Option<String>,
-    pub created_at: String,
-}
-
-/// Invoice/Payment AR/AP: dedicated tables with balanced auto-post GL.
-/// Money in integer minor units; FX rate stored at post.
-#[derive(Debug, Serialize)]
-pub struct InvoiceLine {
-    pub id: String,
-    pub invoice_id: String,
-    pub description: String,
-    pub quantity: i64,
-    pub unit_price: i64,
-    pub tax_rule_id: Option<String>,
-    pub line_total: i64,
-    pub tax: i64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct Invoice {
-    pub id: String,
-    pub company_id: String,
-    pub kind: String,
-    pub partner: String,
-    pub currency: String,
-    pub fx_rate: f64,
-    pub base_total: i64,
-    pub status: String,
-    pub entry_id: Option<String>,
-    pub entry_date: String,
-    pub actor: Option<String>,
-    pub created_at: String,
-    pub lines: Vec<InvoiceLine>,
-    pub paid: i64,
-    pub remaining: i64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PaymentAllocation {
-    pub id: String,
-    pub payment_id: String,
-    pub invoice_id: String,
-    pub amount: i64,
-    pub created_at: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct Payment {
-    pub id: String,
-    pub company_id: String,
-    pub kind: String,
-    pub partner: String,
-    pub currency: String,
-    pub amount: i64,
-    pub entry_id: Option<String>,
-    pub entry_date: String,
-    pub actor: Option<String>,
-    pub created_at: String,
-    pub allocations: Vec<PaymentAllocation>,
-    pub allocated: i64,
-    pub remaining: i64,
-}
-
-#[derive(Debug, Clone)]
-pub struct InvoiceLineInput {
-    pub description: String,
-    pub quantity: i64,
-    pub unit_price: i64,
-    pub tax_rule_id: Option<String>,
-}
-
 #[derive(Debug, Serialize)]
 pub struct GlobalAuditEntry {
     pub id: String,
@@ -483,6 +297,1050 @@ pub struct PmSummary {
     pub overdue: i64,
     pub done_this_week: i64,
     pub total: i64,
+}
+
+// --- User-defined modules: registry, versioning, tenant owner ---
+
+#[derive(Debug, Serialize)]
+pub struct Module {
+    pub id: String,
+    pub name: String,
+    pub label: String,
+    pub description: String,
+    pub icon: String,
+    pub color: String,
+    pub owner: String,
+    pub status: String,
+    pub version: i64,
+    pub definition: Value,
+    pub created_by: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ModuleVersion {
+    pub id: String,
+    pub module_id: String,
+    pub version: i64,
+    pub definition: Value,
+    pub actor: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Automation {
+    pub id: String,
+    pub entity_id: String,
+    pub trigger: String,
+    pub action: String,
+    pub target_url: String,
+    pub active: bool,
+    pub created_at: String,
+}
+
+fn validate_module_name(name: &str) -> Result<()> {
+    validate_field_name(name).map_err(|_| {
+        AppError::BadRequest("module name must be lowercase snake_case (e.g. vehicle)".into())
+            .into()
+    })
+}
+
+type ModuleRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    i64,
+    String,
+    Option<String>,
+    String,
+    String,
+);
+
+#[allow(clippy::too_many_arguments)]
+fn module_row(
+    id: String,
+    name: String,
+    label: String,
+    description: String,
+    icon: String,
+    color: String,
+    owner: String,
+    status: String,
+    version: i64,
+    definition: String,
+    created_by: Option<String>,
+    created_at: String,
+    updated_at: String,
+) -> Result<Module> {
+    Ok(Module {
+        id,
+        name,
+        label,
+        description,
+        icon,
+        color,
+        owner,
+        status,
+        version,
+        definition: serde_json::from_str(&definition)?,
+        created_by,
+        created_at,
+        updated_at,
+    })
+}
+
+async fn get_module_row(pool: &SqlitePool, id: &str) -> Result<Module> {
+    #[allow(clippy::type_complexity)]
+    let row: Option<ModuleRow> = sqlx::query_as(
+        "SELECT id, name, label, description, icon, color, owner, status, version, definition, created_by, created_at, updated_at FROM _module WHERE id = ?",
+    )
+    .bind(id.trim())
+    .fetch_optional(pool)
+    .await?;
+    let Some(row) = row else {
+        return Err(AppError::NotFound(format!("module not found: {id}")).into());
+    };
+    module_row(
+        row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7, row.8, row.9, row.10, row.11,
+        row.12,
+    )
+}
+
+fn check_module_access(module: &Module, owner: &str, role: &str) -> Result<()> {
+    if role == "admin" {
+        return Ok(());
+    }
+    if !module.owner.trim().is_empty() && module.owner != owner.trim() {
+        return Err(AppError::Forbidden(format!("no access to module: {}", module.id)).into());
+    }
+    Ok(())
+}
+
+/// Validate a module definition: entities with snake_case names, known field
+/// types, reference targets inside the same definition, no self references,
+/// at most one status field per entity, and valid workflow states.
+pub fn validate_module_definition(definition: &Value) -> Result<()> {
+    let entities = definition
+        .get("entities")
+        .and_then(Value::as_array)
+        .ok_or_else(|| AppError::BadRequest("definition.entities must be an array".into()))?;
+    if entities.is_empty() {
+        return Err(
+            AppError::BadRequest("definition must declare at least one entity".into()).into(),
+        );
+    }
+    let mut names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for entity in entities {
+        let name = entity
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| AppError::BadRequest("each entity requires a name".into()))?;
+        validate_module_name(name)?;
+        if !names.insert(name.to_string()) {
+            return Err(AppError::BadRequest(format!("duplicate entity: {name}")).into());
+        }
+    }
+    for entity in entities {
+        let name = entity.get("name").and_then(Value::as_str).unwrap_or("");
+        let fields = entity
+            .get("fields")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                AppError::BadRequest(format!("entity {name} requires a fields array"))
+            })?;
+        let mut status_count = 0;
+        for field in fields {
+            let field_name = field
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    AppError::BadRequest(format!("entity {name} has a field without a name"))
+                })?;
+            validate_field_name(field_name)?;
+            let field_type = field.get("type").and_then(Value::as_str).unwrap_or("text");
+            validate_field_type(field_type)?;
+            if field
+                .get("is_status")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                if field_type != "select" {
+                    return Err(AppError::BadRequest(format!(
+                        "status field must be of type select: {name}.{field_name}"
+                    ))
+                    .into());
+                }
+                status_count += 1;
+            }
+            if field_type == "reference" {
+                let target = field
+                    .get("ref_entity")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| {
+                        AppError::BadRequest(format!(
+                            "reference field requires ref_entity: {name}.{field_name}"
+                        ))
+                    })?;
+                if target == name {
+                    return Err(AppError::BadRequest(format!(
+                        "reference field cannot point at its own entity: {name}.{field_name}"
+                    ))
+                    .into());
+                }
+                if !names.contains(target) {
+                    return Err(AppError::BadRequest(format!(
+                        "unknown ref_entity {target} in {name}.{field_name}"
+                    ))
+                    .into());
+                }
+            }
+            if field_type == "computed" {
+                let expr = field
+                    .get("computed_expr")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                validate_computed_field(field_type, Some(expr))?;
+            }
+        }
+        if status_count > 1 {
+            return Err(AppError::BadRequest(format!(
+                "entity {name} must have at most one status field"
+            ))
+            .into());
+        }
+        if let Some(workflow) = entity.get("workflow") {
+            let states: Vec<String> = workflow
+                .get("states")
+                .and_then(Value::as_array)
+                .map(|states| {
+                    states
+                        .iter()
+                        .filter_map(|s| s.get("name").and_then(Value::as_str).map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if let Some(transitions) = workflow.get("transitions").and_then(Value::as_array) {
+                for transition in transitions {
+                    let from = transition
+                        .get("from_state")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    let to = transition
+                        .get("to_state")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    if from == to {
+                        return Err(AppError::BadRequest(format!(
+                            "from_state and to_state must differ in {name}"
+                        ))
+                        .into());
+                    }
+                    for state in [from, to] {
+                        if !states.iter().any(|s| s == state) {
+                            return Err(AppError::BadRequest(format!(
+                                "unknown state {state} in {name}"
+                            ))
+                            .into());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn create_module(
+    pool: &SqlitePool,
+    name: &str,
+    label: &str,
+    description: Option<&str>,
+    icon: Option<&str>,
+    color: Option<&str>,
+    owner: &str,
+    definition: &Value,
+    actor: Option<&str>,
+) -> Result<Module> {
+    let name = name.trim();
+    let label = label.trim();
+    if name.is_empty() || label.is_empty() {
+        bail!("name and label are required");
+    }
+    validate_module_name(name)?;
+    validate_module_definition(definition)?;
+    let owner = owner.trim();
+    if owner.is_empty() {
+        bail!("owner is required");
+    }
+    let id = format!("{owner}_{name}");
+    let definition_string = serde_json::to_string(definition)?;
+    sqlx::query(
+        "INSERT INTO _module (id, name, label, description, icon, color, owner, status, version, definition, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', 1, ?, ?)",
+    )
+    .bind(&id)
+    .bind(name)
+    .bind(label)
+    .bind(description.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(""))
+    .bind(icon.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(""))
+    .bind(color.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(""))
+    .bind(owner)
+    .bind(&definition_string)
+    .bind(actor)
+    .execute(pool)
+    .await?;
+    get_module_row(pool, &id).await
+}
+
+pub async fn list_modules(pool: &SqlitePool, owner: &str, role: &str) -> Result<Vec<Module>> {
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<ModuleRow> = if role == "admin" {
+        sqlx::query_as(
+            "SELECT id, name, label, description, icon, color, owner, status, version, definition, created_by, created_at, updated_at FROM _module ORDER BY owner, name",
+        )
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query_as(
+            "SELECT id, name, label, description, icon, color, owner, status, version, definition, created_by, created_at, updated_at FROM _module WHERE owner = ? ORDER BY name",
+        )
+        .bind(owner.trim())
+        .fetch_all(pool)
+        .await?
+    };
+    let mut modules = Vec::new();
+    for row in rows {
+        modules.push(module_row(
+            row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7, row.8, row.9, row.10, row.11,
+            row.12,
+        )?);
+    }
+    Ok(modules)
+}
+
+pub async fn get_module(pool: &SqlitePool, id: &str, owner: &str, role: &str) -> Result<Module> {
+    let module = get_module_row(pool, id).await?;
+    check_module_access(&module, owner, role)?;
+    Ok(module)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn update_module_draft(
+    pool: &SqlitePool,
+    id: &str,
+    label: Option<&str>,
+    description: Option<&str>,
+    icon: Option<&str>,
+    color: Option<&str>,
+    definition: Option<&Value>,
+    owner: &str,
+    role: &str,
+) -> Result<Module> {
+    let module = get_module_row(pool, id).await?;
+    check_module_access(&module, owner, role)?;
+    if module.status != "draft" {
+        return Err(
+            AppError::Conflict(format!("module is {}: {}", module.status, module.id)).into(),
+        );
+    }
+    if let Some(definition) = definition {
+        validate_module_definition(definition)?;
+    }
+    let label = label
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&module.label);
+    let definition_string = match definition {
+        Some(definition) => serde_json::to_string(definition)?,
+        None => serde_json::to_string(&module.definition)?,
+    };
+    sqlx::query(
+        "UPDATE _module SET label = ?, description = ?, icon = ?, color = ?, definition = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    )
+    .bind(label)
+    .bind(description.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(&module.description))
+    .bind(icon.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(&module.icon))
+    .bind(color.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(&module.color))
+    .bind(&definition_string)
+    .bind(module.id.trim())
+    .execute(pool)
+    .await?;
+    get_module_row(pool, &module.id).await
+}
+
+pub async fn delete_module(pool: &SqlitePool, id: &str, owner: &str, role: &str) -> Result<()> {
+    let module = get_module_row(pool, id).await?;
+    check_module_access(&module, owner, role)?;
+    if module.status == "published" {
+        return Err(
+            AppError::Conflict(format!("archive a published module first: {}", module.id)).into(),
+        );
+    }
+    let result = sqlx::query("DELETE FROM _module WHERE id = ?")
+        .bind(module.id.trim())
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("module not found: {id}")).into());
+    }
+    Ok(())
+}
+
+async fn materialize_module_definition(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    module: &Module,
+) -> Result<()> {
+    let entities = module
+        .definition
+        .get("entities")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for entity in &entities {
+        let name = entity
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if name.is_empty() {
+            continue;
+        }
+        let label = entity
+            .get("label")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(name);
+        let entity_id = format!("{}_{}", module.id, name);
+        sqlx::query(
+            "INSERT INTO _meta_entity (id, name, label, module, module_id) VALUES (?, ?, ?, ?, ?) \
+             ON CONFLICT(id) DO UPDATE SET label = excluded.label, module = excluded.module, module_id = excluded.module_id",
+        )
+        .bind(&entity_id)
+        .bind(name)
+        .bind(label)
+        .bind(&module.label)
+        .bind(&module.id)
+        .execute(&mut **tx)
+        .await?;
+        for role in ["admin", "user"] {
+            sqlx::query(
+                "INSERT OR IGNORE INTO _entity_permission (entity_id, role, can_view, can_edit) VALUES (?, ?, 1, 1)",
+            )
+            .bind(&entity_id)
+            .bind(role)
+            .execute(&mut **tx)
+            .await?;
+        }
+        if let Some(fields) = entity.get("fields").and_then(Value::as_array) {
+            for (position, field) in fields.iter().enumerate() {
+                let field_name = field
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if field_name.is_empty() {
+                    continue;
+                }
+                let field_type = field.get("type").and_then(Value::as_str).unwrap_or("text");
+                let required = field
+                    .get("required")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let is_status = field
+                    .get("is_status")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let ref_entity = field
+                    .get("ref_entity")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|target| format!("{}_{}", module.id, target));
+                let computed_expr = field
+                    .get("computed_expr")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string);
+                let field_id = format!("{entity_id}_{field_name}");
+                sqlx::query(
+                    "INSERT INTO _meta_field (id, entity_id, name, type, required, is_status, position, ref_entity, computed_expr) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                     ON CONFLICT(id) DO UPDATE SET type = excluded.type, required = excluded.required, is_status = excluded.is_status, position = excluded.position, ref_entity = excluded.ref_entity, computed_expr = excluded.computed_expr",
+                )
+                .bind(&field_id)
+                .bind(&entity_id)
+                .bind(field_name)
+                .bind(field_type)
+                .bind(required as i64)
+                .bind(is_status as i64)
+                .bind(position as i64)
+                .bind(ref_entity.as_deref())
+                .bind(computed_expr.as_deref())
+                .execute(&mut **tx)
+                .await?;
+                for role in ["admin", "user"] {
+                    sqlx::query(
+                        "INSERT OR IGNORE INTO _field_permission (field_id, role, can_view, can_edit) VALUES (?, ?, 1, 1)",
+                    )
+                    .bind(&field_id)
+                    .bind(role)
+                    .execute(&mut **tx)
+                    .await?;
+                }
+                if let Some(options) = field.get("options").and_then(Value::as_array) {
+                    for option in options {
+                        let value = option
+                            .get("value")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .trim();
+                        let option_label = option
+                            .get("label")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or(value);
+                        if value.is_empty() {
+                            continue;
+                        }
+                        let option_id = format!("{field_id}_{value}");
+                        sqlx::query(
+                            "INSERT OR IGNORE INTO _meta_field_option (id, field_id, value, label) VALUES (?, ?, ?, ?)",
+                        )
+                        .bind(&option_id)
+                        .bind(&field_id)
+                        .bind(value)
+                        .bind(option_label)
+                        .execute(&mut **tx)
+                        .await?;
+                    }
+                }
+            }
+        }
+        if let Some(workflow) = entity.get("workflow") {
+            if let Some(states) = workflow.get("states").and_then(Value::as_array) {
+                for (position, state) in states.iter().enumerate() {
+                    let state_name = state
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim();
+                    if state_name.is_empty() {
+                        continue;
+                    }
+                    let state_label = state
+                        .get("label")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or(state_name);
+                    let state_id = format!("{entity_id}_{state_name}");
+                    sqlx::query(
+                        "INSERT INTO _workflow_state (id, entity_id, name, label, position) VALUES (?, ?, ?, ?, ?) \
+                         ON CONFLICT(id) DO UPDATE SET label = excluded.label, position = excluded.position",
+                    )
+                    .bind(&state_id)
+                    .bind(&entity_id)
+                    .bind(state_name)
+                    .bind(state_label)
+                    .bind(position as i64)
+                    .execute(&mut **tx)
+                    .await?;
+                }
+            }
+            if let Some(transitions) = workflow.get("transitions").and_then(Value::as_array) {
+                for transition in transitions {
+                    let from = transition
+                        .get("from_state")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim();
+                    let to = transition
+                        .get("to_state")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim();
+                    let action = transition
+                        .get("action")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim();
+                    if from.is_empty() || to.is_empty() || action.is_empty() {
+                        continue;
+                    }
+                    let transition_id = format!("{entity_id}_{from}_{action}");
+                    sqlx::query(
+                        "INSERT OR IGNORE INTO _workflow_transition (id, entity_id, from_state, to_state, action) VALUES (?, ?, ?, ?, ?)",
+                    )
+                    .bind(&transition_id)
+                    .bind(&entity_id)
+                    .bind(from)
+                    .bind(to)
+                    .bind(action)
+                    .execute(&mut **tx)
+                    .await?;
+                }
+            }
+        }
+        if let Some(views) = entity.get("views").and_then(Value::as_array) {
+            for view in views {
+                let view_name = view
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if view_name.is_empty() {
+                    continue;
+                }
+                let config = view
+                    .get("config")
+                    .cloned()
+                    .unwrap_or(Value::Object(Default::default()));
+                let view_id = format!("{entity_id}_view_{}", slugify_view_name(view_name));
+                sqlx::query(
+                    "INSERT OR IGNORE INTO _entity_view (id, entity_id, name, config) VALUES (?, ?, ?, ?)",
+                )
+                .bind(&view_id)
+                .bind(&entity_id)
+                .bind(view_name)
+                .bind(config.to_string())
+                .execute(&mut **tx)
+                .await?;
+            }
+        }
+        if let Some(layout) = entity.get("form_layout") {
+            let config = layout
+                .get("config")
+                .cloned()
+                .unwrap_or_else(|| layout.clone());
+            sqlx::query(
+                "INSERT INTO _entity_form_layout (entity_id, config) VALUES (?, ?) \
+                 ON CONFLICT(entity_id) DO UPDATE SET config = excluded.config",
+            )
+            .bind(&entity_id)
+            .bind(config.to_string())
+            .execute(&mut **tx)
+            .await?;
+        }
+        if let Some(reports) = entity.get("reports").and_then(Value::as_array) {
+            for report in reports {
+                let report_name = report
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if report_name.is_empty() {
+                    continue;
+                }
+                let config = report
+                    .get("config")
+                    .cloned()
+                    .unwrap_or(Value::Object(Default::default()));
+                let report_id = format!("{entity_id}_report_{}", slugify_view_name(report_name));
+                sqlx::query(
+                    "INSERT OR IGNORE INTO _report (id, entity_id, name, config) VALUES (?, ?, ?, ?)",
+                )
+                .bind(&report_id)
+                .bind(&entity_id)
+                .bind(report_name)
+                .bind(config.to_string())
+                .execute(&mut **tx)
+                .await?;
+            }
+        }
+        if let Some(notifications) = entity.get("notifications").and_then(Value::as_array) {
+            for rule in notifications {
+                let target_url = rule
+                    .get("target_url")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if target_url.is_empty() {
+                    continue;
+                }
+                let trigger = rule
+                    .get("trigger")
+                    .and_then(Value::as_str)
+                    .unwrap_or("transition");
+                let rule_id = format!("{entity_id}_rule_{}", chrono_nanos());
+                sqlx::query(
+                    "INSERT INTO _notification_rule (id, entity_id, trigger, target_url, active) VALUES (?, ?, ?, ?, ?)",
+                )
+                .bind(&rule_id)
+                .bind(&entity_id)
+                .bind(trigger)
+                .bind(target_url)
+                .bind(rule.get("active").and_then(Value::as_bool).unwrap_or(true) as i64)
+                .execute(&mut **tx)
+                .await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn slugify_view_name(name: &str) -> String {
+    name.trim()
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string()
+}
+
+async fn check_publish_compatibility(pool: &SqlitePool, module: &Module) -> Result<()> {
+    let entities = module
+        .definition
+        .get("entities")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for entity in &entities {
+        let name = entity
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if name.is_empty() {
+            continue;
+        }
+        let entity_id = format!("{}_{}", module.id, name);
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _meta_entity WHERE id = ?)")
+                .bind(&entity_id)
+                .fetch_one(pool)
+                .await?;
+        if !exists {
+            continue;
+        }
+        let stored_fields = list_fields(pool, &entity_id).await?;
+        let declared: std::collections::HashSet<String> = entity
+            .get("fields")
+            .and_then(Value::as_array)
+            .map(|fields| {
+                fields
+                    .iter()
+                    .filter_map(|f| f.get("name").and_then(Value::as_str).map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for stored in &stored_fields {
+            if !declared.contains(&stored.name) {
+                let in_use: bool =
+                    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _doc WHERE entity_id = ?)")
+                        .bind(&entity_id)
+                        .fetch_one(pool)
+                        .await?;
+                if in_use {
+                    return Err(AppError::Conflict(format!(
+                        "entity {entity_id} has records; removing field {} is blocked",
+                        stored.name
+                    ))
+                    .into());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn publish_module(
+    pool: &SqlitePool,
+    id: &str,
+    owner: &str,
+    role: &str,
+    actor: Option<&str>,
+) -> Result<Module> {
+    let module = get_module_row(pool, id).await?;
+    check_module_access(&module, owner, role)?;
+    if module.status == "archived" {
+        return Err(AppError::Conflict(format!("module is archived: {}", module.id)).into());
+    }
+    validate_module_definition(&module.definition)?;
+    check_publish_compatibility(pool, &module).await?;
+    let mut tx = pool.begin().await?;
+    materialize_module_definition(&mut tx, &module).await?;
+    let next_version = module.version + 1;
+    let definition_string = serde_json::to_string(&module.definition)?;
+    let version_id = format!("{}_{}", module.id, next_version);
+    sqlx::query(
+        "INSERT INTO _module_version (id, module_id, version, definition, actor) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(&version_id)
+    .bind(&module.id)
+    .bind(next_version)
+    .bind(&definition_string)
+    .bind(actor)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "UPDATE _module SET status = 'published', version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    )
+    .bind(next_version)
+    .bind(&module.id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    get_module_row(pool, &module.id).await
+}
+
+pub async fn archive_module(
+    pool: &SqlitePool,
+    id: &str,
+    owner: &str,
+    role: &str,
+) -> Result<Module> {
+    let module = get_module_row(pool, id).await?;
+    check_module_access(&module, owner, role)?;
+    if module.status != "published" {
+        return Err(
+            AppError::Conflict(format!("only published modules archive: {}", module.id)).into(),
+        );
+    }
+    sqlx::query(
+        "UPDATE _module SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    )
+    .bind(&module.id)
+    .execute(pool)
+    .await?;
+    get_module_row(pool, &module.id).await
+}
+
+pub async fn restore_module(
+    pool: &SqlitePool,
+    id: &str,
+    owner: &str,
+    role: &str,
+) -> Result<Module> {
+    let module = get_module_row(pool, id).await?;
+    check_module_access(&module, owner, role)?;
+    if module.status != "archived" {
+        return Err(
+            AppError::Conflict(format!("only archived modules restore: {}", module.id)).into(),
+        );
+    }
+    sqlx::query("UPDATE _module SET status = 'draft', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(&module.id)
+        .execute(pool)
+        .await?;
+    get_module_row(pool, &module.id).await
+}
+
+pub async fn list_module_versions(
+    pool: &SqlitePool,
+    id: &str,
+    owner: &str,
+    role: &str,
+) -> Result<Vec<ModuleVersion>> {
+    let module = get_module_row(pool, id).await?;
+    check_module_access(&module, owner, role)?;
+    let rows: Vec<(String, String, i64, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT id, module_id, version, definition, actor, created_at FROM _module_version WHERE module_id = ? ORDER BY version DESC",
+    )
+    .bind(&module.id)
+    .fetch_all(pool)
+    .await?;
+    let mut versions = Vec::new();
+    for (id, module_id, version, definition, actor, created_at) in rows {
+        versions.push(ModuleVersion {
+            id,
+            module_id,
+            version,
+            definition: serde_json::from_str(&definition)?,
+            actor,
+            created_at,
+        });
+    }
+    Ok(versions)
+}
+
+pub async fn rollback_module(
+    pool: &SqlitePool,
+    id: &str,
+    version: i64,
+    owner: &str,
+    role: &str,
+    actor: Option<&str>,
+) -> Result<Module> {
+    let module = get_module_row(pool, id).await?;
+    check_module_access(&module, owner, role)?;
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT definition FROM _module_version WHERE module_id = ? AND version = ?",
+    )
+    .bind(&module.id)
+    .bind(version)
+    .fetch_optional(pool)
+    .await?;
+    let Some((definition,)) = row else {
+        return Err(AppError::NotFound(format!("module version not found: {version}")).into());
+    };
+    let definition: Value = serde_json::from_str(&definition)?;
+    validate_module_definition(&definition)?;
+    let definition_string = serde_json::to_string(&definition)?;
+    sqlx::query(
+        "UPDATE _module SET definition = ?, status = 'draft', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    )
+    .bind(&definition_string)
+    .bind(&module.id)
+    .execute(pool)
+    .await?;
+    let rolled_back = get_module_row(pool, &module.id).await?;
+    check_publish_compatibility(pool, &rolled_back).await?;
+    let mut tx = pool.begin().await?;
+    materialize_module_definition(&mut tx, &rolled_back).await?;
+    let next_version = rolled_back.version + 1;
+    let version_id = format!("{}_{}", rolled_back.id, next_version);
+    sqlx::query(
+        "INSERT INTO _module_version (id, module_id, version, definition, actor) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(&version_id)
+    .bind(&rolled_back.id)
+    .bind(next_version)
+    .bind(&definition_string)
+    .bind(actor)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "UPDATE _module SET status = 'published', version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    )
+    .bind(next_version)
+    .bind(&rolled_back.id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    get_module_row(pool, &rolled_back.id).await
+}
+
+pub async fn get_module_manifest(
+    pool: &SqlitePool,
+    id: &str,
+    owner: &str,
+    role: &str,
+) -> Result<Module> {
+    get_module(pool, id, owner, role).await
+}
+
+// --- Generic automations (create/update/delete/transition triggers) ---
+
+pub async fn list_automations(pool: &SqlitePool, entity_id: &str) -> Result<Vec<Automation>> {
+    require_entity(pool, entity_id).await?;
+    let rows: Vec<(String, String, String, String, String, i64, String)> = sqlx::query_as(
+        "SELECT id, entity_id, trigger, action, target_url, active, created_at FROM _automation WHERE entity_id = ? ORDER BY created_at",
+    )
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, entity_id, trigger, action, target_url, active, created_at)| Automation {
+                id,
+                entity_id,
+                trigger,
+                action,
+                target_url,
+                active: active != 0,
+                created_at,
+            },
+        )
+        .collect())
+}
+
+pub async fn create_automation(
+    pool: &SqlitePool,
+    entity_id: &str,
+    trigger: &str,
+    action: &str,
+    target_url: &str,
+    active: bool,
+) -> Result<Automation> {
+    require_entity(pool, entity_id).await?;
+    let trigger = trigger.trim();
+    let action = action.trim();
+    if !matches!(trigger, "create" | "update" | "delete" | "transition") {
+        return Err(AppError::BadRequest(format!("invalid trigger: {trigger}")).into());
+    }
+    if !matches!(action, "webhook" | "notify") {
+        return Err(AppError::BadRequest(format!("invalid action: {action}")).into());
+    }
+    if target_url.trim().is_empty() {
+        bail!("target_url is required");
+    }
+    let id = format!("{entity_id}_automation_{}", chrono_nanos());
+    sqlx::query(
+        "INSERT INTO _automation (id, entity_id, trigger, action, target_url, active) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(entity_id)
+    .bind(trigger)
+    .bind(action)
+    .bind(target_url.trim())
+    .bind(active as i64)
+    .execute(pool)
+    .await?;
+    get_automation(pool, &id).await
+}
+
+pub async fn get_automation(pool: &SqlitePool, id: &str) -> Result<Automation> {
+    let row: Option<(String, String, String, String, String, i64, String)> = sqlx::query_as(
+        "SELECT id, entity_id, trigger, action, target_url, active, created_at FROM _automation WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    let Some((id, entity_id, trigger, action, target_url, active, created_at)) = row else {
+        return Err(AppError::NotFound(format!("automation not found: {id}")).into());
+    };
+    Ok(Automation {
+        id,
+        entity_id,
+        trigger,
+        action,
+        target_url,
+        active: active != 0,
+        created_at,
+    })
+}
+
+pub async fn delete_automation(pool: &SqlitePool, id: &str) -> Result<()> {
+    let result = sqlx::query("DELETE FROM _automation WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("automation not found: {id}")).into());
+    }
+    Ok(())
+}
+
+// --- Native extension contract (empty registry; no built-in domains) ---
+
+/// Stable contract for optional native Rust domain engines.
+/// Modules stay metadata-driven; an engine plugs in only when deterministic
+/// invariants cannot be expressed as generic rules.
+pub trait DomainExtension: Send + Sync {
+    fn name(&self) -> &'static str;
+    fn validate(&self, _definition: &Value) -> Result<()> {
+        Ok(())
+    }
+}
+
+pub fn domain_extensions() -> Vec<&'static str> {
+    Vec::new()
 }
 
 #[derive(Debug, Deserialize)]
@@ -2791,6 +3649,13 @@ pub async fn transition_document_as_role(
     check_field_permission(pool, &existing.entity_id, &status_field.name, role, true).await?;
     let mut next = existing.payload;
     next[status_field.name.as_str()] = Value::String(target.clone());
+    // Stored payloads may carry a previously computed value (get_document
+    // interpolates on read); strip computed keys before re-validating.
+    if let Some(object) = next.as_object_mut() {
+        for field in fields.iter().filter(|f| f.r#type == "computed") {
+            object.remove(&field.name);
+        }
+    }
     validate_payload_for_role(pool, &existing.entity_id, &next, role).await?;
     let mut tx = pool.begin().await?;
     let result = sqlx::query(
@@ -3749,3521 +4614,6 @@ pub async fn delete_doc_attachment_as_role(
         .execute(pool)
         .await?;
     Ok(())
-}
-
-fn valid_currency_code(code: &str) -> bool {
-    let code = code.trim();
-    code.len() == 3 && code.chars().all(|c| c.is_ascii_uppercase())
-}
-
-async fn require_currency(pool: &SqlitePool, code: &str) -> Result<Currency> {
-    let row = sqlx::query_as::<_, (String, String, i64, String)>(
-        "SELECT code, name, decimals, created_at FROM _currency WHERE code = ?",
-    )
-    .bind(code.trim())
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("currency not found: {code}")))?;
-    Ok(Currency {
-        code: row.0,
-        name: row.1,
-        decimals: row.2,
-        created_at: row.3,
-    })
-}
-
-async fn require_company(pool: &SqlitePool, id: &str) -> Result<Company> {
-    let row = sqlx::query_as::<_, (String, String, String, String)>(
-        "SELECT id, name, base_currency, created_at FROM _company WHERE id = ?",
-    )
-    .bind(id.trim())
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("company not found: {id}")))?;
-    Ok(Company {
-        id: row.0,
-        name: row.1,
-        base_currency: row.2,
-        created_at: row.3,
-    })
-}
-
-pub async fn list_companies(pool: &SqlitePool) -> Result<Vec<Company>> {
-    let rows = sqlx::query_as::<_, (String, String, String, String)>(
-        "SELECT id, name, base_currency, created_at FROM _company ORDER BY name",
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(|(id, name, base_currency, created_at)| Company {
-            id,
-            name,
-            base_currency,
-            created_at,
-        })
-        .collect())
-}
-
-pub async fn create_company(pool: &SqlitePool, name: &str, base_currency: &str) -> Result<Company> {
-    let name = name.trim();
-    let base_currency = base_currency.trim();
-    if name.is_empty() {
-        return Err(AppError::BadRequest("company name is required".into()).into());
-    }
-    if !valid_currency_code(base_currency) {
-        return Err(
-            AppError::BadRequest("base_currency must be a 3-letter ISO code".into()).into(),
-        );
-    }
-    require_currency(pool, base_currency).await?;
-    let id = format!("company_{}", slugify(name));
-    sqlx::query("INSERT INTO _company (id, name, base_currency) VALUES (?, ?, ?)")
-        .bind(&id)
-        .bind(name)
-        .bind(base_currency)
-        .execute(pool)
-        .await?;
-    require_company(pool, &id).await
-}
-
-pub async fn list_currencies(pool: &SqlitePool) -> Result<Vec<Currency>> {
-    let rows = sqlx::query_as::<_, (String, String, i64, String)>(
-        "SELECT code, name, decimals, created_at FROM _currency ORDER BY code",
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(|(code, name, decimals, created_at)| Currency {
-            code,
-            name,
-            decimals,
-            created_at,
-        })
-        .collect())
-}
-
-pub async fn create_currency(
-    pool: &SqlitePool,
-    code: &str,
-    name: &str,
-    decimals: i64,
-) -> Result<Currency> {
-    let code = code.trim();
-    let name = name.trim();
-    if !valid_currency_code(code) {
-        return Err(AppError::BadRequest("code must be a 3-letter ISO code".into()).into());
-    }
-    if name.is_empty() {
-        return Err(AppError::BadRequest("currency name is required".into()).into());
-    }
-    if !(0..=4).contains(&decimals) {
-        return Err(AppError::BadRequest("decimals must be 0..=4".into()).into());
-    }
-    sqlx::query("INSERT INTO _currency (code, name, decimals) VALUES (?, ?, ?)")
-        .bind(code)
-        .bind(name)
-        .bind(decimals)
-        .execute(pool)
-        .await?;
-    require_currency(pool, code).await
-}
-
-fn valid_rate_date(date: &str) -> bool {
-    let parts: Vec<&str> = date.split('-').collect();
-    parts.len() == 3
-        && parts[0].len() == 4
-        && parts[1].len() == 2
-        && parts[2].len() == 2
-        && parts.iter().all(|p| p.parse::<u32>().is_ok())
-}
-
-pub async fn set_fx_rate(
-    pool: &SqlitePool,
-    company_id: &str,
-    from_currency: &str,
-    to_currency: &str,
-    rate: f64,
-    rate_date: &str,
-) -> Result<FxRate> {
-    require_company(pool, company_id).await?;
-    require_currency(pool, from_currency).await?;
-    require_currency(pool, to_currency).await?;
-    if !rate.is_finite() || rate <= 0.0 {
-        return Err(AppError::BadRequest("rate must be a positive number".into()).into());
-    }
-    if !valid_rate_date(rate_date.trim()) {
-        return Err(AppError::BadRequest("rate_date must be YYYY-MM-DD".into()).into());
-    }
-    let id = format!(
-        "{company_id}_fx_{from_currency}_{to_currency}_{}",
-        chrono_nanos()
-    );
-    sqlx::query(
-        "INSERT INTO _fx_rate (id, company_id, from_currency, to_currency, rate, rate_date) VALUES (?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(company_id.trim())
-    .bind(from_currency.trim())
-    .bind(to_currency.trim())
-    .bind(rate)
-    .bind(rate_date.trim())
-    .execute(pool)
-    .await?;
-    get_fx_rate(pool, &id).await
-}
-
-async fn get_fx_rate(pool: &SqlitePool, id: &str) -> Result<FxRate> {
-    let row = sqlx::query_as::<_, (String, String, String, String, f64, String, String)>(
-        "SELECT id, company_id, from_currency, to_currency, rate, rate_date, created_at FROM _fx_rate WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("fx rate not found: {id}")))?;
-    Ok(FxRate {
-        id: row.0,
-        company_id: row.1,
-        from_currency: row.2,
-        to_currency: row.3,
-        rate: row.4,
-        rate_date: row.5,
-        created_at: row.6,
-    })
-}
-
-pub async fn list_fx_rates(pool: &SqlitePool, company_id: &str) -> Result<Vec<FxRate>> {
-    require_company(pool, company_id).await?;
-    let rows = sqlx::query_as::<_, (String, String, String, String, f64, String, String)>(
-        "SELECT id, company_id, from_currency, to_currency, rate, rate_date, created_at FROM _fx_rate WHERE company_id = ? ORDER BY rate_date DESC, created_at DESC",
-    )
-    .bind(company_id.trim())
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(
-            |(id, company_id, from_currency, to_currency, rate, rate_date, created_at)| FxRate {
-                id,
-                company_id,
-                from_currency,
-                to_currency,
-                rate,
-                rate_date,
-                created_at,
-            },
-        )
-        .collect())
-}
-
-/// Convert integer minor units using the latest FX rate for the pair.
-/// Same-currency returns the amount unchanged with rate 1.0.
-pub async fn convert_money(
-    pool: &SqlitePool,
-    company_id: &str,
-    amount: i64,
-    from_currency: &str,
-    to_currency: &str,
-) -> Result<MoneyConverted> {
-    require_company(pool, company_id).await?;
-    require_currency(pool, from_currency).await?;
-    require_currency(pool, to_currency).await?;
-    if amount < 0 {
-        return Err(AppError::BadRequest("amount must be >= 0".into()).into());
-    }
-    if from_currency.trim() == to_currency.trim() {
-        return Ok(MoneyConverted {
-            amount,
-            currency: to_currency.trim().to_string(),
-            rate: 1.0,
-        });
-    }
-    let rate: Option<f64> = sqlx::query_scalar(
-        "SELECT rate FROM _fx_rate WHERE company_id = ? AND from_currency = ? AND to_currency = ? ORDER BY rate_date DESC, created_at DESC LIMIT 1",
-    )
-    .bind(company_id.trim())
-    .bind(from_currency.trim())
-    .bind(to_currency.trim())
-    .fetch_optional(pool)
-    .await?;
-    let Some(rate) = rate else {
-        return Err(AppError::NotFound(format!(
-            "fx rate not found: {from_currency}->{to_currency}"
-        ))
-        .into());
-    };
-    Ok(MoneyConverted {
-        amount: (amount as f64 * rate).round() as i64,
-        currency: to_currency.trim().to_string(),
-        rate,
-    })
-}
-
-pub async fn list_tax_rules(pool: &SqlitePool, company_id: &str) -> Result<Vec<TaxRule>> {
-    require_company(pool, company_id).await?;
-    let rows = sqlx::query_as::<_, (String, String, String, f64, i64, i64, String)>(
-        "SELECT id, company_id, name, rate, is_inclusive, is_withholding, created_at FROM _tax_rule WHERE company_id = ? ORDER BY name",
-    )
-    .bind(company_id.trim())
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(
-            |(id, company_id, name, rate, is_inclusive, is_withholding, created_at)| TaxRule {
-                id,
-                company_id,
-                name,
-                rate,
-                is_inclusive: is_inclusive != 0,
-                is_withholding: is_withholding != 0,
-                created_at,
-            },
-        )
-        .collect())
-}
-
-pub async fn create_tax_rule(
-    pool: &SqlitePool,
-    company_id: &str,
-    name: &str,
-    rate: f64,
-    is_inclusive: bool,
-    is_withholding: bool,
-) -> Result<TaxRule> {
-    require_company(pool, company_id).await?;
-    let name = name.trim();
-    if name.is_empty() {
-        return Err(AppError::BadRequest("tax name is required".into()).into());
-    }
-    if !rate.is_finite() || rate < 0.0 || rate > 1.0 {
-        return Err(AppError::BadRequest("rate must be 0..=1".into()).into());
-    }
-    let id = format!("{company_id}_tax_{}", chrono_nanos());
-    sqlx::query(
-        "INSERT INTO _tax_rule (id, company_id, name, rate, is_inclusive, is_withholding) VALUES (?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(company_id.trim())
-    .bind(name)
-    .bind(rate)
-    .bind(i64::from(is_inclusive))
-    .bind(i64::from(is_withholding))
-    .execute(pool)
-    .await?;
-    get_tax_rule(pool, &id).await
-}
-
-async fn get_tax_rule(pool: &SqlitePool, id: &str) -> Result<TaxRule> {
-    let row = sqlx::query_as::<_, (String, String, String, f64, i64, i64, String)>(
-        "SELECT id, company_id, name, rate, is_inclusive, is_withholding, created_at FROM _tax_rule WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("tax rule not found: {id}")))?;
-    Ok(TaxRule {
-        id: row.0,
-        company_id: row.1,
-        name: row.2,
-        rate: row.3,
-        is_inclusive: row.4 != 0,
-        is_withholding: row.5 != 0,
-        created_at: row.6,
-    })
-}
-
-/// Compute net/tax/gross in minor units. Exclusive adds tax on top;
-/// inclusive extracts tax from gross; withholding subtracts tax.
-pub fn calc_tax(amount: i64, rate: f64, is_inclusive: bool, is_withholding: bool) -> TaxComputed {
-    if is_withholding {
-        let tax = (amount as f64 * rate).round() as i64;
-        return TaxComputed {
-            net: amount - tax,
-            tax,
-            gross: amount,
-        };
-    }
-    if is_inclusive {
-        let net = (amount as f64 / (1.0 + rate)).round() as i64;
-        return TaxComputed {
-            net,
-            tax: amount - net,
-            gross: amount,
-        };
-    }
-    let tax = (amount as f64 * rate).round() as i64;
-    TaxComputed {
-        net: amount,
-        tax,
-        gross: amount + tax,
-    }
-}
-
-fn slugify(name: &str) -> String {
-    let slug: String = name
-        .trim()
-        .to_lowercase()
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect();
-    let slug = slug.trim_matches('_').to_string();
-    if slug.is_empty() {
-        format!("{}", chrono_nanos())
-    } else {
-        slug
-    }
-}
-
-fn valid_account_type(account_type: &str) -> bool {
-    matches!(
-        account_type,
-        "asset" | "liability" | "equity" | "income" | "expense"
-    )
-}
-
-fn valid_entry_date(date: &str) -> bool {
-    let parts: Vec<&str> = date.split('-').collect();
-    parts.len() == 3
-        && parts[0].len() == 4
-        && parts[1].len() == 2
-        && parts[2].len() == 2
-        && parts.iter().all(|p| p.parse::<u32>().is_ok())
-}
-
-fn period_of(date: &str) -> String {
-    date.trim().chars().take(7).collect()
-}
-
-async fn require_gl_account(
-    pool: &SqlitePool,
-    company_id: &str,
-    account_id: &str,
-) -> Result<GlAccount> {
-    let row = sqlx::query_as::<_, (String, String, String, String, String, String)>(
-        "SELECT id, company_id, code, name, type, created_at FROM _gl_account WHERE id = ? AND company_id = ?",
-    )
-    .bind(account_id.trim())
-    .bind(company_id.trim())
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("account not found: {account_id}")))?;
-    Ok(GlAccount {
-        id: row.0,
-        company_id: row.1,
-        code: row.2,
-        name: row.3,
-        account_type: row.4,
-        created_at: row.5,
-    })
-}
-
-async fn period_locked(pool: &SqlitePool, company_id: &str, entry_date: &str) -> Result<bool> {
-    let period = period_of(entry_date);
-    let locked: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM _period_lock WHERE company_id = ? AND period = ?)",
-    )
-    .bind(company_id.trim())
-    .bind(period)
-    .fetch_one(pool)
-    .await?;
-    Ok(locked)
-}
-
-pub async fn list_gl_accounts(pool: &SqlitePool, company_id: &str) -> Result<Vec<GlAccount>> {
-    require_company(pool, company_id).await?;
-    let rows = sqlx::query_as::<_, (String, String, String, String, String, String)>(
-        "SELECT id, company_id, code, name, type, created_at FROM _gl_account WHERE company_id = ? ORDER BY code",
-    )
-    .bind(company_id.trim())
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(
-            |(id, company_id, code, name, account_type, created_at)| GlAccount {
-                id,
-                company_id,
-                code,
-                name,
-                account_type,
-                created_at,
-            },
-        )
-        .collect())
-}
-
-pub async fn create_gl_account(
-    pool: &SqlitePool,
-    company_id: &str,
-    code: &str,
-    name: &str,
-    account_type: &str,
-) -> Result<GlAccount> {
-    require_company(pool, company_id).await?;
-    let code = code.trim();
-    let name = name.trim();
-    let account_type = account_type.trim();
-    if code.is_empty() || code.chars().count() > 20 {
-        return Err(AppError::BadRequest("account code is required (max 20)".into()).into());
-    }
-    if name.is_empty() {
-        return Err(AppError::BadRequest("account name is required".into()).into());
-    }
-    if !valid_account_type(account_type) {
-        return Err(AppError::BadRequest(
-            "type must be asset|liability|equity|income|expense".into(),
-        )
-        .into());
-    }
-    let id = format!("{company_id}_gl_{}", slugify(code));
-    sqlx::query(
-        "INSERT INTO _gl_account (id, company_id, code, name, type) VALUES (?, ?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(company_id.trim())
-    .bind(code)
-    .bind(name)
-    .bind(account_type)
-    .execute(pool)
-    .await?;
-    require_gl_account(pool, company_id, &id).await
-}
-
-#[derive(Debug, Clone)]
-pub struct JournalLineInput {
-    pub account_id: String,
-    pub debit: i64,
-    pub credit: i64,
-    pub memo: String,
-}
-
-pub async fn post_journal_entry(
-    pool: &SqlitePool,
-    company_id: &str,
-    memo: &str,
-    entry_date: &str,
-    lines: &[JournalLineInput],
-    actor: Option<&str>,
-) -> Result<JournalEntry> {
-    require_company(pool, company_id).await?;
-    let entry_date = entry_date.trim();
-    if !valid_entry_date(entry_date) {
-        return Err(AppError::BadRequest("entry_date must be YYYY-MM-DD".into()).into());
-    }
-    if period_locked(pool, company_id, entry_date).await? {
-        return Err(AppError::Conflict(format!("period locked: {}", period_of(entry_date))).into());
-    }
-    if lines.len() < 2 {
-        return Err(AppError::BadRequest("journal requires at least 2 lines".into()).into());
-    }
-    let mut total_debit: i64 = 0;
-    let mut total_credit: i64 = 0;
-    for line in lines {
-        if line.debit < 0 || line.credit < 0 {
-            return Err(AppError::BadRequest("debit and credit must be >= 0".into()).into());
-        }
-        if (line.debit > 0 && line.credit > 0) || (line.debit == 0 && line.credit == 0) {
-            return Err(AppError::BadRequest("each line must be debit xor credit".into()).into());
-        }
-        require_gl_account(pool, company_id, &line.account_id).await?;
-        total_debit += line.debit;
-        total_credit += line.credit;
-    }
-    if total_debit == 0 || total_debit != total_credit {
-        return Err(AppError::BadRequest("debits must equal credits".into()).into());
-    }
-    let mut tx = pool.begin().await?;
-    let id = format!("{company_id}_je_{}", chrono_nanos());
-    sqlx::query(
-        "INSERT INTO _journal_entry (id, company_id, memo, entry_date, actor) VALUES (?, ?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(company_id.trim())
-    .bind(memo.trim())
-    .bind(entry_date)
-    .bind(actor)
-    .execute(&mut *tx)
-    .await?;
-    for line in lines {
-        let line_id = format!("{id}_line_{}", chrono_nanos());
-        sqlx::query(
-            "INSERT INTO _journal_line (id, entry_id, account_id, debit, credit, memo) VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&line_id)
-        .bind(&id)
-        .bind(line.account_id.trim())
-        .bind(line.debit)
-        .bind(line.credit)
-        .bind(line.memo.trim())
-        .execute(&mut *tx)
-        .await?;
-    }
-    tx.commit().await?;
-    get_journal_entry(pool, &id).await
-}
-
-pub async fn get_journal_entry(pool: &SqlitePool, entry_id: &str) -> Result<JournalEntry> {
-    let row = sqlx::query_as::<_, (String, String, String, String, String, Option<String>, String)>(
-        "SELECT id, company_id, memo, entry_date, status, actor, created_at FROM _journal_entry WHERE id = ?",
-    )
-    .bind(entry_id.trim())
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("journal entry not found: {entry_id}")))?;
-    let lines = sqlx::query_as::<_, (String, String, String, String, String, i64, i64, String)>(
-        "SELECT l.id, l.entry_id, l.account_id, a.code, a.name, l.debit, l.credit, l.memo FROM _journal_line l JOIN _gl_account a ON a.id = l.account_id WHERE l.entry_id = ? ORDER BY l.id",
-    )
-    .bind(entry_id.trim())
-    .fetch_all(pool)
-    .await?;
-    Ok(JournalEntry {
-        id: row.0,
-        company_id: row.1,
-        memo: row.2,
-        entry_date: row.3,
-        status: row.4,
-        actor: row.5,
-        created_at: row.6,
-        lines: lines
-            .into_iter()
-            .map(
-                |(id, entry_id, account_id, account_code, account_name, debit, credit, memo)| {
-                    JournalLine {
-                        id,
-                        entry_id,
-                        account_id,
-                        account_code,
-                        account_name,
-                        debit,
-                        credit,
-                        memo,
-                    }
-                },
-            )
-            .collect(),
-    })
-}
-
-pub async fn list_journal_entries(
-    pool: &SqlitePool,
-    company_id: &str,
-) -> Result<Vec<JournalEntry>> {
-    require_company(pool, company_id).await?;
-    let ids: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM _journal_entry WHERE company_id = ? ORDER BY entry_date DESC, created_at DESC LIMIT 100",
-    )
-    .bind(company_id.trim())
-    .fetch_all(pool)
-    .await?;
-    let mut entries = Vec::new();
-    for id in ids {
-        entries.push(get_journal_entry(pool, &id).await?);
-    }
-    Ok(entries)
-}
-
-pub async fn void_journal_entry(pool: &SqlitePool, entry_id: &str) -> Result<JournalEntry> {
-    let entry = get_journal_entry(pool, entry_id).await?;
-    if entry.status == "void" {
-        return Err(AppError::Conflict("entry already void".into()).into());
-    }
-    if period_locked(pool, &entry.company_id, &entry.entry_date).await? {
-        return Err(
-            AppError::Conflict(format!("period locked: {}", period_of(&entry.entry_date))).into(),
-        );
-    }
-    sqlx::query("UPDATE _journal_entry SET status = 'void' WHERE id = ?")
-        .bind(entry_id.trim())
-        .execute(pool)
-        .await?;
-    get_journal_entry(pool, entry_id).await
-}
-
-pub async fn trial_balance(pool: &SqlitePool, company_id: &str) -> Result<TrialBalance> {
-    require_company(pool, company_id).await?;
-    let accounts = list_gl_accounts(pool, company_id).await?;
-    let mut rows = Vec::new();
-    let mut total_debit: i64 = 0;
-    let mut total_credit: i64 = 0;
-    for account in accounts {
-        let sums: Option<(Option<i64>, Option<i64>)> = sqlx::query_as(
-            "SELECT SUM(l.debit), SUM(l.credit) FROM _journal_line l JOIN _journal_entry e ON e.id = l.entry_id WHERE l.account_id = ? AND e.status = 'posted'",
-        )
-        .bind(&account.id)
-        .fetch_optional(pool)
-        .await?;
-        let (debit, credit) = sums.unwrap_or((None, None));
-        let debit = debit.unwrap_or(0);
-        let credit = credit.unwrap_or(0);
-        total_debit += debit;
-        total_credit += credit;
-        rows.push(TrialBalanceRow {
-            account_id: account.id,
-            code: account.code,
-            name: account.name,
-            account_type: account.account_type,
-            debit,
-            credit,
-            balance: debit - credit,
-        });
-    }
-    Ok(TrialBalance {
-        company_id: company_id.trim().to_string(),
-        total_debit,
-        total_credit,
-        rows,
-    })
-}
-
-pub async fn list_period_locks(pool: &SqlitePool, company_id: &str) -> Result<Vec<PeriodLock>> {
-    require_company(pool, company_id).await?;
-    let rows = sqlx::query_as::<_, (String, String, Option<String>, String)>(
-        "SELECT company_id, period, actor, created_at FROM _period_lock WHERE company_id = ? ORDER BY period DESC",
-    )
-    .bind(company_id.trim())
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(|(company_id, period, actor, created_at)| PeriodLock {
-            company_id,
-            period,
-            actor,
-            created_at,
-        })
-        .collect())
-}
-
-pub async fn lock_period(
-    pool: &SqlitePool,
-    company_id: &str,
-    period: &str,
-    actor: Option<&str>,
-) -> Result<PeriodLock> {
-    require_company(pool, company_id).await?;
-    let period = period.trim();
-    if period.len() != 7 || !valid_entry_date(&format!("{period}-01")) {
-        return Err(AppError::BadRequest("period must be YYYY-MM".into()).into());
-    }
-    sqlx::query("INSERT INTO _period_lock (company_id, period, actor) VALUES (?, ?, ?)")
-        .bind(company_id.trim())
-        .bind(period)
-        .bind(actor)
-        .execute(pool)
-        .await?;
-    let row = sqlx::query_as::<_, (String, String, Option<String>, String)>(
-        "SELECT company_id, period, actor, created_at FROM _period_lock WHERE company_id = ? AND period = ?",
-    )
-    .bind(company_id.trim())
-    .bind(period)
-    .fetch_one(pool)
-    .await?;
-    Ok(PeriodLock {
-        company_id: row.0,
-        period: row.1,
-        actor: row.2,
-        created_at: row.3,
-    })
-}
-
-fn valid_invoice_kind(kind: &str) -> bool {
-    matches!(kind, "sale" | "purchase")
-}
-
-fn valid_payment_kind(kind: &str) -> bool {
-    matches!(kind, "receive" | "pay")
-}
-
-async fn gl_account_by_code(pool: &SqlitePool, company_id: &str, code: &str) -> Result<GlAccount> {
-    let row = sqlx::query_as::<_, (String, String, String, String, String, String)>(
-        "SELECT id, company_id, code, name, type, created_at FROM _gl_account WHERE company_id = ? AND code = ?",
-    )
-    .bind(company_id.trim())
-    .bind(code.trim())
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("account not found: {code}")))?;
-    Ok(GlAccount {
-        id: row.0,
-        company_id: row.1,
-        code: row.2,
-        name: row.3,
-        account_type: row.4,
-        created_at: row.5,
-    })
-}
-
-fn invoice_line_totals(line_total: i64, tax_rule: Option<&TaxRule>) -> (i64, i64) {
-    match tax_rule {
-        None => (line_total, 0),
-        Some(rule) => {
-            let computed = calc_tax(
-                line_total,
-                rule.rate,
-                rule.is_inclusive,
-                rule.is_withholding,
-            );
-            (computed.net, computed.tax)
-        }
-    }
-}
-
-async fn invoice_totals(
-    pool: &SqlitePool,
-    lines: &[InvoiceLineInput],
-) -> Result<(Vec<(InvoiceLineInput, i64, i64)>, i64, i64)> {
-    if lines.is_empty() {
-        return Err(AppError::BadRequest("invoice requires at least 1 line".into()).into());
-    }
-    let mut detailed = Vec::new();
-    let mut net: i64 = 0;
-    let mut tax: i64 = 0;
-    for line in lines {
-        let description = line.description.trim();
-        if description.is_empty() {
-            return Err(AppError::BadRequest("line description is required".into()).into());
-        }
-        if line.quantity <= 0 || line.unit_price < 0 {
-            return Err(
-                AppError::BadRequest("quantity must be > 0 and unit_price >= 0".into()).into(),
-            );
-        }
-        let line_total = line.quantity * line.unit_price;
-        let rule = match line
-            .tax_rule_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            None => None,
-            Some(id) => Some(get_tax_rule(pool, id).await?),
-        };
-        let (line_net, line_tax) = invoice_line_totals(line_total, rule.as_ref());
-        net += line_net;
-        tax += line_tax;
-        detailed.push((line.clone(), line_net, line_tax));
-    }
-    Ok((detailed, net, tax))
-}
-
-async fn get_invoice(pool: &SqlitePool, invoice_id: &str) -> Result<Invoice> {
-    let row = sqlx::query_as::<_, (String, String, String, String, String, f64, i64, String, Option<String>, String, Option<String>, String)>(
-        "SELECT id, company_id, kind, partner, currency, fx_rate, base_total, status, entry_id, entry_date, actor, created_at FROM _invoice WHERE id = ?",
-    )
-    .bind(invoice_id.trim())
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("invoice not found: {invoice_id}")))?;
-    let line_rows = sqlx::query_as::<_, (String, String, String, i64, i64, Option<String>)>(
-        "SELECT id, invoice_id, description, quantity, unit_price, tax_rule_id FROM _invoice_line WHERE invoice_id = ? ORDER BY id",
-    )
-    .bind(invoice_id.trim())
-    .fetch_all(pool)
-    .await?;
-    let mut lines = Vec::new();
-    for (id, invoice_id, description, quantity, unit_price, tax_rule_id) in line_rows {
-        let line_total = quantity * unit_price;
-        let rule = match tax_rule_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            None => None,
-            Some(rule_id) => Some(get_tax_rule(pool, rule_id).await?),
-        };
-        let (_, tax) = invoice_line_totals(line_total, rule.as_ref());
-        lines.push(InvoiceLine {
-            id,
-            invoice_id,
-            description,
-            quantity,
-            unit_price,
-            tax_rule_id,
-            line_total,
-            tax,
-        });
-    }
-    let paid: Option<i64> =
-        sqlx::query_scalar("SELECT SUM(amount) FROM _payment_allocation WHERE invoice_id = ?")
-            .bind(invoice_id.trim())
-            .fetch_one(pool)
-            .await?;
-    let paid = paid.unwrap_or(0);
-    Ok(Invoice {
-        id: row.0,
-        company_id: row.1,
-        kind: row.2,
-        partner: row.3,
-        currency: row.4,
-        fx_rate: row.5,
-        base_total: row.6,
-        status: row.7,
-        entry_id: row.8,
-        entry_date: row.9,
-        actor: row.10,
-        created_at: row.11,
-        lines,
-        paid,
-        remaining: row.6 - paid,
-    })
-}
-
-pub async fn list_invoices(pool: &SqlitePool, company_id: &str) -> Result<Vec<Invoice>> {
-    require_company(pool, company_id).await?;
-    let ids: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM _invoice WHERE company_id = ? ORDER BY entry_date DESC, created_at DESC LIMIT 100",
-    )
-    .bind(company_id.trim())
-    .fetch_all(pool)
-    .await?;
-    let mut invoices = Vec::new();
-    for id in ids {
-        invoices.push(get_invoice(pool, &id).await?);
-    }
-    Ok(invoices)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub async fn create_invoice(
-    pool: &SqlitePool,
-    company_id: &str,
-    kind: &str,
-    partner: &str,
-    currency: &str,
-    entry_date: &str,
-    lines: &[InvoiceLineInput],
-    actor: Option<&str>,
-) -> Result<Invoice> {
-    require_company(pool, company_id).await?;
-    require_currency(pool, currency).await?;
-    let kind = kind.trim();
-    let partner = partner.trim();
-    if !valid_invoice_kind(kind) {
-        return Err(AppError::BadRequest("kind must be sale|purchase".into()).into());
-    }
-    if partner.is_empty() {
-        return Err(AppError::BadRequest("partner is required".into()).into());
-    }
-    if !valid_entry_date(entry_date.trim()) {
-        return Err(AppError::BadRequest("entry_date must be YYYY-MM-DD".into()).into());
-    }
-    let (detailed, _, _) = invoice_totals(pool, lines).await?;
-    let mut tx = pool.begin().await?;
-    let id = format!("{company_id}_inv_{}", chrono_nanos());
-    sqlx::query(
-        "INSERT INTO _invoice (id, company_id, kind, partner, currency, entry_date, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(company_id.trim())
-    .bind(kind)
-    .bind(partner)
-    .bind(currency.trim())
-    .bind(entry_date.trim())
-    .bind(actor)
-    .execute(&mut *tx)
-    .await?;
-    for (line, _, _) in &detailed {
-        let line_id = format!("{id}_line_{}", chrono_nanos());
-        sqlx::query(
-            "INSERT INTO _invoice_line (id, invoice_id, description, quantity, unit_price, tax_rule_id) VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&line_id)
-        .bind(&id)
-        .bind(line.description.trim())
-        .bind(line.quantity)
-        .bind(line.unit_price)
-        .bind(line.tax_rule_id.as_deref().map(str::trim).filter(|s| !s.is_empty()))
-        .execute(&mut *tx)
-        .await?;
-    }
-    tx.commit().await?;
-    get_invoice(pool, &id).await
-}
-
-pub async fn post_invoice(pool: &SqlitePool, invoice_id: &str) -> Result<Invoice> {
-    let invoice = get_invoice(pool, invoice_id).await?;
-    if invoice.status != "draft" {
-        return Err(AppError::Conflict(format!("invoice is {}", invoice.status)).into());
-    }
-    if period_locked(pool, &invoice.company_id, &invoice.entry_date).await? {
-        return Err(AppError::Conflict(format!(
-            "period locked: {}",
-            period_of(&invoice.entry_date)
-        ))
-        .into());
-    }
-    let company = require_company(pool, &invoice.company_id).await?;
-    let converted = convert_money(
-        pool,
-        &invoice.company_id,
-        invoice.lines.iter().map(|line| line.line_total).sum(),
-        &invoice.currency,
-        &company.base_currency,
-    )
-    .await?;
-    let mut tax_base: i64 = 0;
-    for line in &invoice.lines {
-        let rule = match line
-            .tax_rule_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            None => None,
-            Some(rule_id) => Some(get_tax_rule(pool, rule_id).await?),
-        };
-        let (_, tax) = invoice_line_totals(line.line_total, rule.as_ref());
-        let tax_converted = if invoice.currency == company.base_currency {
-            tax
-        } else {
-            (tax as f64 * converted.rate).round() as i64
-        };
-        tax_base += tax_converted;
-    }
-    let base_total = converted.amount + tax_base;
-    let (ar_code, income_code) = if invoice.kind == "sale" {
-        ("1100", "4000")
-    } else {
-        ("5000", "2100")
-    };
-    let debit_account = gl_account_by_code(pool, &invoice.company_id, ar_code).await?;
-    let credit_account = gl_account_by_code(pool, &invoice.company_id, income_code).await?;
-    let entry = post_journal_entry(
-        pool,
-        &invoice.company_id,
-        &format!("Invoice {}", invoice.id),
-        &invoice.entry_date,
-        &[
-            JournalLineInput {
-                account_id: debit_account.id,
-                debit: base_total,
-                credit: 0,
-                memo: String::new(),
-            },
-            JournalLineInput {
-                account_id: credit_account.id,
-                debit: 0,
-                credit: base_total,
-                memo: String::new(),
-            },
-        ],
-        invoice.actor.as_deref(),
-    )
-    .await?;
-    sqlx::query("UPDATE _invoice SET status = 'posted', fx_rate = ?, base_total = ?, entry_id = ? WHERE id = ?")
-        .bind(converted.rate)
-        .bind(base_total)
-        .bind(&entry.id)
-        .bind(invoice.id.trim())
-        .execute(pool)
-        .await?;
-    get_invoice(pool, &invoice.id).await
-}
-
-pub async fn void_invoice(pool: &SqlitePool, invoice_id: &str) -> Result<Invoice> {
-    let invoice = get_invoice(pool, invoice_id).await?;
-    if invoice.status == "void" {
-        return Err(AppError::Conflict("invoice already void".into()).into());
-    }
-    if invoice.status == "paid" {
-        return Err(AppError::Conflict("paid invoice cannot be void".into()).into());
-    }
-    if period_locked(pool, &invoice.company_id, &invoice.entry_date).await? {
-        return Err(AppError::Conflict(format!(
-            "period locked: {}",
-            period_of(&invoice.entry_date)
-        ))
-        .into());
-    }
-    if let Some(entry_id) = invoice.entry_id.clone() {
-        void_journal_entry(pool, &entry_id).await?;
-    }
-    sqlx::query("UPDATE _invoice SET status = 'void' WHERE id = ?")
-        .bind(invoice.id.trim())
-        .execute(pool)
-        .await?;
-    get_invoice(pool, &invoice.id).await
-}
-
-async fn get_payment(pool: &SqlitePool, payment_id: &str) -> Result<Payment> {
-    let row = sqlx::query_as::<_, (String, String, String, String, String, i64, Option<String>, String, Option<String>, String)>(
-        "SELECT id, company_id, kind, partner, currency, amount, entry_id, entry_date, actor, created_at FROM _payment WHERE id = ?",
-    )
-    .bind(payment_id.trim())
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("payment not found: {payment_id}")))?;
-    let allocations = sqlx::query_as::<_, (String, String, String, i64, String)>(
-        "SELECT id, payment_id, invoice_id, amount, created_at FROM _payment_allocation WHERE payment_id = ? ORDER BY id",
-    )
-    .bind(payment_id.trim())
-    .fetch_all(pool)
-    .await?;
-    let allocated: i64 = allocations.iter().map(|allocation| allocation.3).sum();
-    Ok(Payment {
-        id: row.0,
-        company_id: row.1,
-        kind: row.2,
-        partner: row.3,
-        currency: row.4,
-        amount: row.5,
-        entry_id: row.6,
-        entry_date: row.7,
-        actor: row.8,
-        created_at: row.9,
-        allocations: allocations
-            .into_iter()
-            .map(
-                |(id, payment_id, invoice_id, amount, created_at)| PaymentAllocation {
-                    id,
-                    payment_id,
-                    invoice_id,
-                    amount,
-                    created_at,
-                },
-            )
-            .collect(),
-        allocated,
-        remaining: row.5 - allocated,
-    })
-}
-
-pub async fn list_payments(pool: &SqlitePool, company_id: &str) -> Result<Vec<Payment>> {
-    require_company(pool, company_id).await?;
-    let ids: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM _payment WHERE company_id = ? ORDER BY entry_date DESC, created_at DESC LIMIT 100",
-    )
-    .bind(company_id.trim())
-    .fetch_all(pool)
-    .await?;
-    let mut payments = Vec::new();
-    for id in ids {
-        payments.push(get_payment(pool, &id).await?);
-    }
-    Ok(payments)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub async fn create_payment(
-    pool: &SqlitePool,
-    company_id: &str,
-    kind: &str,
-    partner: &str,
-    currency: &str,
-    amount: i64,
-    entry_date: &str,
-    actor: Option<&str>,
-) -> Result<Payment> {
-    require_company(pool, company_id).await?;
-    require_currency(pool, currency).await?;
-    let kind = kind.trim();
-    let partner = partner.trim();
-    if !valid_payment_kind(kind) {
-        return Err(AppError::BadRequest("kind must be receive|pay".into()).into());
-    }
-    if partner.is_empty() {
-        return Err(AppError::BadRequest("partner is required".into()).into());
-    }
-    if amount <= 0 {
-        return Err(AppError::BadRequest("amount must be > 0".into()).into());
-    }
-    if !valid_entry_date(entry_date.trim()) {
-        return Err(AppError::BadRequest("entry_date must be YYYY-MM-DD".into()).into());
-    }
-    if period_locked(pool, company_id, entry_date.trim()).await? {
-        return Err(
-            AppError::Conflict(format!("period locked: {}", period_of(entry_date.trim()))).into(),
-        );
-    }
-    let company = require_company(pool, company_id).await?;
-    let converted =
-        convert_money(pool, company_id, amount, currency, &company.base_currency).await?;
-    let (cash_code, ar_code) = if kind == "receive" {
-        ("1000", "1100")
-    } else {
-        ("2100", "1000")
-    };
-    let debit_account = gl_account_by_code(pool, company_id, cash_code).await?;
-    let credit_account = gl_account_by_code(pool, company_id, ar_code).await?;
-    let entry = post_journal_entry(
-        pool,
-        company_id,
-        &format!("Payment {partner}"),
-        entry_date.trim(),
-        &[
-            JournalLineInput {
-                account_id: debit_account.id,
-                debit: converted.amount,
-                credit: 0,
-                memo: String::new(),
-            },
-            JournalLineInput {
-                account_id: credit_account.id,
-                debit: 0,
-                credit: converted.amount,
-                memo: String::new(),
-            },
-        ],
-        actor,
-    )
-    .await?;
-    let id = format!("{company_id}_pay_{}", chrono_nanos());
-    sqlx::query(
-        "INSERT INTO _payment (id, company_id, kind, partner, currency, amount, entry_id, entry_date, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(company_id.trim())
-    .bind(kind)
-    .bind(partner)
-    .bind(currency.trim())
-    .bind(converted.amount)
-    .bind(&entry.id)
-    .bind(entry_date.trim())
-    .bind(actor)
-    .execute(pool)
-    .await?;
-    get_payment(pool, &id).await
-}
-
-pub async fn allocate_payment(
-    pool: &SqlitePool,
-    payment_id: &str,
-    invoice_id: &str,
-    amount: i64,
-) -> Result<Payment> {
-    if amount <= 0 {
-        return Err(AppError::BadRequest("amount must be > 0".into()).into());
-    }
-    let payment = get_payment(pool, payment_id).await?;
-    let invoice = get_invoice(pool, invoice_id).await?;
-    if payment.company_id != invoice.company_id {
-        return Err(AppError::BadRequest("payment and invoice must share a company".into()).into());
-    }
-    if invoice.status != "posted" && invoice.status != "paid" {
-        return Err(AppError::BadRequest("invoice must be posted".into()).into());
-    }
-    if payment.remaining < amount {
-        return Err(AppError::BadRequest("allocation exceeds payment remaining".into()).into());
-    }
-    if invoice.remaining < amount {
-        return Err(AppError::BadRequest("allocation exceeds invoice remaining".into()).into());
-    }
-    let id = format!("{payment_id}_alloc_{}", chrono_nanos());
-    let existing: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM _payment_allocation WHERE payment_id = ? AND invoice_id = ?",
-    )
-    .bind(payment_id.trim())
-    .bind(invoice_id.trim())
-    .fetch_optional(pool)
-    .await?;
-    if let Some(existing) = existing {
-        sqlx::query("UPDATE _payment_allocation SET amount = amount + ? WHERE id = ?")
-            .bind(amount)
-            .bind(existing)
-            .execute(pool)
-            .await?;
-    } else {
-        sqlx::query(
-            "INSERT INTO _payment_allocation (id, payment_id, invoice_id, amount) VALUES (?, ?, ?, ?)",
-        )
-        .bind(&id)
-        .bind(payment_id.trim())
-        .bind(invoice_id.trim())
-        .bind(amount)
-        .execute(pool)
-        .await?;
-    }
-    let refreshed = get_invoice(pool, invoice_id).await?;
-    if refreshed.remaining == 0 && refreshed.status == "posted" {
-        sqlx::query("UPDATE _invoice SET status = 'paid' WHERE id = ?")
-            .bind(invoice_id.trim())
-            .execute(pool)
-            .await?;
-    }
-    get_payment(pool, payment_id).await
-}
-
-/// Trade docs: single table with doc_type lead/quotation/order plus chain
-/// links. Dedicated tables like invoice for transactional integrity; money
-/// in integer minor units; qty REAL stock-aligned with qty_base plus UOM.
-#[derive(Debug, Serialize)]
-pub struct TradeLine {
-    pub id: String,
-    pub trade_doc_id: String,
-    pub product_id: Option<String>,
-    pub description: String,
-    pub qty: f64,
-    pub uom_id: Option<String>,
-    pub qty_base: f64,
-    pub unit_price: i64,
-    pub tax_rule_id: Option<String>,
-    pub line_total: i64,
-    pub tax: i64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct TradeDoc {
-    pub id: String,
-    pub company_id: String,
-    pub kind: String,
-    pub doc_type: String,
-    pub status: String,
-    pub partner: String,
-    pub currency: String,
-    pub entry_date: String,
-    pub source_id: Option<String>,
-    pub invoice_id: Option<String>,
-    pub actor: Option<String>,
-    pub created_at: String,
-    pub lines: Vec<TradeLine>,
-    pub subtotal: i64,
-    pub tax_total: i64,
-}
-
-#[derive(Debug, Clone)]
-pub struct TradeLineInput {
-    pub product_id: Option<String>,
-    pub description: String,
-    pub qty: f64,
-    pub uom_id: Option<String>,
-    pub unit_price: i64,
-    pub tax_rule_id: Option<String>,
-}
-
-fn valid_trade_kind(kind: &str) -> bool {
-    matches!(kind, "sale" | "purchase")
-}
-
-fn valid_trade_doc_type(doc_type: &str) -> bool {
-    matches!(doc_type, "lead" | "quotation" | "order")
-}
-
-fn valid_trade_status(doc_type: &str, status: &str) -> bool {
-    match doc_type {
-        "lead" => matches!(status, "new" | "qualified" | "lost"),
-        "quotation" | "order" => {
-            matches!(status, "draft" | "sent" | "confirmed" | "done")
-        }
-        _ => false,
-    }
-}
-
-fn default_trade_status(doc_type: &str) -> &'static str {
-    match doc_type {
-        "lead" => "new",
-        _ => "draft",
-    }
-}
-
-async fn trade_qty_base(
-    pool: &SqlitePool,
-    company_id: &str,
-    qty: f64,
-    uom_id: Option<&str>,
-) -> Result<(f64, Option<String>)> {
-    if !qty.is_finite() || qty <= 0.0 {
-        return Err(AppError::BadRequest("qty must be > 0".into()).into());
-    }
-    match uom_id.map(str::trim).filter(|s| !s.is_empty()) {
-        None => Ok((qty, None)),
-        Some(id) => {
-            let uom = get_uom(pool, id).await?;
-            if uom.company_id != company_id.trim() {
-                return Err(AppError::BadRequest("uom belongs to another company".into()).into());
-            }
-            let qty_base = qty * uom.factor_to_base;
-            if !qty_base.is_finite() || qty_base <= 0.0 {
-                return Err(AppError::BadRequest("qty_base must be > 0".into()).into());
-            }
-            Ok((qty_base, Some(uom.id)))
-        }
-    }
-}
-
-fn trade_line_totals(qty: f64, unit_price: i64, tax_rule: Option<&TaxRule>) -> (i64, i64) {
-    let line_total = (qty * unit_price as f64).round() as i64;
-    match tax_rule {
-        None => (line_total, 0),
-        Some(rule) => {
-            let computed = calc_tax(
-                line_total,
-                rule.rate,
-                rule.is_inclusive,
-                rule.is_withholding,
-            );
-            (computed.net, computed.tax)
-        }
-    }
-}
-
-async fn get_trade_doc(pool: &SqlitePool, id: &str) -> Result<TradeDoc> {
-    let row = sqlx::query_as::<_, (String, String, String, String, String, String, String, String, Option<String>, Option<String>, Option<String>, String)>(
-        "SELECT id, company_id, kind, doc_type, status, partner, currency, entry_date, source_id, invoice_id, actor, created_at FROM _trade_doc WHERE id = ?",
-    )
-    .bind(id.trim())
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("trade doc not found: {id}")))?;
-    let line_rows = sqlx::query_as::<_, (String, String, Option<String>, String, f64, Option<String>, f64, i64, Option<String>)>(
-        "SELECT id, trade_doc_id, product_id, description, qty, uom_id, qty_base, unit_price, tax_rule_id FROM _trade_line WHERE trade_doc_id = ? ORDER BY id",
-    )
-    .bind(id.trim())
-    .fetch_all(pool)
-    .await?;
-    let mut lines = Vec::new();
-    let mut subtotal = 0i64;
-    let mut tax_total = 0i64;
-    for (
-        line_id,
-        doc_id,
-        product_id,
-        description,
-        qty,
-        uom_id,
-        qty_base,
-        unit_price,
-        tax_rule_id,
-    ) in line_rows
-    {
-        let rule = match tax_rule_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            None => None,
-            Some(rule_id) => Some(get_tax_rule(pool, rule_id).await?),
-        };
-        let (net, tax) = trade_line_totals(qty, unit_price, rule.as_ref());
-        subtotal += net;
-        tax_total += tax;
-        lines.push(TradeLine {
-            id: line_id,
-            trade_doc_id: doc_id,
-            product_id,
-            description,
-            qty,
-            uom_id,
-            qty_base,
-            unit_price,
-            tax_rule_id,
-            line_total: net + tax,
-            tax,
-        });
-    }
-    Ok(TradeDoc {
-        id: row.0,
-        company_id: row.1,
-        kind: row.2,
-        doc_type: row.3,
-        status: row.4,
-        partner: row.5,
-        currency: row.6,
-        entry_date: row.7,
-        source_id: row.8,
-        invoice_id: row.9,
-        actor: row.10,
-        created_at: row.11,
-        lines,
-        subtotal,
-        tax_total,
-    })
-}
-
-pub async fn list_trade_docs(
-    pool: &SqlitePool,
-    company_id: &str,
-    doc_type: Option<&str>,
-) -> Result<Vec<TradeDoc>> {
-    require_company(pool, company_id).await?;
-    let mut where_sql = String::from("company_id = ?");
-    let mut params: Vec<String> = vec![company_id.trim().to_string()];
-    if let Some(doc_type) = doc_type.map(str::trim).filter(|s| !s.is_empty()) {
-        if !valid_trade_doc_type(doc_type) {
-            return Err(
-                AppError::BadRequest("doc_type must be lead|quotation|order".into()).into(),
-            );
-        }
-        where_sql.push_str(" AND doc_type = ?");
-        params.push(doc_type.to_string());
-    }
-    let query = format!(
-        "SELECT id FROM _trade_doc WHERE {where_sql} ORDER BY entry_date DESC, created_at DESC LIMIT 100"
-    );
-    let mut query_builder = sqlx::query_scalar::<_, String>(&query);
-    for param in &params {
-        query_builder = query_builder.bind(param);
-    }
-    let ids: Vec<String> = query_builder.fetch_all(pool).await?;
-    let mut docs = Vec::new();
-    for id in ids {
-        docs.push(get_trade_doc(pool, &id).await?);
-    }
-    Ok(docs)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub async fn create_trade_doc(
-    pool: &SqlitePool,
-    company_id: &str,
-    kind: &str,
-    doc_type: &str,
-    status: Option<&str>,
-    partner: &str,
-    currency: &str,
-    entry_date: &str,
-    source_id: Option<&str>,
-    lines: &[TradeLineInput],
-    actor: Option<&str>,
-) -> Result<TradeDoc> {
-    require_company(pool, company_id).await?;
-    require_currency(pool, currency).await?;
-    let kind = kind.trim();
-    let doc_type = doc_type.trim();
-    if !valid_trade_kind(kind) {
-        return Err(AppError::BadRequest("kind must be sale|purchase".into()).into());
-    }
-    if !valid_trade_doc_type(doc_type) {
-        return Err(AppError::BadRequest("doc_type must be lead|quotation|order".into()).into());
-    }
-    let status = status
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or(default_trade_status(doc_type));
-    if !valid_trade_status(doc_type, status) {
-        return Err(AppError::BadRequest(format!("invalid status {status} for {doc_type}")).into());
-    }
-    if partner.trim().is_empty() {
-        return Err(AppError::BadRequest("partner is required".into()).into());
-    }
-    if !valid_entry_date(entry_date.trim()) {
-        return Err(AppError::BadRequest("entry_date must be YYYY-MM-DD".into()).into());
-    }
-    if period_locked(pool, company_id, entry_date.trim()).await? {
-        return Err(
-            AppError::Conflict(format!("period locked: {}", period_of(entry_date.trim()))).into(),
-        );
-    }
-    if let Some(source) = source_id.map(str::trim).filter(|s| !s.is_empty()) {
-        let parent = get_trade_doc(pool, source).await?;
-        if parent.company_id != company_id.trim() {
-            return Err(AppError::BadRequest("source belongs to another company".into()).into());
-        }
-    }
-    let needs_lines = !matches!(doc_type, "lead");
-    if needs_lines && lines.is_empty() {
-        return Err(AppError::BadRequest("quotation/order requires at least 1 line".into()).into());
-    }
-    let mut resolved: Vec<(TradeLineInput, f64, Option<String>)> = Vec::new();
-    for line in lines {
-        if line.description.trim().is_empty() {
-            return Err(AppError::BadRequest("line description is required".into()).into());
-        }
-        if line.unit_price < 0 {
-            return Err(AppError::BadRequest("unit_price must be >= 0".into()).into());
-        }
-        if let Some(rule_id) = line
-            .tax_rule_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            get_tax_rule(pool, rule_id).await?;
-        }
-        let (qty_base, resolved_uom) =
-            trade_qty_base(pool, company_id, line.qty, line.uom_id.as_deref()).await?;
-        resolved.push((line.clone(), qty_base, resolved_uom));
-    }
-    let mut tx = pool.begin().await?;
-    let id = format!("{company_id}_trade_{}", chrono_nanos());
-    sqlx::query(
-        "INSERT INTO _trade_doc (id, company_id, kind, doc_type, status, partner, currency, entry_date, source_id, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(company_id.trim())
-    .bind(kind)
-    .bind(doc_type)
-    .bind(status)
-    .bind(partner.trim())
-    .bind(currency.trim())
-    .bind(entry_date.trim())
-    .bind(source_id.map(str::trim).filter(|s| !s.is_empty()))
-    .bind(actor)
-    .execute(&mut *tx)
-    .await?;
-    for (line, qty_base, resolved_uom) in &resolved {
-        let line_id = format!("{id}_line_{}", chrono_nanos());
-        sqlx::query(
-            "INSERT INTO _trade_line (id, trade_doc_id, product_id, description, qty, uom_id, qty_base, unit_price, tax_rule_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&line_id)
-        .bind(&id)
-        .bind(
-            line.product_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty()),
-        )
-        .bind(line.description.trim())
-        .bind(line.qty)
-        .bind(resolved_uom.clone())
-        .bind(qty_base)
-        .bind(line.unit_price)
-        .bind(
-            line.tax_rule_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty()),
-        )
-        .execute(&mut *tx)
-        .await?;
-    }
-    tx.commit().await?;
-    get_trade_doc(pool, &id).await
-}
-
-pub async fn convert_lead_to_quotation(
-    pool: &SqlitePool,
-    lead_id: &str,
-    entry_date: Option<&str>,
-    actor: Option<&str>,
-) -> Result<TradeDoc> {
-    let lead = get_trade_doc(pool, lead_id).await?;
-    if lead.doc_type != "lead" {
-        return Err(AppError::BadRequest("source is not a lead".into()).into());
-    }
-    let exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _trade_doc WHERE source_id = ?)")
-            .bind(lead_id.trim())
-            .fetch_one(pool)
-            .await?;
-    if exists {
-        return Err(AppError::Conflict("lead already converted".into()).into());
-    }
-    if lead.status != "new" {
-        return Err(AppError::Conflict(format!("lead is {}", lead.status)).into());
-    }
-    let entry_date = entry_date.unwrap_or(&lead.entry_date).trim().to_string();
-    if !valid_entry_date(&entry_date) {
-        return Err(AppError::BadRequest("entry_date must be YYYY-MM-DD".into()).into());
-    }
-    if period_locked(pool, &lead.company_id, &entry_date).await? {
-        return Err(
-            AppError::Conflict(format!("period locked: {}", period_of(&entry_date))).into(),
-        );
-    }
-    let inputs: Vec<TradeLineInput> = lead
-        .lines
-        .iter()
-        .map(|line| TradeLineInput {
-            product_id: line.product_id.clone(),
-            description: line.description.clone(),
-            qty: line.qty,
-            uom_id: line.uom_id.clone(),
-            unit_price: line.unit_price,
-            tax_rule_id: line.tax_rule_id.clone(),
-        })
-        .collect();
-    let quote = create_trade_doc(
-        pool,
-        &lead.company_id,
-        &lead.kind,
-        "quotation",
-        Some("draft"),
-        &lead.partner,
-        &lead.currency,
-        &entry_date,
-        Some(&lead.id),
-        &inputs,
-        actor,
-    )
-    .await?;
-    sqlx::query("UPDATE _trade_doc SET status = 'qualified' WHERE id = ?")
-        .bind(lead.id.trim())
-        .execute(pool)
-        .await?;
-    get_trade_doc(pool, &quote.id).await
-}
-
-pub async fn confirm_quotation_to_order(
-    pool: &SqlitePool,
-    quotation_id: &str,
-    entry_date: Option<&str>,
-    actor: Option<&str>,
-) -> Result<TradeDoc> {
-    let quote = get_trade_doc(pool, quotation_id).await?;
-    if quote.doc_type != "quotation" {
-        return Err(AppError::BadRequest("source is not a quotation".into()).into());
-    }
-    let exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _trade_doc WHERE source_id = ?)")
-            .bind(quotation_id.trim())
-            .fetch_one(pool)
-            .await?;
-    if exists {
-        return Err(AppError::Conflict("quotation already converted".into()).into());
-    }
-    if !matches!(quote.status.as_str(), "draft" | "sent") {
-        return Err(AppError::Conflict(format!("quotation is {}", quote.status)).into());
-    }
-    let entry_date = entry_date.unwrap_or(&quote.entry_date).trim().to_string();
-    if !valid_entry_date(&entry_date) {
-        return Err(AppError::BadRequest("entry_date must be YYYY-MM-DD".into()).into());
-    }
-    if period_locked(pool, &quote.company_id, &entry_date).await? {
-        return Err(
-            AppError::Conflict(format!("period locked: {}", period_of(&entry_date))).into(),
-        );
-    }
-    let inputs: Vec<TradeLineInput> = quote
-        .lines
-        .iter()
-        .map(|line| TradeLineInput {
-            product_id: line.product_id.clone(),
-            description: line.description.clone(),
-            qty: line.qty,
-            uom_id: line.uom_id.clone(),
-            unit_price: line.unit_price,
-            tax_rule_id: line.tax_rule_id.clone(),
-        })
-        .collect();
-    let order = create_trade_doc(
-        pool,
-        &quote.company_id,
-        &quote.kind,
-        "order",
-        Some("confirmed"),
-        &quote.partner,
-        &quote.currency,
-        &entry_date,
-        Some(&quote.id),
-        &inputs,
-        actor,
-    )
-    .await?;
-    sqlx::query("UPDATE _trade_doc SET status = 'confirmed' WHERE id = ?")
-        .bind(quote.id.trim())
-        .execute(pool)
-        .await?;
-    get_trade_doc(pool, &order.id).await
-}
-
-pub async fn invoice_from_order(
-    pool: &SqlitePool,
-    order_id: &str,
-    actor: Option<&str>,
-) -> Result<TradeDoc> {
-    let order = get_trade_doc(pool, order_id).await?;
-    if order.doc_type != "order" {
-        return Err(AppError::BadRequest("source is not an order".into()).into());
-    }
-    if !matches!(order.status.as_str(), "confirmed" | "done") {
-        return Err(AppError::Conflict(format!("order is {}", order.status)).into());
-    }
-    if order
-        .invoice_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .is_some()
-    {
-        return Err(AppError::Conflict("order already invoiced".into()).into());
-    }
-    if order.lines.is_empty() {
-        return Err(AppError::BadRequest("order has no lines".into()).into());
-    }
-    let mut invoice_lines: Vec<InvoiceLineInput> = Vec::new();
-    for line in &order.lines {
-        if line.qty.fract().abs() > 1e-9 {
-            return Err(AppError::BadRequest(format!(
-                "fractional qty cannot be invoiced: {}",
-                line.description
-            ))
-            .into());
-        }
-        let qty = line.qty.round() as i64;
-        if qty <= 0 {
-            return Err(AppError::BadRequest("quantity must be > 0".into()).into());
-        }
-        invoice_lines.push(InvoiceLineInput {
-            description: line.description.clone(),
-            quantity: qty,
-            unit_price: line.unit_price,
-            tax_rule_id: line.tax_rule_id.clone(),
-        });
-    }
-    let draft = create_invoice(
-        pool,
-        &order.company_id,
-        &order.kind,
-        &order.partner,
-        &order.currency,
-        &order.entry_date,
-        &invoice_lines,
-        actor,
-    )
-    .await?;
-    let posted = post_invoice(pool, &draft.id).await?;
-    sqlx::query("UPDATE _trade_doc SET invoice_id = ?, status = 'done' WHERE id = ?")
-        .bind(&posted.id)
-        .bind(order.id.trim())
-        .execute(pool)
-        .await?;
-    get_trade_doc(pool, &order.id).await
-}
-
-/// HR MVP: employees plus leave requests plus payroll runs with payslips.
-/// Money in integer minor units; company-scoped; payroll posts salary
-/// journals (Dr salary expense / Cr salary payable).
-#[derive(Debug, Serialize)]
-pub struct Employee {
-    pub id: String,
-    pub company_id: String,
-    pub code: String,
-    pub name: String,
-    pub base_salary: i64,
-    pub currency: String,
-    pub hire_date: String,
-    pub status: String,
-    pub created_at: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct LeaveRequest {
-    pub id: String,
-    pub company_id: String,
-    pub employee_id: String,
-    pub kind: String,
-    pub from_date: String,
-    pub to_date: String,
-    pub status: String,
-    pub actor: Option<String>,
-    pub created_at: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct Payslip {
-    pub id: String,
-    pub run_id: String,
-    pub employee_id: String,
-    pub gross: i64,
-    pub deductions: i64,
-    pub net: i64,
-    pub entry_id: Option<String>,
-    pub created_at: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PayrollRun {
-    pub id: String,
-    pub company_id: String,
-    pub period: String,
-    pub entry_date: String,
-    pub status: String,
-    pub actor: Option<String>,
-    pub created_at: String,
-    pub payslips: Vec<Payslip>,
-    pub total_gross: i64,
-    pub total_net: i64,
-}
-
-fn valid_leave_kind(kind: &str) -> bool {
-    matches!(kind, "annual" | "sick" | "unpaid")
-}
-
-async fn get_employee(pool: &SqlitePool, id: &str) -> Result<Employee> {
-    let row = sqlx::query_as::<_, (String, String, String, String, i64, String, String, String, String)>(
-        "SELECT id, company_id, code, name, base_salary, currency, hire_date, status, created_at FROM _employee WHERE id = ?",
-    )
-    .bind(id.trim())
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("employee not found: {id}")))?;
-    Ok(Employee {
-        id: row.0,
-        company_id: row.1,
-        code: row.2,
-        name: row.3,
-        base_salary: row.4,
-        currency: row.5,
-        hire_date: row.6,
-        status: row.7,
-        created_at: row.8,
-    })
-}
-
-pub async fn list_employees(pool: &SqlitePool, company_id: &str) -> Result<Vec<Employee>> {
-    require_company(pool, company_id).await?;
-    let rows = sqlx::query_as::<_, (String, String, String, String, i64, String, String, String, String)>(
-        "SELECT id, company_id, code, name, base_salary, currency, hire_date, status, created_at FROM _employee WHERE company_id = ? ORDER BY code",
-    )
-    .bind(company_id.trim())
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(
-            |(id, company_id, code, name, base_salary, currency, hire_date, status, created_at)| {
-                Employee {
-                    id,
-                    company_id,
-                    code,
-                    name,
-                    base_salary,
-                    currency,
-                    hire_date,
-                    status,
-                    created_at,
-                }
-            },
-        )
-        .collect())
-}
-
-pub async fn create_employee(
-    pool: &SqlitePool,
-    company_id: &str,
-    code: &str,
-    name: &str,
-    base_salary: i64,
-    currency: &str,
-    hire_date: &str,
-    actor: Option<&str>,
-) -> Result<Employee> {
-    require_company(pool, company_id).await?;
-    require_currency(pool, currency).await?;
-    let _ = actor;
-    let code = code.trim();
-    let name = name.trim();
-    if code.is_empty() || code.chars().count() > 20 {
-        return Err(AppError::BadRequest("employee code is required (max 20)".into()).into());
-    }
-    if name.is_empty() {
-        return Err(AppError::BadRequest("employee name is required".into()).into());
-    }
-    if base_salary < 0 {
-        return Err(AppError::BadRequest("base_salary must be >= 0".into()).into());
-    }
-    if !valid_entry_date(hire_date.trim()) {
-        return Err(AppError::BadRequest("hire_date must be YYYY-MM-DD".into()).into());
-    }
-    let id = format!("{company_id}_emp_{}", slugify(code));
-    sqlx::query(
-        "INSERT INTO _employee (id, company_id, code, name, base_salary, currency, hire_date) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(company_id.trim())
-    .bind(code)
-    .bind(name)
-    .bind(base_salary)
-    .bind(currency.trim())
-    .bind(hire_date.trim())
-    .execute(pool)
-    .await?;
-    get_employee(pool, &id).await
-}
-
-pub async fn request_leave(
-    pool: &SqlitePool,
-    company_id: &str,
-    employee_id: &str,
-    kind: &str,
-    from_date: &str,
-    to_date: &str,
-    actor: Option<&str>,
-) -> Result<LeaveRequest> {
-    require_company(pool, company_id).await?;
-    let employee = get_employee(pool, employee_id).await?;
-    if employee.company_id != company_id.trim() {
-        return Err(AppError::BadRequest("employee belongs to another company".into()).into());
-    }
-    let kind = kind.trim();
-    if !valid_leave_kind(kind) {
-        return Err(AppError::BadRequest("kind must be annual|sick|unpaid".into()).into());
-    }
-    if !valid_entry_date(from_date.trim()) || !valid_entry_date(to_date.trim()) {
-        return Err(AppError::BadRequest("from_date and to_date must be YYYY-MM-DD".into()).into());
-    }
-    if from_date.trim() > to_date.trim() {
-        return Err(AppError::BadRequest("from_date must be <= to_date".into()).into());
-    }
-    let overlap: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM _leave_request WHERE employee_id = ? AND status != 'rejected' AND NOT (to_date < ? OR from_date > ?))",
-    )
-    .bind(employee_id.trim())
-    .bind(from_date.trim())
-    .bind(to_date.trim())
-    .fetch_one(pool)
-    .await?;
-    if overlap {
-        return Err(AppError::Conflict("leave overlaps an existing request".into()).into());
-    }
-    let id = format!("{company_id}_leave_{}", chrono_nanos());
-    sqlx::query(
-        "INSERT INTO _leave_request (id, company_id, employee_id, kind, from_date, to_date, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(company_id.trim())
-    .bind(employee_id.trim())
-    .bind(kind)
-    .bind(from_date.trim())
-    .bind(to_date.trim())
-    .bind(actor)
-    .execute(pool)
-    .await?;
-    get_leave_request(pool, &id).await
-}
-
-async fn get_leave_request(pool: &SqlitePool, id: &str) -> Result<LeaveRequest> {
-    let row = sqlx::query_as::<_, (String, String, String, String, String, String, String, Option<String>, String)>(
-        "SELECT id, company_id, employee_id, kind, from_date, to_date, status, actor, created_at FROM _leave_request WHERE id = ?",
-    )
-    .bind(id.trim())
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("leave not found: {id}")))?;
-    Ok(LeaveRequest {
-        id: row.0,
-        company_id: row.1,
-        employee_id: row.2,
-        kind: row.3,
-        from_date: row.4,
-        to_date: row.5,
-        status: row.6,
-        actor: row.7,
-        created_at: row.8,
-    })
-}
-
-pub async fn list_leave_requests(pool: &SqlitePool, company_id: &str) -> Result<Vec<LeaveRequest>> {
-    require_company(pool, company_id).await?;
-    let ids: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM _leave_request WHERE company_id = ? ORDER BY from_date DESC, created_at DESC LIMIT 100",
-    )
-    .bind(company_id.trim())
-    .fetch_all(pool)
-    .await?;
-    let mut out = Vec::new();
-    for id in ids {
-        out.push(get_leave_request(pool, &id).await?);
-    }
-    Ok(out)
-}
-
-pub async fn decide_leave(
-    pool: &SqlitePool,
-    leave_id: &str,
-    approve: bool,
-) -> Result<LeaveRequest> {
-    let leave = get_leave_request(pool, leave_id).await?;
-    if leave.status != "draft" {
-        return Err(AppError::Conflict(format!("leave is {}", leave.status)).into());
-    }
-    let status = if approve { "approved" } else { "rejected" };
-    sqlx::query("UPDATE _leave_request SET status = ? WHERE id = ?")
-        .bind(status)
-        .bind(leave_id.trim())
-        .execute(pool)
-        .await?;
-    get_leave_request(pool, leave_id).await
-}
-
-async fn get_payroll_run(pool: &SqlitePool, id: &str) -> Result<PayrollRun> {
-    let row = sqlx::query_as::<_, (String, String, String, String, String, Option<String>, String)>(
-        "SELECT id, company_id, period, entry_date, status, actor, created_at FROM _payroll_run WHERE id = ?",
-    )
-    .bind(id.trim())
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("payroll run not found: {id}")))?;
-    let slips = sqlx::query_as::<_, (String, String, String, i64, i64, i64, Option<String>, String)>(
-        "SELECT id, run_id, employee_id, gross, deductions, net, entry_id, created_at FROM _payslip WHERE run_id = ? ORDER BY id",
-    )
-    .bind(id.trim())
-    .fetch_all(pool)
-    .await?;
-    let payslips: Vec<Payslip> = slips
-        .into_iter()
-        .map(
-            |(id, run_id, employee_id, gross, deductions, net, entry_id, created_at)| Payslip {
-                id,
-                run_id,
-                employee_id,
-                gross,
-                deductions,
-                net,
-                entry_id,
-                created_at,
-            },
-        )
-        .collect();
-    let total_gross: i64 = payslips.iter().map(|s| s.gross).sum();
-    let total_net: i64 = payslips.iter().map(|s| s.net).sum();
-    Ok(PayrollRun {
-        id: row.0,
-        company_id: row.1,
-        period: row.2,
-        entry_date: row.3,
-        status: row.4,
-        actor: row.5,
-        created_at: row.6,
-        payslips,
-        total_gross,
-        total_net,
-    })
-}
-
-pub async fn list_payroll_runs(pool: &SqlitePool, company_id: &str) -> Result<Vec<PayrollRun>> {
-    require_company(pool, company_id).await?;
-    let ids: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM _payroll_run WHERE company_id = ? ORDER BY period DESC LIMIT 100",
-    )
-    .bind(company_id.trim())
-    .fetch_all(pool)
-    .await?;
-    let mut out = Vec::new();
-    for id in ids {
-        out.push(get_payroll_run(pool, &id).await?);
-    }
-    Ok(out)
-}
-
-pub async fn create_payroll_run(
-    pool: &SqlitePool,
-    company_id: &str,
-    period: &str,
-    entry_date: &str,
-    actor: Option<&str>,
-) -> Result<PayrollRun> {
-    require_company(pool, company_id).await?;
-    let period = period.trim();
-    if period.len() != 7 || !valid_entry_date(&format!("{period}-01")) {
-        return Err(AppError::BadRequest("period must be YYYY-MM".into()).into());
-    }
-    if !valid_entry_date(entry_date.trim()) {
-        return Err(AppError::BadRequest("entry_date must be YYYY-MM-DD".into()).into());
-    }
-    if period_locked(pool, company_id, entry_date.trim()).await? {
-        return Err(
-            AppError::Conflict(format!("period locked: {}", period_of(entry_date.trim()))).into(),
-        );
-    }
-    let id = format!("{company_id}_payroll_{}", slugify(period));
-    sqlx::query(
-        "INSERT INTO _payroll_run (id, company_id, period, entry_date, actor) VALUES (?, ?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(company_id.trim())
-    .bind(period)
-    .bind(entry_date.trim())
-    .bind(actor)
-    .execute(pool)
-    .await?;
-    get_payroll_run(pool, &id).await
-}
-
-pub async fn add_payslip(
-    pool: &SqlitePool,
-    run_id: &str,
-    employee_id: &str,
-    gross: i64,
-    deductions: i64,
-) -> Result<Payslip> {
-    let run = get_payroll_run(pool, run_id).await?;
-    if run.status != "draft" {
-        return Err(AppError::Conflict(format!("payroll run is {}", run.status)).into());
-    }
-    let employee = get_employee(pool, employee_id).await?;
-    if employee.company_id != run.company_id {
-        return Err(AppError::BadRequest("employee belongs to another company".into()).into());
-    }
-    if gross < 0 || deductions < 0 {
-        return Err(AppError::BadRequest("gross and deductions must be >= 0".into()).into());
-    }
-    if deductions > gross {
-        return Err(AppError::BadRequest("deductions must be <= gross".into()).into());
-    }
-    let net = gross - deductions;
-    let id = format!("{run_id}_slip_{}", chrono_nanos());
-    sqlx::query(
-        "INSERT INTO _payslip (id, run_id, employee_id, gross, deductions, net) VALUES (?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(run_id.trim())
-    .bind(employee_id.trim())
-    .bind(gross)
-    .bind(deductions)
-    .bind(net)
-    .execute(pool)
-    .await?;
-    let row = sqlx::query_as::<_, (String, String, String, i64, i64, i64, Option<String>, String)>(
-        "SELECT id, run_id, employee_id, gross, deductions, net, entry_id, created_at FROM _payslip WHERE id = ?",
-    )
-    .bind(&id)
-    .fetch_one(pool)
-    .await?;
-    Ok(Payslip {
-        id: row.0,
-        run_id: row.1,
-        employee_id: row.2,
-        gross: row.3,
-        deductions: row.4,
-        net: row.5,
-        entry_id: row.6,
-        created_at: row.7,
-    })
-}
-
-pub async fn post_payroll_run(pool: &SqlitePool, run_id: &str) -> Result<PayrollRun> {
-    let run = get_payroll_run(pool, run_id).await?;
-    if run.status != "draft" {
-        return Err(AppError::Conflict(format!("payroll run is {}", run.status)).into());
-    }
-    if run.payslips.is_empty() {
-        return Err(AppError::BadRequest("payroll run has no payslips".into()).into());
-    }
-    if period_locked(pool, &run.company_id, &run.entry_date).await? {
-        return Err(
-            AppError::Conflict(format!("period locked: {}", period_of(&run.entry_date))).into(),
-        );
-    }
-    let salary_account = gl_account_by_code(pool, &run.company_id, "6000").await?;
-    let payable_account = gl_account_by_code(pool, &run.company_id, "2200").await?;
-    for slip in &run.payslips {
-        let entry = post_journal_entry(
-            pool,
-            &run.company_id,
-            &format!("Payroll {} {}", run.period, slip.employee_id),
-            &run.entry_date,
-            &[
-                JournalLineInput {
-                    account_id: salary_account.id.clone(),
-                    debit: slip.gross,
-                    credit: 0,
-                    memo: String::new(),
-                },
-                JournalLineInput {
-                    account_id: payable_account.id.clone(),
-                    debit: 0,
-                    credit: slip.gross,
-                    memo: String::new(),
-                },
-            ],
-            run.actor.as_deref(),
-        )
-        .await?;
-        sqlx::query("UPDATE _payslip SET entry_id = ? WHERE id = ?")
-            .bind(&entry.id)
-            .bind(&slip.id)
-            .execute(pool)
-            .await?;
-    }
-    sqlx::query("UPDATE _payroll_run SET status = 'posted' WHERE id = ?")
-        .bind(run_id.trim())
-        .execute(pool)
-        .await?;
-    get_payroll_run(pool, run_id).await
-}
-
-/// Manufacturing MVP: BOMs plus orders with consume/produce costing.
-/// Components consumed via stock moving average; finished produced at
-/// rolled-up cost; WIP journal keeps the trial balanced.
-#[derive(Debug, Serialize)]
-pub struct BomLine {
-    pub id: String,
-    pub bom_id: String,
-    pub component_id: String,
-    pub qty: f64,
-    pub uom_id: Option<String>,
-    pub qty_base: f64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct Bom {
-    pub id: String,
-    pub company_id: String,
-    pub product_id: String,
-    pub name: String,
-    pub version: i64,
-    pub status: String,
-    pub created_at: String,
-    pub lines: Vec<BomLine>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct MfgOrder {
-    pub id: String,
-    pub company_id: String,
-    pub bom_id: String,
-    pub product_id: String,
-    pub qty: f64,
-    pub qty_base: f64,
-    pub warehouse_id: String,
-    pub status: String,
-    pub entry_date: String,
-    pub entry_id: Option<String>,
-    pub actor: Option<String>,
-    pub created_at: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct BomLineInput {
-    pub component_id: String,
-    pub qty: f64,
-    pub uom_id: Option<String>,
-}
-
-async fn get_bom(pool: &SqlitePool, id: &str) -> Result<Bom> {
-    let row = sqlx::query_as::<_, (String, String, String, String, i64, String, String)>(
-        "SELECT id, company_id, product_id, name, version, status, created_at FROM _bom WHERE id = ?",
-    )
-    .bind(id.trim())
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("bom not found: {id}")))?;
-    let lines = sqlx::query_as::<_, (String, String, String, f64, Option<String>, f64)>(
-        "SELECT id, bom_id, component_id, qty, uom_id, qty_base FROM _bom_line WHERE bom_id = ? ORDER BY id",
-    )
-    .bind(id.trim())
-    .fetch_all(pool)
-    .await?;
-    Ok(Bom {
-        id: row.0,
-        company_id: row.1,
-        product_id: row.2,
-        name: row.3,
-        version: row.4,
-        status: row.5,
-        created_at: row.6,
-        lines: lines
-            .into_iter()
-            .map(
-                |(id, bom_id, component_id, qty, uom_id, qty_base)| BomLine {
-                    id,
-                    bom_id,
-                    component_id,
-                    qty,
-                    uom_id,
-                    qty_base,
-                },
-            )
-            .collect(),
-    })
-}
-
-pub async fn list_boms(pool: &SqlitePool, company_id: &str) -> Result<Vec<Bom>> {
-    require_company(pool, company_id).await?;
-    let ids: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM _bom WHERE company_id = ? ORDER BY product_id, version DESC LIMIT 100",
-    )
-    .bind(company_id.trim())
-    .fetch_all(pool)
-    .await?;
-    let mut out = Vec::new();
-    for id in ids {
-        out.push(get_bom(pool, &id).await?);
-    }
-    Ok(out)
-}
-
-pub async fn create_bom(
-    pool: &SqlitePool,
-    company_id: &str,
-    product_id: &str,
-    name: &str,
-    lines: &[BomLineInput],
-) -> Result<Bom> {
-    require_company(pool, company_id).await?;
-    if product_id.trim().is_empty() {
-        return Err(AppError::BadRequest("product_id is required".into()).into());
-    }
-    if name.trim().is_empty() {
-        return Err(AppError::BadRequest("bom name is required".into()).into());
-    }
-    if lines.is_empty() {
-        return Err(AppError::BadRequest("bom requires at least 1 line".into()).into());
-    }
-    let mut resolved: Vec<(BomLineInput, f64, Option<String>)> = Vec::new();
-    for line in lines {
-        if line.component_id.trim().is_empty() {
-            return Err(AppError::BadRequest("component_id is required".into()).into());
-        }
-        let (qty_base, resolved_uom) =
-            trade_qty_base(pool, company_id, line.qty, line.uom_id.as_deref()).await?;
-        resolved.push((line.clone(), qty_base, resolved_uom));
-    }
-    let mut tx = pool.begin().await?;
-    let id = format!("{company_id}_bom_{}", chrono_nanos());
-    sqlx::query("INSERT INTO _bom (id, company_id, product_id, name) VALUES (?, ?, ?, ?)")
-        .bind(&id)
-        .bind(company_id.trim())
-        .bind(product_id.trim())
-        .bind(name.trim())
-        .execute(&mut *tx)
-        .await?;
-    for (line, qty_base, resolved_uom) in &resolved {
-        let line_id = format!("{id}_line_{}", chrono_nanos());
-        sqlx::query(
-            "INSERT INTO _bom_line (id, bom_id, component_id, qty, uom_id, qty_base) VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&line_id)
-        .bind(&id)
-        .bind(line.component_id.trim())
-        .bind(line.qty)
-        .bind(resolved_uom.clone())
-        .bind(qty_base)
-        .execute(&mut *tx)
-        .await?;
-    }
-    tx.commit().await?;
-    get_bom(pool, &id).await
-}
-
-pub async fn activate_bom(pool: &SqlitePool, bom_id: &str) -> Result<Bom> {
-    let bom = get_bom(pool, bom_id).await?;
-    if bom.status != "draft" {
-        return Err(AppError::Conflict(format!("bom is {}", bom.status)).into());
-    }
-    sqlx::query("UPDATE _bom SET status = 'active' WHERE id = ?")
-        .bind(bom_id.trim())
-        .execute(pool)
-        .await?;
-    get_bom(pool, bom_id).await
-}
-
-async fn get_mfg_order(pool: &SqlitePool, id: &str) -> Result<MfgOrder> {
-    let row = sqlx::query_as::<_, (String, String, String, String, f64, f64, String, String, String, Option<String>, Option<String>, String)>(
-        "SELECT id, company_id, bom_id, product_id, qty, qty_base, warehouse_id, status, entry_date, entry_id, actor, created_at FROM _mfg_order WHERE id = ?",
-    )
-    .bind(id.trim())
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("mfg order not found: {id}")))?;
-    Ok(MfgOrder {
-        id: row.0,
-        company_id: row.1,
-        bom_id: row.2,
-        product_id: row.3,
-        qty: row.4,
-        qty_base: row.5,
-        warehouse_id: row.6,
-        status: row.7,
-        entry_date: row.8,
-        entry_id: row.9,
-        actor: row.10,
-        created_at: row.11,
-    })
-}
-
-pub async fn list_mfg_orders(pool: &SqlitePool, company_id: &str) -> Result<Vec<MfgOrder>> {
-    require_company(pool, company_id).await?;
-    let ids: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM _mfg_order WHERE company_id = ? ORDER BY entry_date DESC, created_at DESC LIMIT 100",
-    )
-    .bind(company_id.trim())
-    .fetch_all(pool)
-    .await?;
-    let mut out = Vec::new();
-    for id in ids {
-        out.push(get_mfg_order(pool, &id).await?);
-    }
-    Ok(out)
-}
-
-pub async fn create_mfg_order(
-    pool: &SqlitePool,
-    company_id: &str,
-    bom_id: &str,
-    qty: f64,
-    warehouse_id: &str,
-    entry_date: &str,
-    actor: Option<&str>,
-) -> Result<MfgOrder> {
-    require_company(pool, company_id).await?;
-    let bom = get_bom(pool, bom_id).await?;
-    if bom.company_id != company_id.trim() {
-        return Err(AppError::BadRequest("bom belongs to another company".into()).into());
-    }
-    if warehouse_id.trim().is_empty() {
-        return Err(AppError::BadRequest("warehouse_id is required".into()).into());
-    }
-    if !valid_entry_date(entry_date.trim()) {
-        return Err(AppError::BadRequest("entry_date must be YYYY-MM-DD".into()).into());
-    }
-    if period_locked(pool, company_id, entry_date.trim()).await? {
-        return Err(
-            AppError::Conflict(format!("period locked: {}", period_of(entry_date.trim()))).into(),
-        );
-    }
-    let (qty_base, _) = trade_qty_base(pool, company_id, qty, None).await?;
-    let id = format!("{company_id}_mfg_{}", chrono_nanos());
-    sqlx::query(
-        "INSERT INTO _mfg_order (id, company_id, bom_id, product_id, qty, qty_base, warehouse_id, entry_date, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(company_id.trim())
-    .bind(bom_id.trim())
-    .bind(&bom.product_id)
-    .bind(qty)
-    .bind(qty_base)
-    .bind(warehouse_id.trim())
-    .bind(entry_date.trim())
-    .bind(actor)
-    .execute(pool)
-    .await?;
-    get_mfg_order(pool, &id).await
-}
-
-pub async fn confirm_mfg_order(pool: &SqlitePool, order_id: &str) -> Result<MfgOrder> {
-    let order = get_mfg_order(pool, order_id).await?;
-    if order.status != "draft" {
-        return Err(AppError::Conflict(format!("mfg order is {}", order.status)).into());
-    }
-    sqlx::query("UPDATE _mfg_order SET status = 'confirmed' WHERE id = ?")
-        .bind(order_id.trim())
-        .execute(pool)
-        .await?;
-    get_mfg_order(pool, order_id).await
-}
-
-pub async fn complete_mfg_order(pool: &SqlitePool, order_id: &str) -> Result<MfgOrder> {
-    let order = get_mfg_order(pool, order_id).await?;
-    if order.status != "confirmed" {
-        return Err(AppError::Conflict(format!("mfg order is {}", order.status)).into());
-    }
-    if period_locked(pool, &order.company_id, &order.entry_date).await? {
-        return Err(
-            AppError::Conflict(format!("period locked: {}", period_of(&order.entry_date))).into(),
-        );
-    }
-    let bom = get_bom(pool, &order.bom_id).await?;
-    // Cost roll-up: consume each component at its moving average.
-    let mut material_cost: i64 = 0;
-    for line in &bom.lines {
-        let need = line.qty_base * order.qty_base;
-        let balance = get_stock_balance(
-            pool,
-            &order.company_id,
-            &line.component_id,
-            &order.warehouse_id,
-        )
-        .await?;
-        if balance.qty_base + 1e-9 < need {
-            return Err(
-                AppError::BadRequest(format!("insufficient stock: {}", line.component_id)).into(),
-            );
-        }
-        material_cost += (need * balance.avg_cost as f64).round() as i64;
-    }
-    for line in &bom.lines {
-        let need = line.qty_base * order.qty_base;
-        apply_stock_move(
-            pool,
-            &order.company_id,
-            &line.component_id,
-            &order.warehouse_id,
-            "out",
-            need,
-            None,
-            0,
-            &order.entry_date,
-            Some(&order.id),
-            order.actor.as_deref(),
-        )
-        .await?;
-    }
-    let unit_cost = if order.qty_base <= f64::EPSILON {
-        0
-    } else {
-        (material_cost as f64 / order.qty_base).round() as i64
-    };
-    apply_stock_move(
-        pool,
-        &order.company_id,
-        &order.product_id,
-        &order.warehouse_id,
-        "in",
-        order.qty_base,
-        None,
-        unit_cost,
-        &order.entry_date,
-        Some(&order.id),
-        order.actor.as_deref(),
-    )
-    .await?;
-    // WIP journal: Dr WIP 1410 / Cr Inventory 1400 for material cost.
-    let wip = gl_account_by_code(pool, &order.company_id, "1410").await?;
-    let inventory = gl_account_by_code(pool, &order.company_id, "1400").await?;
-    let entry = post_journal_entry(
-        pool,
-        &order.company_id,
-        &format!("MFG {}", order.id),
-        &order.entry_date,
-        &[
-            JournalLineInput {
-                account_id: wip.id,
-                debit: material_cost,
-                credit: 0,
-                memo: String::new(),
-            },
-            JournalLineInput {
-                account_id: inventory.id,
-                debit: 0,
-                credit: material_cost,
-                memo: String::new(),
-            },
-        ],
-        order.actor.as_deref(),
-    )
-    .await?;
-    sqlx::query("UPDATE _mfg_order SET status = 'done', entry_id = ? WHERE id = ?")
-        .bind(&entry.id)
-        .bind(order.id.trim())
-        .execute(pool)
-        .await?;
-    get_mfg_order(pool, &order.id).await
-}
-
-/// POS MVP: sessions plus cart orders with tender/change plus close.
-/// Stock-out at moving average; cash/income journal per paid order;
-/// drawer differences post to cash-short on close.
-#[derive(Debug, Serialize)]
-pub struct PosLine {
-    pub id: String,
-    pub order_id: String,
-    pub product_id: String,
-    pub description: String,
-    pub qty: f64,
-    pub uom_id: Option<String>,
-    pub qty_base: f64,
-    pub unit_price: i64,
-    pub tax_rule_id: Option<String>,
-    pub line_total: i64,
-    pub tax: i64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PosOrder {
-    pub id: String,
-    pub session_id: String,
-    pub partner: String,
-    pub currency: String,
-    pub status: String,
-    pub tendered: i64,
-    pub change_due: i64,
-    pub entry_id: Option<String>,
-    pub actor: Option<String>,
-    pub created_at: String,
-    pub lines: Vec<PosLine>,
-    pub subtotal: i64,
-    pub tax_total: i64,
-    pub total: i64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PosSession {
-    pub id: String,
-    pub company_id: String,
-    pub name: String,
-    pub warehouse_id: String,
-    pub opening_cash: i64,
-    pub closing_cash: Option<i64>,
-    pub status: String,
-    pub entry_date: String,
-    pub actor: Option<String>,
-    pub created_at: String,
-    pub order_count: i64,
-    pub sales_total: i64,
-}
-
-#[derive(Debug, Clone)]
-pub struct PosLineInput {
-    pub product_id: String,
-    pub description: String,
-    pub qty: f64,
-    pub uom_id: Option<String>,
-    pub unit_price: i64,
-    pub tax_rule_id: Option<String>,
-}
-
-type PosSessionRow = (
-    String,
-    String,
-    String,
-    String,
-    i64,
-    Option<i64>,
-    String,
-    String,
-    Option<String>,
-    String,
-);
-
-async fn pos_session_company(
-    pool: &SqlitePool,
-    session_id: &str,
-) -> Result<(PosSessionRow, String)> {
-    let row: Option<PosSessionRow> = sqlx::query_as(
-        "SELECT id, company_id, name, warehouse_id, opening_cash, closing_cash, status, entry_date, actor, created_at FROM _pos_session WHERE id = ?",
-    )
-    .bind(session_id.trim())
-    .fetch_optional(pool)
-    .await?;
-    let row =
-        row.ok_or_else(|| AppError::NotFound(format!("pos session not found: {session_id}")))?;
-    let company_id = row.1.clone();
-    Ok((row, company_id))
-}
-
-fn pos_session_from_row(row: PosSessionRow, order_count: i64, sales_total: i64) -> PosSession {
-    PosSession {
-        id: row.0,
-        company_id: row.1,
-        name: row.2,
-        warehouse_id: row.3,
-        opening_cash: row.4,
-        closing_cash: row.5,
-        status: row.6,
-        entry_date: row.7,
-        actor: row.8,
-        created_at: row.9,
-        order_count,
-        sales_total,
-    }
-}
-
-async fn pos_order_totals(pool: &SqlitePool, order_id: &str) -> Result<(Vec<PosLine>, i64, i64)> {
-    let rows = sqlx::query_as::<_, (String, String, String, String, f64, Option<String>, f64, i64, Option<String>)>(
-        "SELECT id, order_id, product_id, description, qty, uom_id, qty_base, unit_price, tax_rule_id FROM _pos_line WHERE order_id = ? ORDER BY id",
-    )
-    .bind(order_id.trim())
-    .fetch_all(pool)
-    .await?;
-    let mut lines = Vec::new();
-    let mut subtotal = 0i64;
-    let mut tax_total = 0i64;
-    for (id, order_id, product_id, description, qty, uom_id, qty_base, unit_price, tax_rule_id) in
-        rows
-    {
-        let rule = match tax_rule_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            None => None,
-            Some(rule_id) => Some(get_tax_rule(pool, rule_id).await?),
-        };
-        let (net, tax) = trade_line_totals(qty, unit_price, rule.as_ref());
-        subtotal += net;
-        tax_total += tax;
-        lines.push(PosLine {
-            id,
-            order_id,
-            product_id,
-            description,
-            qty,
-            uom_id,
-            qty_base,
-            unit_price,
-            tax_rule_id,
-            line_total: net + tax,
-            tax,
-        });
-    }
-    Ok((lines, subtotal, tax_total))
-}
-
-async fn get_pos_session(pool: &SqlitePool, session_id: &str) -> Result<PosSession> {
-    let (row, _) = pos_session_company(pool, session_id).await?;
-    let stats: Option<(i64, Option<i64>)> = sqlx::query_as(
-        "SELECT COUNT(*), SUM(o.tendered - o.change_due) FROM _pos_order o WHERE o.session_id = ? AND o.status = 'paid'",
-    )
-    .bind(session_id.trim())
-    .fetch_optional(pool)
-    .await?;
-    let (count, sales) = stats.unwrap_or((0, None));
-    Ok(pos_session_from_row(row, count, sales.unwrap_or(0)))
-}
-
-pub async fn list_pos_sessions(pool: &SqlitePool, company_id: &str) -> Result<Vec<PosSession>> {
-    require_company(pool, company_id).await?;
-    let ids: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM _pos_session WHERE company_id = ? ORDER BY entry_date DESC, created_at DESC LIMIT 100",
-    )
-    .bind(company_id.trim())
-    .fetch_all(pool)
-    .await?;
-    let mut out = Vec::new();
-    for id in ids {
-        out.push(get_pos_session(pool, &id).await?);
-    }
-    Ok(out)
-}
-
-pub async fn open_pos_session(
-    pool: &SqlitePool,
-    company_id: &str,
-    name: &str,
-    warehouse_id: &str,
-    opening_cash: i64,
-    entry_date: &str,
-    actor: Option<&str>,
-) -> Result<PosSession> {
-    require_company(pool, company_id).await?;
-    if name.trim().is_empty() {
-        return Err(AppError::BadRequest("session name is required".into()).into());
-    }
-    if warehouse_id.trim().is_empty() {
-        return Err(AppError::BadRequest("warehouse_id is required".into()).into());
-    }
-    if opening_cash < 0 {
-        return Err(AppError::BadRequest("opening_cash must be >= 0".into()).into());
-    }
-    if !valid_entry_date(entry_date.trim()) {
-        return Err(AppError::BadRequest("entry_date must be YYYY-MM-DD".into()).into());
-    }
-    if period_locked(pool, company_id, entry_date.trim()).await? {
-        return Err(
-            AppError::Conflict(format!("period locked: {}", period_of(entry_date.trim()))).into(),
-        );
-    }
-    let open: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM _pos_session WHERE company_id = ? AND status = 'open')",
-    )
-    .bind(company_id.trim())
-    .fetch_one(pool)
-    .await?;
-    if open {
-        return Err(AppError::Conflict("a pos session is already open".into()).into());
-    }
-    let id = format!("{company_id}_pos_{}", chrono_nanos());
-    sqlx::query(
-        "INSERT INTO _pos_session (id, company_id, name, warehouse_id, opening_cash, entry_date, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(company_id.trim())
-    .bind(name.trim())
-    .bind(warehouse_id.trim())
-    .bind(opening_cash)
-    .bind(entry_date.trim())
-    .bind(actor)
-    .execute(pool)
-    .await?;
-    get_pos_session(pool, &id).await
-}
-
-async fn get_pos_order(pool: &SqlitePool, order_id: &str) -> Result<PosOrder> {
-    let row = sqlx::query_as::<_, (String, String, String, String, String, i64, i64, Option<String>, Option<String>, String)>(
-        "SELECT id, session_id, partner, currency, status, tendered, change_due, entry_id, actor, created_at FROM _pos_order WHERE id = ?",
-    )
-    .bind(order_id.trim())
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("pos order not found: {order_id}")))?;
-    let (lines, subtotal, tax_total) = pos_order_totals(pool, order_id).await?;
-    Ok(PosOrder {
-        id: row.0,
-        session_id: row.1,
-        partner: row.2,
-        currency: row.3,
-        status: row.4,
-        tendered: row.5,
-        change_due: row.6,
-        entry_id: row.7,
-        actor: row.8,
-        created_at: row.9,
-        lines,
-        subtotal,
-        tax_total,
-        total: subtotal + tax_total,
-    })
-}
-
-pub async fn list_pos_orders(pool: &SqlitePool, session_id: &str) -> Result<Vec<PosOrder>> {
-    let _ = pos_session_company(pool, session_id).await?;
-    let ids: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM _pos_order WHERE session_id = ? ORDER BY created_at DESC LIMIT 100",
-    )
-    .bind(session_id.trim())
-    .fetch_all(pool)
-    .await?;
-    let mut out = Vec::new();
-    for id in ids {
-        out.push(get_pos_order(pool, &id).await?);
-    }
-    Ok(out)
-}
-
-pub async fn create_pos_order(
-    pool: &SqlitePool,
-    session_id: &str,
-    partner: Option<&str>,
-    currency: &str,
-    tendered: i64,
-    lines: &[PosLineInput],
-    actor: Option<&str>,
-) -> Result<PosOrder> {
-    let (session_row, company_id) = pos_session_company(pool, session_id).await?;
-    let session = get_pos_session(pool, session_id).await?;
-    if session.status != "open" {
-        return Err(AppError::Conflict(format!("pos session is {}", session.status)).into());
-    }
-    let warehouse_id = session_row.3.clone();
-    let entry_date = session_row.7.clone();
-    require_currency(pool, currency).await?;
-    if tendered < 0 {
-        return Err(AppError::BadRequest("tendered must be >= 0".into()).into());
-    }
-    if lines.is_empty() {
-        return Err(AppError::BadRequest("pos order requires at least 1 line".into()).into());
-    }
-    let mut resolved: Vec<(PosLineInput, f64, Option<String>)> = Vec::new();
-    let mut subtotal = 0i64;
-    let mut tax_total = 0i64;
-    for line in lines {
-        if line.product_id.trim().is_empty() {
-            return Err(AppError::BadRequest("product_id is required".into()).into());
-        }
-        if line.description.trim().is_empty() {
-            return Err(AppError::BadRequest("line description is required".into()).into());
-        }
-        if line.unit_price < 0 {
-            return Err(AppError::BadRequest("unit_price must be >= 0".into()).into());
-        }
-        let rule = match line
-            .tax_rule_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            None => None,
-            Some(rule_id) => Some(get_tax_rule(pool, rule_id).await?),
-        };
-        let (qty_base, resolved_uom) =
-            trade_qty_base(pool, &company_id, line.qty, line.uom_id.as_deref()).await?;
-        let (net, tax) = trade_line_totals(line.qty, line.unit_price, rule.as_ref());
-        subtotal += net;
-        tax_total += tax;
-        resolved.push((line.clone(), qty_base, resolved_uom));
-    }
-    let total = subtotal + tax_total;
-    if tendered < total {
-        return Err(AppError::BadRequest("tendered is less than total".into()).into());
-    }
-    let mut tx = pool.begin().await?;
-    let id = format!("{session_id}_order_{}", chrono_nanos());
-    sqlx::query(
-        "INSERT INTO _pos_order (id, session_id, partner, currency, tendered, change_due, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(session_id.trim())
-    .bind(partner.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("Walk-in"))
-    .bind(currency.trim())
-    .bind(tendered)
-    .bind(tendered - total)
-    .bind(actor)
-    .execute(&mut *tx)
-    .await?;
-    for (line, qty_base, resolved_uom) in &resolved {
-        let line_id = format!("{id}_line_{}", chrono_nanos());
-        sqlx::query(
-            "INSERT INTO _pos_line (id, order_id, product_id, description, qty, uom_id, qty_base, unit_price, tax_rule_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&line_id)
-        .bind(&id)
-        .bind(line.product_id.trim())
-        .bind(line.description.trim())
-        .bind(line.qty)
-        .bind(resolved_uom.clone())
-        .bind(qty_base)
-        .bind(line.unit_price)
-        .bind(
-            line.tax_rule_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty()),
-        )
-        .execute(&mut *tx)
-        .await?;
-    }
-    tx.commit().await?;
-    let paid =
-        pay_pos_order_inner(pool, &company_id, &warehouse_id, &entry_date, &id, actor).await?;
-    Ok(paid)
-}
-
-async fn pay_pos_order_inner(
-    pool: &SqlitePool,
-    company_id: &str,
-    warehouse_id: &str,
-    entry_date: &str,
-    order_id: &str,
-    actor: Option<&str>,
-) -> Result<PosOrder> {
-    let order = get_pos_order(pool, order_id).await?;
-    // Stock-out each line at moving average.
-    for line in &order.lines {
-        apply_stock_move(
-            pool,
-            company_id,
-            &line.product_id,
-            warehouse_id,
-            "out",
-            line.qty_base,
-            None,
-            0,
-            entry_date,
-            Some(order_id),
-            actor,
-        )
-        .await?;
-    }
-    // Cash/income journal for the order total.
-    let cash = gl_account_by_code(pool, company_id, "1000").await?;
-    let revenue = gl_account_by_code(pool, company_id, "4000").await?;
-    let entry = post_journal_entry(
-        pool,
-        company_id,
-        &format!("POS {}", order.id),
-        entry_date,
-        &[
-            JournalLineInput {
-                account_id: cash.id,
-                debit: order.total,
-                credit: 0,
-                memo: String::new(),
-            },
-            JournalLineInput {
-                account_id: revenue.id,
-                debit: 0,
-                credit: order.total,
-                memo: String::new(),
-            },
-        ],
-        actor,
-    )
-    .await?;
-    sqlx::query("UPDATE _pos_order SET status = 'paid', entry_id = ? WHERE id = ?")
-        .bind(&entry.id)
-        .bind(order_id.trim())
-        .execute(pool)
-        .await?;
-    get_pos_order(pool, order_id).await
-}
-
-pub async fn void_pos_order(pool: &SqlitePool, order_id: &str) -> Result<PosOrder> {
-    let order = get_pos_order(pool, order_id).await?;
-    if order.status != "draft" {
-        return Err(AppError::Conflict(format!("pos order is {}", order.status)).into());
-    }
-    sqlx::query("UPDATE _pos_order SET status = 'void' WHERE id = ?")
-        .bind(order_id.trim())
-        .execute(pool)
-        .await?;
-    get_pos_order(pool, order_id).await
-}
-
-pub async fn close_pos_session(
-    pool: &SqlitePool,
-    session_id: &str,
-    closing_cash: i64,
-) -> Result<PosSession> {
-    let session = get_pos_session(pool, session_id).await?;
-    if session.status != "open" {
-        return Err(AppError::Conflict(format!("pos session is {}", session.status)).into());
-    }
-    if closing_cash < 0 {
-        return Err(AppError::BadRequest("closing_cash must be >= 0".into()).into());
-    }
-    if period_locked(pool, &session.company_id, &session.entry_date).await? {
-        return Err(AppError::Conflict(format!(
-            "period locked: {}",
-            period_of(&session.entry_date)
-        ))
-        .into());
-    }
-    let expected = session.opening_cash + session.sales_total;
-    let diff = closing_cash - expected;
-    if diff != 0 {
-        // Drawer difference posts to cash-short so the trial stays balanced.
-        let cash = gl_account_by_code(pool, &session.company_id, "1000").await?;
-        let short = gl_account_by_code(pool, &session.company_id, "5290").await?;
-        let abs = diff.abs();
-        let (debit_id, credit_id) = if diff > 0 {
-            (cash.id, short.id)
-        } else {
-            (short.id, cash.id)
-        };
-        post_journal_entry(
-            pool,
-            &session.company_id,
-            &format!("POS close {}", session.id),
-            &session.entry_date,
-            &[
-                JournalLineInput {
-                    account_id: debit_id,
-                    debit: abs,
-                    credit: 0,
-                    memo: String::new(),
-                },
-                JournalLineInput {
-                    account_id: credit_id,
-                    debit: 0,
-                    credit: abs,
-                    memo: String::new(),
-                },
-            ],
-            session.actor.as_deref(),
-        )
-        .await?;
-    }
-    sqlx::query("UPDATE _pos_session SET status = 'closed', closing_cash = ? WHERE id = ?")
-        .bind(closing_cash)
-        .bind(session_id.trim())
-        .execute(pool)
-        .await?;
-    get_pos_session(pool, session_id).await
-}
-
-/// Stock ledger: full UOM dimensions plus on-hand balances plus
-/// moving-average valuation. Quantities in base units (REAL); money in
-/// integer minor units per base unit. product_id / warehouse_id are
-/// generic `_doc` ids (no FK); all rows are company-scoped.
-#[derive(Debug, Serialize)]
-pub struct Uom {
-    pub id: String,
-    pub company_id: String,
-    pub code: String,
-    pub name: String,
-    pub dimension: String,
-    pub factor_to_base: f64,
-    pub is_base: bool,
-    pub created_at: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct StockBalance {
-    pub company_id: String,
-    pub product_id: String,
-    pub warehouse_id: String,
-    pub qty_base: f64,
-    pub avg_cost: i64,
-    pub total_value: i64,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct StockLedgerEntry {
-    pub id: String,
-    pub company_id: String,
-    pub product_id: String,
-    pub warehouse_id: String,
-    pub move_doc_id: Option<String>,
-    pub move_type: String,
-    pub qty: f64,
-    pub uom_id: Option<String>,
-    pub qty_base: f64,
-    pub unit_cost: i64,
-    pub total_value: i64,
-    pub balance_qty: f64,
-    pub balance_avg: i64,
-    pub entry_date: String,
-    pub actor: Option<String>,
-    pub created_at: String,
-}
-
-fn valid_uom_dimension(dimension: &str) -> bool {
-    matches!(dimension, "qty" | "weight" | "length" | "volume")
-}
-
-async fn get_uom(pool: &SqlitePool, id: &str) -> Result<Uom> {
-    let row = sqlx::query_as::<_, (String, String, String, String, String, f64, i64, String)>(
-        "SELECT id, company_id, code, name, dimension, factor_to_base, is_base, created_at FROM _uom WHERE id = ?",
-    )
-    .bind(id.trim())
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("uom not found: {id}")))?;
-    Ok(Uom {
-        id: row.0,
-        company_id: row.1,
-        code: row.2,
-        name: row.3,
-        dimension: row.4,
-        factor_to_base: row.5,
-        is_base: row.6 != 0,
-        created_at: row.7,
-    })
-}
-
-pub async fn list_uoms(pool: &SqlitePool, company_id: &str) -> Result<Vec<Uom>> {
-    require_company(pool, company_id).await?;
-    let rows = sqlx::query_as::<_, (String, String, String, String, String, f64, i64, String)>(
-        "SELECT id, company_id, code, name, dimension, factor_to_base, is_base, created_at FROM _uom WHERE company_id = ? ORDER BY dimension, code",
-    )
-    .bind(company_id.trim())
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(
-            |(id, company_id, code, name, dimension, factor_to_base, is_base, created_at)| Uom {
-                id,
-                company_id,
-                code,
-                name,
-                dimension,
-                factor_to_base,
-                is_base: is_base != 0,
-                created_at,
-            },
-        )
-        .collect())
-}
-
-pub async fn create_uom(
-    pool: &SqlitePool,
-    company_id: &str,
-    code: &str,
-    name: &str,
-    dimension: &str,
-    factor_to_base: f64,
-    is_base: bool,
-) -> Result<Uom> {
-    require_company(pool, company_id).await?;
-    let code = code.trim();
-    let name = name.trim();
-    let dimension = dimension.trim();
-    if code.is_empty() || code.chars().count() > 20 {
-        return Err(AppError::BadRequest("uom code is required (max 20)".into()).into());
-    }
-    if name.is_empty() {
-        return Err(AppError::BadRequest("uom name is required".into()).into());
-    }
-    if !valid_uom_dimension(dimension) {
-        return Err(
-            AppError::BadRequest("dimension must be qty|weight|length|volume".into()).into(),
-        );
-    }
-    if !factor_to_base.is_finite() || factor_to_base <= 0.0 {
-        return Err(AppError::BadRequest("factor_to_base must be > 0".into()).into());
-    }
-    if is_base && (factor_to_base - 1.0).abs() > f64::EPSILON {
-        return Err(AppError::BadRequest("base uom factor must be 1.0".into()).into());
-    }
-    let id = format!("{company_id}_uom_{}", slugify(code));
-    let mut tx = pool.begin().await?;
-    sqlx::query(
-        "INSERT INTO _uom (id, company_id, code, name, dimension, factor_to_base, is_base) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(company_id.trim())
-    .bind(code)
-    .bind(name)
-    .bind(dimension)
-    .bind(factor_to_base)
-    .bind(i64::from(is_base))
-    .execute(&mut *tx)
-    .await?;
-    if is_base {
-        sqlx::query(
-            "UPDATE _uom SET is_base = 0 WHERE company_id = ? AND dimension = ? AND id != ?",
-        )
-        .bind(company_id.trim())
-        .bind(dimension)
-        .bind(&id)
-        .execute(&mut *tx)
-        .await?;
-    }
-    tx.commit().await?;
-    get_uom(pool, &id).await
-}
-
-/// Convert a quantity between two UOMs of the same company and dimension.
-/// `qty` is in `from` units; returns the equivalent in `to` units.
-pub async fn convert_uom(
-    pool: &SqlitePool,
-    company_id: &str,
-    qty: f64,
-    from_uom_id: &str,
-    to_uom_id: &str,
-) -> Result<f64> {
-    require_company(pool, company_id).await?;
-    if !qty.is_finite() || qty < 0.0 {
-        return Err(AppError::BadRequest("qty must be >= 0".into()).into());
-    }
-    if from_uom_id.trim() == to_uom_id.trim() {
-        return Ok(qty);
-    }
-    let from = get_uom(pool, from_uom_id).await?;
-    let to = get_uom(pool, to_uom_id).await?;
-    if from.company_id != company_id.trim() || to.company_id != company_id.trim() {
-        return Err(AppError::BadRequest("uom belongs to another company".into()).into());
-    }
-    if from.dimension != to.dimension {
-        return Err(AppError::BadRequest(format!(
-            "uom dimension mismatch: {} != {}",
-            from.dimension, to.dimension
-        ))
-        .into());
-    }
-    Ok(qty * from.factor_to_base / to.factor_to_base)
-}
-
-pub async fn list_stock_balances(pool: &SqlitePool, company_id: &str) -> Result<Vec<StockBalance>> {
-    require_company(pool, company_id).await?;
-    let rows = sqlx::query_as::<_, (String, String, String, f64, i64, i64, String)>(
-        "SELECT company_id, product_id, warehouse_id, qty_base, avg_cost, total_value, updated_at FROM _stock_balance WHERE company_id = ? ORDER BY product_id, warehouse_id",
-    )
-    .bind(company_id.trim())
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(
-            |(
-                company_id,
-                product_id,
-                warehouse_id,
-                qty_base,
-                avg_cost,
-                total_value,
-                updated_at,
-            )| {
-                StockBalance {
-                    company_id,
-                    product_id,
-                    warehouse_id,
-                    qty_base,
-                    avg_cost,
-                    total_value,
-                    updated_at,
-                }
-            },
-        )
-        .collect())
-}
-
-pub async fn get_stock_balance(
-    pool: &SqlitePool,
-    company_id: &str,
-    product_id: &str,
-    warehouse_id: &str,
-) -> Result<StockBalance> {
-    require_company(pool, company_id).await?;
-    let row: Option<(f64, i64, i64, String)> = sqlx::query_as(
-        "SELECT qty_base, avg_cost, total_value, updated_at FROM _stock_balance WHERE company_id = ? AND product_id = ? AND warehouse_id = ?",
-    )
-    .bind(company_id.trim())
-    .bind(product_id.trim())
-    .bind(warehouse_id.trim())
-    .fetch_optional(pool)
-    .await?;
-    match row {
-        Some((qty_base, avg_cost, total_value, updated_at)) => Ok(StockBalance {
-            company_id: company_id.trim().to_string(),
-            product_id: product_id.trim().to_string(),
-            warehouse_id: warehouse_id.trim().to_string(),
-            qty_base,
-            avg_cost,
-            total_value,
-            updated_at,
-        }),
-        None => Ok(StockBalance {
-            company_id: company_id.trim().to_string(),
-            product_id: product_id.trim().to_string(),
-            warehouse_id: warehouse_id.trim().to_string(),
-            qty_base: 0.0,
-            avg_cost: 0,
-            total_value: 0,
-            updated_at: String::new(),
-        }),
-    }
-}
-
-async fn get_stock_ledger_entry(pool: &SqlitePool, id: &str) -> Result<StockLedgerEntry> {
-    let row = sqlx::query_as::<_, (String, String, String, String, Option<String>, String, f64, Option<String>, f64, i64, i64, f64, i64, String, Option<String>, String)>(
-        "SELECT id, company_id, product_id, warehouse_id, move_doc_id, move_type, qty, uom_id, qty_base, unit_cost, total_value, balance_qty, balance_avg, entry_date, actor, created_at FROM _stock_ledger_entry WHERE id = ?",
-    )
-    .bind(id.trim())
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("stock ledger entry not found: {id}")))?;
-    Ok(StockLedgerEntry {
-        id: row.0,
-        company_id: row.1,
-        product_id: row.2,
-        warehouse_id: row.3,
-        move_doc_id: row.4,
-        move_type: row.5,
-        qty: row.6,
-        uom_id: row.7,
-        qty_base: row.8,
-        unit_cost: row.9,
-        total_value: row.10,
-        balance_qty: row.11,
-        balance_avg: row.12,
-        entry_date: row.13,
-        actor: row.14,
-        created_at: row.15,
-    })
-}
-
-pub async fn list_stock_ledger(
-    pool: &SqlitePool,
-    company_id: &str,
-    product_id: Option<&str>,
-    warehouse_id: Option<&str>,
-    limit: i64,
-) -> Result<Vec<StockLedgerEntry>> {
-    require_company(pool, company_id).await?;
-    if !(1..=100).contains(&limit) {
-        return Err(AppError::BadRequest("limit must be 1..=100".into()).into());
-    }
-    let mut where_sql = String::from("company_id = ?");
-    let mut params: Vec<String> = vec![company_id.trim().to_string()];
-    if let Some(product) = product_id.map(str::trim).filter(|s| !s.is_empty()) {
-        where_sql.push_str(" AND product_id = ?");
-        params.push(product.to_string());
-    }
-    if let Some(warehouse) = warehouse_id.map(str::trim).filter(|s| !s.is_empty()) {
-        where_sql.push_str(" AND warehouse_id = ?");
-        params.push(warehouse.to_string());
-    }
-    let query = format!(
-        "SELECT id FROM _stock_ledger_entry WHERE {where_sql} ORDER BY entry_date DESC, created_at DESC LIMIT ?"
-    );
-    let mut q = sqlx::query_scalar::<_, String>(&query);
-    for param in &params {
-        q = q.bind(param);
-    }
-    let ids: Vec<String> = q.bind(limit).fetch_all(pool).await?;
-    let mut entries = Vec::new();
-    for id in ids {
-        entries.push(get_stock_ledger_entry(pool, &id).await?);
-    }
-    Ok(entries)
-}
-
-/// Apply one stock move with moving-average valuation.
-/// `qty` is in `uom_id` units (or base units when `uom_id` is None);
-/// `unit_cost` is minor units per base unit (used for `in` moves).
-/// `out` moves consume at the current average and reject negative stock.
-#[allow(clippy::too_many_arguments)]
-pub async fn apply_stock_move(
-    pool: &SqlitePool,
-    company_id: &str,
-    product_id: &str,
-    warehouse_id: &str,
-    move_type: &str,
-    qty: f64,
-    uom_id: Option<&str>,
-    unit_cost: i64,
-    entry_date: &str,
-    move_doc_id: Option<&str>,
-    actor: Option<&str>,
-) -> Result<StockLedgerEntry> {
-    require_company(pool, company_id).await?;
-    let product_id = product_id.trim();
-    let warehouse_id = warehouse_id.trim();
-    let move_type = move_type.trim();
-    let entry_date = entry_date.trim();
-    if product_id.is_empty() || warehouse_id.is_empty() {
-        return Err(AppError::BadRequest("product_id and warehouse_id are required".into()).into());
-    }
-    if !matches!(move_type, "in" | "out") {
-        return Err(AppError::BadRequest("move_type must be in|out".into()).into());
-    }
-    if !qty.is_finite() || qty <= 0.0 {
-        return Err(AppError::BadRequest("qty must be > 0".into()).into());
-    }
-    if unit_cost < 0 {
-        return Err(AppError::BadRequest("unit_cost must be >= 0".into()).into());
-    }
-    if !valid_entry_date(entry_date) {
-        return Err(AppError::BadRequest("entry_date must be YYYY-MM-DD".into()).into());
-    }
-    if period_locked(pool, company_id, entry_date).await? {
-        return Err(AppError::Conflict(format!("period locked: {}", period_of(entry_date))).into());
-    }
-    let (factor, resolved_uom): (f64, Option<String>) = match uom_id
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        None => (1.0, None),
-        Some(id) => {
-            let uom = get_uom(pool, id).await?;
-            if uom.company_id != company_id.trim() {
-                return Err(AppError::BadRequest("uom belongs to another company".into()).into());
-            }
-            (uom.factor_to_base, Some(uom.id))
-        }
-    };
-    let qty_base = qty * factor;
-    if !qty_base.is_finite() || qty_base <= 0.0 {
-        return Err(AppError::BadRequest("qty_base must be > 0".into()).into());
-    }
-    let current = get_stock_balance(pool, company_id, product_id, warehouse_id).await?;
-    let (new_qty, new_avg, entry_total) = if move_type == "in" {
-        let new_qty = current.qty_base + qty_base;
-        let new_avg = if current.qty_base <= f64::EPSILON {
-            unit_cost
-        } else {
-            ((current.qty_base * current.avg_cost as f64 + qty_base * unit_cost as f64) / new_qty)
-                .round() as i64
-        };
-        let entry_total = (qty_base * unit_cost as f64).round() as i64;
-        (new_qty, new_avg, entry_total)
-    } else {
-        if current.qty_base + 1e-9 < qty_base {
-            return Err(AppError::BadRequest("insufficient stock".into()).into());
-        }
-        let entry_total = (qty_base * current.avg_cost as f64).round() as i64;
-        let new_qty = current.qty_base - qty_base;
-        if new_qty < 1e-9 {
-            (0.0, 0, entry_total)
-        } else {
-            (new_qty, current.avg_cost, entry_total)
-        }
-    };
-    let new_total = (new_qty * new_avg as f64).round() as i64;
-    let mut tx = pool.begin().await?;
-    let id = format!("{company_id}_stock_{}", chrono_nanos());
-    sqlx::query(
-        "INSERT INTO _stock_ledger_entry (id, company_id, product_id, warehouse_id, move_doc_id, move_type, qty, uom_id, qty_base, unit_cost, total_value, balance_qty, balance_avg, entry_date, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(company_id.trim())
-    .bind(product_id)
-    .bind(warehouse_id)
-    .bind(move_doc_id.map(str::trim).filter(|s| !s.is_empty()))
-    .bind(move_type)
-    .bind(qty)
-    .bind(resolved_uom.clone())
-    .bind(qty_base)
-    .bind(unit_cost)
-    .bind(entry_total)
-    .bind(new_qty)
-    .bind(new_avg)
-    .bind(entry_date)
-    .bind(actor)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query(
-        "INSERT INTO _stock_balance (company_id, product_id, warehouse_id, qty_base, avg_cost, total_value) VALUES (?, ?, ?, ?, ?, ?) \
-         ON CONFLICT(company_id, product_id, warehouse_id) DO UPDATE SET qty_base = excluded.qty_base, avg_cost = excluded.avg_cost, total_value = excluded.total_value, updated_at = CURRENT_TIMESTAMP",
-    )
-    .bind(company_id.trim())
-    .bind(product_id)
-    .bind(warehouse_id)
-    .bind(new_qty)
-    .bind(new_avg)
-    .bind(new_total)
-    .execute(&mut *tx)
-    .await?;
-    tx.commit().await?;
-    get_stock_ledger_entry(pool, &id).await
 }
 
 async fn get_doc_attachment(
