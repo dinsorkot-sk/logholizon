@@ -1,32 +1,120 @@
 # LOGHOLIZON
 
-Metadata-driven ERP platform. Define entities and fields in the UI, then manage records with workflows, permissions, saved views, audit history, and CSV import/export — backed by a Rust core.
+Metadata-driven ERP Runtime / Business Application Platform. LOGHOLIZON provides the runtime and builders; users create the business modules they need instead of relying on built-in ERP modules.
+
+## Product Direction
+
+LOGHOLIZON is **not a pre-built ERP with built-in Accounting, Inventory, Sales, HR, CRM, Manufacturing, or POS modules**. These are examples of modules a user can create.
+
+The core product is a runtime for building ERP and business applications:
+
+```text
+User → Module Builder → User-Defined Modules → LOGHOLIZON Core Runtime → SQLite
+```
+
+A user should be able to create a module such as `Accounting`, `Dormitory`, `Vehicle Management`, or `Rental` without changing Rust for normal no-code use.
 
 ## Architecture
 
-```
-┌─────────────────────┐      HTTP /v1       ┌──────────────────────┐
-│  Nuxt 4 + Nuxt UI   │ ──────────────────► │  Rust (Axum + SQLite) │
-│  (UI + thin gateway)│ ◄────────────────── │  (domain + persistence)│
-└─────────────────────┘      JSON           └──────────────────────┘
+```text
+┌──────────────────────────────────────────────────────────┐
+│                    LOGHOLIZON CORE                       │
+│                                                          │
+│ Metadata │ Document │ Workflow │ Permission │ Formula    │
+│ Automation │ Event │ Report │ API │ Audit │ Storage      │
+└─────────────────────────┬────────────────────────────────┘
+                          │
+                    Module Runtime
+                          │
+                    Module Builder
+                          │
+          ┌───────────────┼───────────────┐
+          ↓               ↓               ↓
+      Accounting      Inventory       Dormitory
+      User Module     User Module     User Module
 ```
 
-- **`packages/core`** — Rust library + Axum HTTP service. Owns domain rules, SQLite schema/migrations, seed, backup/restore, repositories.
+- **`packages/core`** — Rust library + Axum HTTP service. Owns generic runtime capabilities, persistence, migrations, validation, transactions, and domain engines when deterministic invariants require native Rust.
 - **`packages/cli`** — Rust CLI for `migrate`, `seed`, `backup`, `restore`, `check`.
 - **`packages/app`** — Nuxt 4 + Nuxt UI. UI and thin Nitro gateway only; calls Rust over HTTP.
 
+### Architectural Rules
+
+- Core must remain business-domain agnostic. Do not hardcode Accounting, Inventory, Sales, HR, CRM, or another ERP module into Core.
+- Every business module uses the same Module Runtime and metadata contracts.
+- User-created modules are first-class tenant-scoped data, not source-code changes.
+- Module definitions must support draft/publish, versioning, validation, and upgrade-safe changes.
+- Normal module creation must require no Rust code.
+- Native Rust engines are allowed only for deterministic domain invariants that cannot safely be expressed as generic metadata/rules.
+- Modules communicate through stable commands, events, and contracts rather than direct Core/domain coupling.
 ## Features
 
-- **Entity Manager** — create entities, fields (text/number/date/select), options, status field
-- **Workflow Builder** — linear state machine (states + transitions) per entity
-- **Dynamic list** — search, filter, sort, pagination, bulk actions, column visibility, saved views
-- **Dynamic form** — dirty-state protection, validation, audit history per record
-- **Permissions** — per-entity view/edit toggles by role (admin/user)
-- **Auth** — login, first-run admin setup, user management, role-based UI
-- **Audit Log** — global history with entity/action/search filters
-- **Excel/CSV** — single-entity CSV export/import plus multi-sheet `.xlsx` workbook (one sheet per entity) with preview and atomic rollback
-- **Backups** — manual + scheduled (`VACUUM INTO`), staged restore, download
-- **PM Dashboard** — open/overdue/done-this-week summary cards
+- **Module Builder** — create business modules from metadata without writing Rust.
+- **Entity Manager** — create entities and fields with configurable types, options, status, relations, and computed values.
+- **Workflow Builder** — define lifecycle states and transitions per entity.
+- **Dynamic Views & Forms** — search, filter, sort, pagination, saved views, form layout, validation, and audit history.
+- **Permissions** — role-based entity and field access with hidden-field redaction.
+- **Auth** — login, first-run admin setup, user management, and role-based UI.
+- **Audit Log** — global record history with entity/action/search filters.
+- **Excel/CSV** — single-entity CSV export/import plus multi-sheet `.xlsx` workbooks.
+- **Backups** — manual and scheduled SQLite backups with staged restore.
+- **Reporting & Analytics** — saved reports, charts, and aggregation through the runtime.
+- **Notifications & Automation** — webhook-first notifications, rules, outbox, retry, and delivery history.
+
+## Module Model
+
+There are **no built-in ERP modules** in the target architecture. A module is a user-owned business definition consumed by the runtime.
+
+```text
+Module
+├── Entities
+├── Fields
+├── Relations
+├── Forms
+├── Views
+├── Workflows
+├── Permissions
+├── Roles
+├── Reports
+├── Dashboards
+├── Actions
+├── Formulas
+├── Automations
+├── Notifications
+├── Webhooks
+└── Settings
+```
+
+Example user-created modules:
+
+```text
+Accounting
+├── Account
+├── Journal Entry
+└── Journal Line
+
+Dormitory
+├── Building
+├── Room
+├── Tenant
+├── Contract
+├── Meter
+└── Rent Invoice
+
+Vehicle Management
+├── Vehicle
+├── Driver
+├── Maintenance
+└── Fuel Record
+```
+
+These examples are **not shipped modules**. They demonstrate what users can build with the platform.
+
+### Runtime vs Domain Engine
+
+Most business behavior should be expressed through metadata, formulas, workflows, validations, actions, and automation. When a domain has deterministic invariants that require stronger guarantees, the module may use a native Rust domain engine behind a stable Core contract.
+
+For example, a user-defined accounting module may have a Rust accounting engine that enforces balanced postings. The Accounting module itself is still user-created; the engine is an optional runtime extension, not a built-in ERP module.
 
 ## Quickstart (development)
 
@@ -40,18 +128,7 @@ pnpm run dev                                  # core :8787 + app :3000
 ```
 
 Open http://localhost:3000 — first run shows the admin setup form, or log in with the demo account (`demo` / `demo1234`).
-
-## Quickstart (Docker)
-
-```bash
-docker compose up --build
-```
-
-- App: http://localhost:3000
-- Core: http://localhost:8787
-- SQLite data persists in the `logholizon-data` volume (`/data/core.db`)
-
-## Commands
+## Development Commands
 
 ```powershell
 # Rust
@@ -59,8 +136,7 @@ cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo run -p logholizon-cli -- migrate
-cargo run -p logholizon-cli -- seed            # base entities/workflows
-cargo run -p logholizon-cli -- seed --demo     # + demo users & records
+cargo run -p logholizon-cli -- seed
 cargo run -p logholizon-cli -- backup <path>
 cargo run -p logholizon-cli -- restore <path> --force
 cargo run -p logholizon-cli -- check
@@ -72,23 +148,25 @@ pnpm --dir packages/app run test
 pnpm --dir packages/app run check
 ```
 
-## Configuration (core)
+## Configuration
 
 | Env | Default | Description |
 |---|---|---|
 | `CORE_HOST` | `127.0.0.1` | Bind host |
 | `CORE_PORT` | `8787` | Bind port |
 | `CORE_DATABASE_URL` | `sqlite://<root>/.data/core.db` | SQLite location |
-| `CORE_BACKUP_INTERVAL_HOURS` | `24` | Scheduled backup interval (0 = off) |
+| `CORE_BACKUP_INTERVAL_HOURS` | `24` | Scheduled backup interval; `0` disables it |
 | `CORE_BACKUP_KEEP` | `7` | Number of backups to keep |
 
-App: `CORE_URL` (default `http://127.0.0.1:8787`).
+App uses `CORE_URL` (default `http://127.0.0.1:8787`).
 
 ## Design
 
-See [`packages/app/design.md`](packages/app/design.md) for the UI spec and [`docs/plans/`](docs/plans/) for the implementation plans.
+See [`packages/app/design.md`](packages/app/design.md) for the UI specification and [`docs/plans/`](docs/plans/) for implementation plans.
 
 ## Roadmap
+
+The roadmap prioritizes the **User-Defined Module Runtime**, not a collection of built-in ERP applications.
 
 - [x] Core foundation (Rust + SQLite + migrations)
 - [x] Metadata + documents + workflow
@@ -101,105 +179,77 @@ See [`packages/app/design.md`](packages/app/design.md) for the UI spec and [`doc
 - [x] Permissions + saved views
 - [x] Scheduled backups + demo seed
 - [x] Docker + CI
-- [x] Multi-user collaboration polish (audit actor, stale-write guard, user entity access)
-- [x] Field-level permissions (per-field view/edit by role, hidden-field redaction)
-- [x] Multi-sheet Excel (one sheet per entity workbook export/import)
+- [x] Multi-user collaboration polish
+- [x] Field-level permissions
+- [x] Multi-sheet Excel
+- [x] Visual form layout designer
+- [x] Notifications and webhook delivery
+- [x] Reporting and analytics
+- [x] Reference fields and relations
+- [x] Computed fields
+- [x] Module grouping
 
-Next ([`docs/plans/2026-09-06-next-roadmap.md`](docs/plans/2026-09-06-next-roadmap.md)):
+### Next: User-Defined Module Runtime
 
-- [x] Quality & debt (E2E tests, helper refactor, API consistency)
-- [x] Visual builder (form layout designer: sections, field ordering, live preview)
-- [x] Notifications (webhook-first: rules, outbox, retry, delivery log)
-- [x] Reporting & analytics (saved reports, charts, aggregation in core)
+- [ ] **Module Definition Model** — canonical schema for modules, entities, fields, relations, forms, views, workflows, permissions, reports, menus, actions, automations, and settings.
+- [ ] **Module Registry** — create, validate, enable, disable, publish, version, archive, and restore user modules.
+- [ ] **Module Builder** — no-code UI for creating a module from scratch.
+- [ ] **Dynamic Runtime API** — generic CRUD, queries, actions, and metadata APIs generated from module definitions.
+- [ ] **Dynamic UI Runtime** — menus, lists, forms, dashboards, reports, and actions rendered from definitions.
+- [ ] **Business Rules** — formulas, defaults, validations, numbering, conditions, and document policies.
+- [ ] **Command/Action Engine** — transactional actions with permission, validation, audit, and event integration.
+- [ ] **Event & Automation Engine** — lifecycle events, triggers, notifications, and cross-module automation.
+- [ ] **Tenant Isolation** — module ownership, data isolation, permission enforcement, and safe references.
+- [ ] **Module Versioning** — draft/publish lifecycle, definition migrations, compatibility checks, and rollback strategy.
+- [ ] **Extension API** — optional Rust extensions for domain invariants that cannot be safely represented by generic rules.
 
-Module builder ([`docs/plans/2026-09-06-module-builder.md`](docs/plans/2026-09-06-module-builder.md)):
+### Acceptance Test
 
-- [x] Reference fields (link entities, options endpoint, existence validation)
-- [x] Field types (checkbox, textarea, currency)
-- [x] Computed fields (template interpolation, evaluated on read)
-- [x] Module grouping (sidebar + command palette)
-- [x] Inventory sample module (product, warehouse, stock_move)
-## Flexible Module Architecture Roadmap
-
-The long-term goal is for **every ERP module to be flexible**, not only the generic Entity layer. Modules should be installable, configurable, extensible, and customizable without rewriting the core or hardcoding every screen and workflow.
-
-### Architecture principles
-
-- **Metadata + Runtime + Events + Domain Engines** is the target architecture.
-- Modules define entities, fields, relations, forms, views, workflows, permissions, reports, menus, actions, and settings through metadata.
-- Deterministic domain invariants remain in Rust domain engines where correctness matters (for example accounting posting, stock valuation, payroll calculation, and manufacturing costing).
-- Modules must communicate through stable contracts, commands, and events rather than importing another module's implementation directly.
-- Tenant customization must sit above standard modules so upgrades do not overwrite customer changes.
-- Avoid a big-bang rewrite: migrate the existing hardcoded modules incrementally behind module boundaries.
-
-### Phases
-
-- [ ] **Phase 0 — Architecture audit**: inventory all hardcoded domain tables, routes, UI pages, services, cross-module dependencies, and business rules; define Core vs Module ownership.
-- [ ] **Phase 1 — Module Runtime**: module manifest (`module.json`), registry, install/enable/disable/uninstall lifecycle, versioning, dependencies, migrations, and health checks.
-- [ ] **Phase 2 — Definition Runtime**: load module metadata for entities, fields, relations, forms, views, workflows, permissions, reports, menus, settings, and actions.
-- [ ] **Phase 3 — Dynamic UI Runtime**: render module navigation, list pages, forms, dashboards, reports, and actions from definitions instead of module-specific pages wherever possible.
-- [ ] **Phase 4 — Command/Action Engine**: introduce generic commands such as `create`, `update`, `submit`, `approve`, `cancel`, `post`, and module-defined actions with authorization, validation, transactions, audit, and events.
-- [ ] **Phase 5 — Business Rules Engine**: configurable validations, numbering, conditions, formulas, defaults, approval rules, tax rules, and document policies.
-- [ ] **Phase 6 — Event & Hook System**: standard lifecycle events such as `Created`, `Updated`, `Submitted`, `Approved`, `Cancelled`, `Posted`, `PaymentReceived`, and `StockChanged`; support module hooks without tight coupling.
-- [ ] **Phase 7 — Extension API**: allow modules to add fields, relations, workflows, reports, actions, menus, event handlers, and UI extensions without modifying the base module.
-- [ ] **Phase 8 — Tenant Customization**: Core → Standard Module → Tenant Extension → User Customization, with upgrade-safe overrides and configuration precedence.
-- [ ] **Phase 9 — Accounting migration**: convert Accounting from hardcoded application code into a self-contained flexible module backed by a native accounting engine.
-- [ ] **Phase 10 — Inventory migration**: move Product, Warehouse, Stock Move, Stock Ledger, valuation, and inventory workflows behind the module runtime.
-- [ ] **Phase 11 — Sales & Purchase migration**: introduce flexible quotations, orders, deliveries, invoices, payments, pricing, taxes, and document workflows.
-- [ ] **Phase 12 — HR & Payroll migration**: make Employee, attendance, leave, payroll, and related policies module-defined while keeping payroll calculations in a domain engine.
-- [ ] **Phase 13 — Manufacturing migration**: BOM, routing, work orders, material consumption, production, and costing as an extensible module.
-- [ ] **Phase 14 — POS & CRM migration**: migrate POS sessions/transactions and CRM entities/workflows to the same module contracts.
-- [ ] **Phase 15 — Module packaging**: install modules from local packages or repositories, module version compatibility, upgrade/rollback, dependency resolution, and module validation.
-- [ ] **Phase 16 — Hardening**: module isolation, permissions, tenant safety, migration tests, API contract tests, E2E tests, performance tests, upgrade tests, and failure recovery.
-
-### Definition of Done — Flexible Module
-
-A module is considered fully flexible when it supports: install/enable/disable, dependency management, versioned migrations, dynamic entities/fields/relations, dynamic forms/views/workflows/permissions/reports, configurable business rules, generic actions/commands, events/hooks, module settings, tenant extensions, native domain engines, API registration, custom UI extensions, audit integration, and upgrade-safe customization.
-
-### Target module structure
+The first end-to-end milestone is that a user can create a **Vehicle Management** module without Rust:
 
 ```text
-packages/modules/<module>/
-├── module.json
-├── definitions/
-│   ├── entities/
-│   ├── forms/
-│   ├── views/
-│   ├── workflows/
-│   ├── permissions/
-│   ├── reports/
-│   └── menus/
-├── actions/
-├── events/
-├── migrations/
-├── engine/              # Native Rust domain logic when required
-└── README.md
+Create Module
+  ↓
+Create Vehicle entity
+  ↓
+Add fields: code, plate number, type, status
+  ↓
+Create Driver entity and relation
+  ↓
+Build form + list view
+  ↓
+Define workflow: Active → Maintenance → Retired
+  ↓
+Define roles and permissions
+  ↓
+Publish module
+  ↓
+Use generated UI/API to manage real records
 ```
 
-### Target architecture
+## Docker
+
+```bash
+docker compose up --build
+```
+
+- App: http://localhost:3000
+- Core: http://localhost:8787
+- SQLite data persists in the `logholizon-data` volume at `/data/core.db`.
+
+## Repository Boundaries
 
 ```text
-LOGHOLIZON Core
-├── Module Runtime / Registry
-├── Metadata Runtime
-├── Document Runtime
-├── Workflow Engine
-├── Permission / RBAC Engine
-├── Business Rules Engine
-├── Command / Action Engine
-├── Event / Hook Bus
-├── Report / Analytics Runtime
-└── Audit / Automation Runtime
-
-packages/modules/
-├── accounting/
-├── inventory/
-├── sales/
-├── purchase/
-├── hr/
-├── manufacturing/
-├── pos/
-└── crm/
+packages/
+├── core/       # Generic Rust runtime, persistence, engines, HTTP API
+├── cli/        # Rust operational CLI
+└── app/        # Nuxt 4 UI + thin Nitro gateway
 ```
 
-The key architectural rule is: **business modules may contain domain-specific engines, but their user-facing structure and configuration must be metadata-driven and extensible through Core contracts.**
+Business modules must not become hardcoded folders inside `packages/core`. User-defined module definitions belong to the runtime's persisted metadata model. Optional native extensions may live behind explicit Core contracts.
+
+## Design Principle
+
+> **LOGHOLIZON provides the engine, not the business. The user defines the business.**
+
+The success criterion is not how many ERP modules LOGHOLIZON ships. It is how many different business applications users can build from the same Core Runtime safely, predictably, and without source-code changes.

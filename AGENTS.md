@@ -32,7 +32,10 @@ cargo run -p logholizon-cli -- check
 - Migrations are embedded and forward-only; never edit an applied migration.
 - Backup SQLite with `VACUUM INTO`; never copy a live database file.
 - Restore is destructive: require explicit `--force`, validate integrity, preserve rollback path.
-- Keep entities metadata-driven; do not hardcode ERP modules in reusable UI.
+- Keep the platform metadata-driven; LOGHOLIZON has no built-in ERP/business modules. Never hardcode Accounting, Inventory, Sales, HR, CRM, or other domain modules into Core or reusable UI.
+- User-created modules are first-class product data and must run through the same Module Runtime, Metadata Runtime, Document Runtime, Workflow, Permission, Report, Automation, and Event contracts as every other module.
+- A module may use a native Rust domain engine only when deterministic domain invariants require it; the module definition and user-facing structure remain metadata-driven.
+- Module definitions created by users are tenant-scoped, upgrade-safe, versioned/publishable, and must not require Rust changes for normal no-code use.
 - Keep workflow linear; no D1, branching, canvas, or API tokens without explicit scope change. Auth, multi-sheet Excel, visual form layout, and webhook notifications are in scope (see roadmap).
 - Do not add NuxtHub, Drizzle, libsql, or a Rust SDK crate unless architecture changes explicitly.
 - Use `pnpm` for Node tasks, `cargo` for Rust tasks. Commit lockfiles.
