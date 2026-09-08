@@ -119,3 +119,87 @@ Module builder ([`docs/plans/2026-09-06-module-builder.md`](docs/plans/2026-09-0
 - [x] Computed fields (template interpolation, evaluated on read)
 - [x] Module grouping (sidebar + command palette)
 - [x] Inventory sample module (product, warehouse, stock_move)
+## Flexible Module Architecture Roadmap
+
+The long-term goal is for **every ERP module to be flexible**, not only the generic Entity layer. Modules should be installable, configurable, extensible, and customizable without rewriting the core or hardcoding every screen and workflow.
+
+### Architecture principles
+
+- **Metadata + Runtime + Events + Domain Engines** is the target architecture.
+- Modules define entities, fields, relations, forms, views, workflows, permissions, reports, menus, actions, and settings through metadata.
+- Deterministic domain invariants remain in Rust domain engines where correctness matters (for example accounting posting, stock valuation, payroll calculation, and manufacturing costing).
+- Modules must communicate through stable contracts, commands, and events rather than importing another module's implementation directly.
+- Tenant customization must sit above standard modules so upgrades do not overwrite customer changes.
+- Avoid a big-bang rewrite: migrate the existing hardcoded modules incrementally behind module boundaries.
+
+### Phases
+
+- [ ] **Phase 0 — Architecture audit**: inventory all hardcoded domain tables, routes, UI pages, services, cross-module dependencies, and business rules; define Core vs Module ownership.
+- [ ] **Phase 1 — Module Runtime**: module manifest (`module.json`), registry, install/enable/disable/uninstall lifecycle, versioning, dependencies, migrations, and health checks.
+- [ ] **Phase 2 — Definition Runtime**: load module metadata for entities, fields, relations, forms, views, workflows, permissions, reports, menus, settings, and actions.
+- [ ] **Phase 3 — Dynamic UI Runtime**: render module navigation, list pages, forms, dashboards, reports, and actions from definitions instead of module-specific pages wherever possible.
+- [ ] **Phase 4 — Command/Action Engine**: introduce generic commands such as `create`, `update`, `submit`, `approve`, `cancel`, `post`, and module-defined actions with authorization, validation, transactions, audit, and events.
+- [ ] **Phase 5 — Business Rules Engine**: configurable validations, numbering, conditions, formulas, defaults, approval rules, tax rules, and document policies.
+- [ ] **Phase 6 — Event & Hook System**: standard lifecycle events such as `Created`, `Updated`, `Submitted`, `Approved`, `Cancelled`, `Posted`, `PaymentReceived`, and `StockChanged`; support module hooks without tight coupling.
+- [ ] **Phase 7 — Extension API**: allow modules to add fields, relations, workflows, reports, actions, menus, event handlers, and UI extensions without modifying the base module.
+- [ ] **Phase 8 — Tenant Customization**: Core → Standard Module → Tenant Extension → User Customization, with upgrade-safe overrides and configuration precedence.
+- [ ] **Phase 9 — Accounting migration**: convert Accounting from hardcoded application code into a self-contained flexible module backed by a native accounting engine.
+- [ ] **Phase 10 — Inventory migration**: move Product, Warehouse, Stock Move, Stock Ledger, valuation, and inventory workflows behind the module runtime.
+- [ ] **Phase 11 — Sales & Purchase migration**: introduce flexible quotations, orders, deliveries, invoices, payments, pricing, taxes, and document workflows.
+- [ ] **Phase 12 — HR & Payroll migration**: make Employee, attendance, leave, payroll, and related policies module-defined while keeping payroll calculations in a domain engine.
+- [ ] **Phase 13 — Manufacturing migration**: BOM, routing, work orders, material consumption, production, and costing as an extensible module.
+- [ ] **Phase 14 — POS & CRM migration**: migrate POS sessions/transactions and CRM entities/workflows to the same module contracts.
+- [ ] **Phase 15 — Module packaging**: install modules from local packages or repositories, module version compatibility, upgrade/rollback, dependency resolution, and module validation.
+- [ ] **Phase 16 — Hardening**: module isolation, permissions, tenant safety, migration tests, API contract tests, E2E tests, performance tests, upgrade tests, and failure recovery.
+
+### Definition of Done — Flexible Module
+
+A module is considered fully flexible when it supports: install/enable/disable, dependency management, versioned migrations, dynamic entities/fields/relations, dynamic forms/views/workflows/permissions/reports, configurable business rules, generic actions/commands, events/hooks, module settings, tenant extensions, native domain engines, API registration, custom UI extensions, audit integration, and upgrade-safe customization.
+
+### Target module structure
+
+```text
+packages/modules/<module>/
+├── module.json
+├── definitions/
+│   ├── entities/
+│   ├── forms/
+│   ├── views/
+│   ├── workflows/
+│   ├── permissions/
+│   ├── reports/
+│   └── menus/
+├── actions/
+├── events/
+├── migrations/
+├── engine/              # Native Rust domain logic when required
+└── README.md
+```
+
+### Target architecture
+
+```text
+LOGHOLIZON Core
+├── Module Runtime / Registry
+├── Metadata Runtime
+├── Document Runtime
+├── Workflow Engine
+├── Permission / RBAC Engine
+├── Business Rules Engine
+├── Command / Action Engine
+├── Event / Hook Bus
+├── Report / Analytics Runtime
+└── Audit / Automation Runtime
+
+packages/modules/
+├── accounting/
+├── inventory/
+├── sales/
+├── purchase/
+├── hr/
+├── manufacturing/
+├── pos/
+└── crm/
+```
+
+The key architectural rule is: **business modules may contain domain-specific engines, but their user-facing structure and configuration must be metadata-driven and extensible through Core contracts.**
