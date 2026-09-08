@@ -947,7 +947,7 @@ const fieldColumns: TableColumn<Field>[] = [
       </UDashboardNavbar>
     </template>
     <template #body>
-      <div class="grid h-full grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
+      <div class="lg:grid h-full lg:grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
         <!-- Left: entity list -->
         <UCard class="h-fit lg:h-full">
           <UInput v-model="search" icon="i-lucide-search" placeholder="Search entities…" class="mb-3 w-full" />
