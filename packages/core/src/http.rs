@@ -13,7 +13,7 @@ use sqlx::SqlitePool;
 use crate::{
     auth, backup,
     error::AppError,
-    module_lifecycle, relation,
+    module_lifecycle, notification, relation,
     repository::{self, CreateDocument, UpdateDocument},
     Config,
 };
@@ -79,6 +79,27 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
         .route("/v1/auth/status", get(auth_status))
         .route("/v1/admin/users", get(list_users).post(create_user))
         .route("/v1/admin/roles", get(list_roles).post(create_role))
+        .route(
+            "/v1/meta/notification-templates",
+            get(list_notification_templates).post(create_notification_template),
+        )
+        .route(
+            "/v1/meta/notification-templates/{id}",
+            axum::routing::put(update_notification_template).delete(delete_notification_template),
+        )
+        .route("/v1/meta/webhooks", get(list_webhooks).post(create_webhook))
+        .route(
+            "/v1/meta/webhooks/{id}/deliver",
+            axum::routing::post(deliver_webhook),
+        )
+        .route(
+            "/v1/notifications",
+            get(list_my_notifications).post(send_notification),
+        )
+        .route(
+            "/v1/notifications/{id}/read",
+            axum::routing::post(mark_notification_read),
+        )
         .route(
             "/v1/admin/roles/{id}",
             axum::routing::put(update_role).delete(delete_role),
@@ -1590,6 +1611,203 @@ pub struct ListDeliveriesQuery {
     pub offset: i64,
 }
 
+#[derive(Debug, Deserialize)]
+struct CreateNotificationTemplateRequest {
+    name: String,
+    channel: String,
+    #[serde(default)]
+    subject: String,
+    body: String,
+    #[serde(default)]
+    variables: Value,
+    #[serde(default = "default_true")]
+    active: bool,
+}
+#[derive(Debug, Deserialize)]
+struct UpdateNotificationTemplateRequest {
+    channel: Option<String>,
+    subject: Option<String>,
+    body: Option<String>,
+    variables: Option<Value>,
+    active: Option<bool>,
+}
+async fn list_notification_templates(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<notification::NotificationTemplate>>, AppError> {
+    notification::list_templates(&state.pool)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+async fn create_notification_template(
+    State(state): State<AppState>,
+    Json(i): Json<CreateNotificationTemplateRequest>,
+) -> Result<(StatusCode, Json<notification::NotificationTemplate>), AppError> {
+    notification::create_template(
+        &state.pool,
+        &i.name,
+        &i.channel,
+        &i.subject,
+        &i.body,
+        &i.variables,
+        i.active,
+    )
+    .await
+    .map(|v| (StatusCode::CREATED, Json(v)))
+    .map_err(map_db_error)
+}
+async fn update_notification_template(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(i): Json<UpdateNotificationTemplateRequest>,
+) -> Result<Json<notification::NotificationTemplate>, AppError> {
+    notification::update_template(
+        &state.pool,
+        &id,
+        i.channel.as_deref(),
+        i.subject.as_deref(),
+        i.body.as_deref(),
+        i.variables.as_ref(),
+        i.active,
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
+async fn delete_notification_template(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    let r = sqlx::query("DELETE FROM _notification_template WHERE id=?")
+        .bind(id)
+        .execute(&state.pool)
+        .await
+        .map_err(|e| AppError::from(anyhow::Error::from(e)))?;
+    if r.rows_affected() == 0 {
+        return Err(AppError::NotFound("notification template not found".into()));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+#[derive(Debug, Deserialize)]
+struct CreateWebhookRequest {
+    name: String,
+    url: String,
+    #[serde(default)]
+    secret: String,
+    #[serde(default)]
+    headers: Value,
+    #[serde(default = "default_webhook_timeout")]
+    timeout_secs: i64,
+    #[serde(default = "default_webhook_attempts")]
+    max_attempts: i64,
+    #[serde(default = "default_true")]
+    active: bool,
+}
+fn default_webhook_timeout() -> i64 {
+    10
+}
+fn default_webhook_attempts() -> i64 {
+    3
+}
+async fn list_webhooks(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<notification::WebhookEndpoint>>, AppError> {
+    notification::list_webhooks(&state.pool)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+async fn create_webhook(
+    State(state): State<AppState>,
+    Json(i): Json<CreateWebhookRequest>,
+) -> Result<(StatusCode, Json<notification::WebhookEndpoint>), AppError> {
+    notification::create_webhook(
+        &state.pool,
+        &i.name,
+        &i.url,
+        &i.secret,
+        &i.headers,
+        i.timeout_secs,
+        i.max_attempts,
+        i.active,
+    )
+    .await
+    .map(|v| (StatusCode::CREATED, Json(v)))
+    .map_err(map_db_error)
+}
+#[derive(Debug, Deserialize)]
+struct DeliverWebhookRequest {
+    event_type: String,
+    document_id: Option<String>,
+    #[serde(default)]
+    payload: Value,
+}
+async fn deliver_webhook(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(i): Json<DeliverWebhookRequest>,
+) -> Result<(StatusCode, Json<Value>), AppError> {
+    let delivery = notification::enqueue_webhook(
+        &state.pool,
+        &id,
+        &i.event_type,
+        i.document_id.as_deref(),
+        &i.payload,
+    )
+    .await
+    .map_err(map_db_error)?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({"id":delivery,"status":"pending"})),
+    ))
+}
+async fn send_notification(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Json(i): Json<notification::SendRequest>,
+) -> Result<Json<Value>, AppError> {
+    let actor = user
+        .as_ref()
+        .map(|u| u.id.clone())
+        .ok_or(AppError::Unauthorized("authentication required".into()))?;
+    let mut req = i;
+    if req.user_ids.is_empty() && req.roles.is_empty() {
+        req.user_ids.push(actor);
+    }
+    let n = notification::send(&state.pool, &req)
+        .await
+        .map_err(map_db_error)?;
+    Ok(Json(json!({"sent":n})))
+}
+async fn list_my_notifications(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Vec<notification::NotificationItem>>, AppError> {
+    let actor = user
+        .as_ref()
+        .map(|u| u.id.clone())
+        .ok_or(AppError::Unauthorized("authentication required".into()))?;
+    let unread = q.get("unread").map(|v| v == "true").unwrap_or(false);
+    notification::list_for_user(&state.pool, &actor, 100, unread)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+async fn mark_notification_read(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    let actor = user
+        .as_ref()
+        .map(|u| u.id.clone())
+        .ok_or(AppError::Unauthorized("authentication required".into()))?;
+    notification::mark_read(&state.pool, &id, &actor)
+        .await
+        .map_err(map_db_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
 async fn list_notification_deliveries(
     State(state): State<AppState>,
     Query(query): Query<ListDeliveriesQuery>,

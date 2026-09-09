@@ -6,6 +6,8 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.99"
 argon2 = "0.5.3"
+hmac = "0.12.1"
+sha2 = "0.10.9"
 axum = "0.8.4"
 calamine = "0.30"
 clap = { version = "4.5.45", features = ["derive"] }

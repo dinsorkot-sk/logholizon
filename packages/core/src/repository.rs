@@ -2246,6 +2246,10 @@ pub async fn delete_report(pool: &SqlitePool, id: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn chrono_nanos_public() -> i64 {
+    chrono_nanos()
+}
+
 fn chrono_nanos() -> i64 {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);

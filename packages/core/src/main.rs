@@ -1,4 +1,4 @@
-use logholizon_core::{backup, http, notify, Config};
+use logholizon_core::{backup, http, notification, notify, Config};
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::EnvFilter;
@@ -72,6 +72,8 @@ async fn main() -> anyhow::Result<()> {
                 let _ = logholizon_core::automation::enqueue_events(&task_pool).await;
                 let _ = logholizon_core::automation::enqueue_scheduled(&task_pool).await;
                 let _ = logholizon_core::automation::process_pending(&task_pool).await;
+                let _ = notification::deliver_pending(&task_pool).await;
+                let _ = notification::deliver_notifications(&task_pool).await;
             }
         });
     }
