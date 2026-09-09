@@ -62,6 +62,19 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    // Generic automation engine: event discovery, schedules, action chains and retry logs.
+    if config.notify_interval_secs > 0 {
+        let task_pool = pool.clone();
+        let interval = std::time::Duration::from_secs(config.notify_interval_secs);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(interval).await;
+                let _ = logholizon_core::automation::enqueue_events(&task_pool).await;
+                let _ = logholizon_core::automation::enqueue_scheduled(&task_pool).await;
+                let _ = logholizon_core::automation::process_pending(&task_pool).await;
+            }
+        });
+    }
     let app = http::router(&config, pool).layer(CorsLayer::permissive());
     let addr = format!("{}:{}", config.host, config.port);
     let listener = TcpListener::bind(&addr).await?;

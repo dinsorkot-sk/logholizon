@@ -138,7 +138,11 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
         )
         .route(
             "/v1/meta/automations/{id}",
-            axum::routing::delete(delete_automation),
+            axum::routing::put(update_automation).delete(delete_automation),
+        )
+        .route(
+            "/v1/meta/automations/{id}/executions",
+            get(list_automation_executions),
         )
         .route("/v1/meta/entities", get(list_entities).post(create_entity))
         .route(
@@ -1204,6 +1208,60 @@ async fn create_automation(
     .map_err(map_db_error)
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UpdateAutomationRequest {
+    pub condition: Option<String>,
+    pub schedule: Option<String>,
+    pub actions: Option<Value>,
+    pub max_attempts: Option<i64>,
+    pub active: Option<bool>,
+}
+
+async fn update_automation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<UpdateAutomationRequest>,
+) -> Result<Json<repository::Automation>, AppError> {
+    crate::automation::update(
+        &state.pool,
+        &id,
+        input.condition.as_deref(),
+        input.schedule.as_deref(),
+        input.actions.as_ref(),
+        input.max_attempts,
+        input.active,
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
+
+async fn list_automation_executions(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<crate::automation::AutomationExecution>>, AppError> {
+    let rows=sqlx::query("SELECT id,automation_id,event_id,document_id,status,attempt,error,result,scheduled_at,started_at,finished_at,created_at FROM _automation_execution WHERE automation_id=? ORDER BY created_at DESC LIMIT 100").bind(id).fetch_all(&state.pool).await.map_err(|e| map_db_error(e.into()))?;
+    use sqlx::Row;
+    let out = rows
+        .into_iter()
+        .map(|r| crate::automation::AutomationExecution {
+            id: r.try_get("id").unwrap(),
+            automation_id: r.try_get("automation_id").unwrap(),
+            event_id: r.try_get("event_id").unwrap(),
+            document_id: r.try_get("document_id").unwrap(),
+            status: r.try_get("status").unwrap(),
+            attempt: r.try_get("attempt").unwrap(),
+            error: r.try_get("error").unwrap(),
+            result: serde_json::from_str(r.try_get::<String, _>("result").unwrap().as_str())
+                .unwrap_or(Value::Object(Default::default())),
+            scheduled_at: r.try_get("scheduled_at").unwrap(),
+            started_at: r.try_get("started_at").unwrap(),
+            finished_at: r.try_get("finished_at").unwrap(),
+            created_at: r.try_get("created_at").unwrap(),
+        })
+        .collect();
+    Ok(Json(out))
+}
 async fn delete_automation(
     State(state): State<AppState>,
     Path(id): Path<String>,
