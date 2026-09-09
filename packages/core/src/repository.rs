@@ -262,6 +262,40 @@ pub struct WorkflowTransition {
     pub action: String,
     pub from_state: String,
     pub to_state: String,
+    pub condition: String,
+    pub required_role: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkflowHistoryEntry {
+    pub id: String,
+    pub entity_id: String,
+    pub document_id: String,
+    pub transition_id: String,
+    pub action: String,
+    pub from_state: String,
+    pub to_state: String,
+    pub actor: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkflowHistoryList {
+    pub items: Vec<WorkflowHistoryEntry>,
+    pub total: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkflowEvent {
+    pub id: String,
+    pub entity_id: String,
+    pub document_id: String,
+    pub transition_id: String,
+    pub event_type: String,
+    pub action: String,
+    pub payload: Value,
+    pub actor: Option<String>,
+    pub created_at: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -4166,17 +4200,36 @@ pub async fn transition_document_as_role(
         .and_then(Value::as_str)
         .ok_or_else(|| AppError::BadRequest("document has no status".into()))?
         .to_string();
-    let target: Option<String> = sqlx::query_scalar(
-        "SELECT to_state FROM _workflow_transition WHERE entity_id = ? AND from_state = ? AND action = ?",
+    let transition: Option<(String, String, String, String)> = sqlx::query_as(
+        "SELECT id, to_state, condition, required_role FROM _workflow_transition WHERE entity_id = ? AND from_state = ? AND action = ?",
     )
     .bind(&existing.entity_id)
     .bind(&current)
     .bind(action)
     .fetch_optional(pool)
     .await?;
-    let target = target.ok_or_else(|| {
+    let (transition_id, target, condition, required_role) = transition.ok_or_else(|| {
         AppError::BadRequest(format!("invalid transition: {current} cannot {action}"))
     })?;
+    if !required_role.trim().is_empty() && role != "admin" && role != required_role {
+        return Err(
+            AppError::Forbidden(format!("transition requires role: {required_role}")).into(),
+        );
+    }
+    if !condition.trim().is_empty() {
+        let vars: std::collections::HashMap<String, Value> = existing
+            .payload
+            .as_object()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        let result = crate::formula::evaluate(&condition, &vars)
+            .map_err(|e| AppError::BadRequest(format!("invalid workflow condition: {e}")))?;
+        if !result.as_bool().unwrap_or(false) {
+            return Err(AppError::Forbidden("workflow condition is not satisfied".into()).into());
+        }
+    }
     check_field_permission(pool, &existing.entity_id, &status_field.name, role, true).await?;
     let mut next = existing.payload;
     next[status_field.name.as_str()] = Value::String(target.clone());
@@ -4209,6 +4262,33 @@ pub async fn transition_document_as_role(
     .bind(audit_id(id, "transition"))
     .bind(&existing.entity_id)
     .bind(id)
+    .bind(next.to_string())
+    .bind(actor)
+    .execute(&mut *tx)
+    .await?;
+    let history_id = format!("{id}-workflow-{}", chrono_nanos());
+    sqlx::query(
+        "INSERT INTO _workflow_history (id, entity_id, document_id, transition_id, action, from_state, to_state, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&history_id)
+    .bind(&existing.entity_id)
+    .bind(id)
+    .bind(&transition_id)
+    .bind(action)
+    .bind(&current)
+    .bind(&target)
+    .bind(actor)
+    .execute(&mut *tx)
+    .await?;
+    let event_id = format!("{id}-workflow-event-{}", chrono_nanos());
+    sqlx::query(
+        "INSERT INTO _workflow_event (id, entity_id, document_id, transition_id, event_type, action, payload, actor) VALUES (?, ?, ?, ?, 'transition', ?, ?, ?)",
+    )
+    .bind(&event_id)
+    .bind(&existing.entity_id)
+    .bind(id)
+    .bind(&transition_id)
+    .bind(action)
     .bind(next.to_string())
     .bind(actor)
     .execute(&mut *tx)
@@ -4524,18 +4604,20 @@ pub async fn get_workflow(pool: &SqlitePool, entity_id: &str) -> Result<Workflow
         position,
     })
     .collect();
-    let transitions = sqlx::query_as::<_, (String, String, String, String)>(
-        "SELECT id, action, from_state, to_state FROM _workflow_transition WHERE entity_id = ? ORDER BY from_state, action",
+    let transitions = sqlx::query_as::<_, (String, String, String, String, String, String)>(
+        "SELECT id, action, from_state, to_state, condition, required_role FROM _workflow_transition WHERE entity_id = ? ORDER BY from_state, action",
     )
     .bind(entity_id)
     .fetch_all(pool)
     .await?
     .into_iter()
-    .map(|(id, action, from_state, to_state)| WorkflowTransition {
+    .map(|(id, action, from_state, to_state, condition, required_role)| WorkflowTransition {
         id,
         action,
         from_state,
         to_state,
+        condition,
+        required_role,
     })
     .collect();
     Ok(WorkflowDefinition {
@@ -4669,7 +4751,29 @@ pub async fn create_workflow_transition(
     to_state: &str,
     action: &str,
 ) -> Result<WorkflowTransition> {
+    create_workflow_transition_with_options(pool, entity_id, from_state, to_state, action, "", "")
+        .await
+}
+
+pub async fn create_workflow_transition_with_options(
+    pool: &SqlitePool,
+    entity_id: &str,
+    from_state: &str,
+    to_state: &str,
+    action: &str,
+    condition: &str,
+    required_role: &str,
+) -> Result<WorkflowTransition> {
     validate_action_name(action)?;
+    if condition.len() > 2048 {
+        return Err(
+            AppError::BadRequest("workflow condition exceeds 2048 characters".into()).into(),
+        );
+    }
+    if !condition.trim().is_empty() {
+        crate::formula::validate_syntax(condition)
+            .map_err(|e| AppError::BadRequest(format!("invalid workflow condition: {e}")))?;
+    }
     require_entity(pool, entity_id).await?;
     for state in [from_state, to_state] {
         let exists: bool = sqlx::query_scalar(
@@ -4688,13 +4792,15 @@ pub async fn create_workflow_transition(
     }
     let id = format!("{entity_id}_{from_state}_{action}");
     sqlx::query(
-        "INSERT INTO _workflow_transition (id, entity_id, from_state, to_state, action) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO _workflow_transition (id, entity_id, from_state, to_state, action, condition, required_role) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(entity_id)
     .bind(from_state)
-    .bind(to_state)
+        .bind(to_state)
     .bind(action)
+    .bind(condition.trim())
+    .bind(required_role.trim())
     .execute(pool)
     .await?;
     get_workflow_transition(pool, &id).await
@@ -4702,7 +4808,7 @@ pub async fn create_workflow_transition(
 
 pub async fn get_workflow_transition(pool: &SqlitePool, id: &str) -> Result<WorkflowTransition> {
     let row = sqlx::query(
-        "SELECT id, action, from_state, to_state FROM _workflow_transition WHERE id = ?",
+        "SELECT id, action, from_state, to_state, condition, required_role FROM _workflow_transition WHERE id = ?",
     )
     .bind(id)
     .fetch_optional(pool)
@@ -4714,6 +4820,8 @@ pub async fn get_workflow_transition(pool: &SqlitePool, id: &str) -> Result<Work
         action: row.try_get("action")?,
         from_state: row.try_get("from_state")?,
         to_state: row.try_get("to_state")?,
+        condition: row.try_get("condition")?,
+        required_role: row.try_get("required_role")?,
     })
 }
 
@@ -4726,6 +4834,41 @@ pub async fn delete_workflow_transition(pool: &SqlitePool, id: &str) -> Result<(
         return Err(AppError::NotFound(format!("workflow transition not found: {id}")).into());
     }
     Ok(())
+}
+
+pub async fn list_workflow_history(
+    pool: &SqlitePool,
+    document_id: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<WorkflowHistoryList> {
+    let limit = limit.clamp(1, 100);
+    let offset = offset.max(0);
+    let total: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM _workflow_history WHERE document_id = ?")
+            .bind(document_id)
+            .fetch_one(pool)
+            .await?;
+    let rows = sqlx::query("SELECT id, entity_id, document_id, transition_id, action, from_state, to_state, actor, created_at FROM _workflow_history WHERE document_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?")
+        .bind(document_id).bind(limit).bind(offset).fetch_all(pool).await?;
+    use sqlx::Row;
+    let items = rows
+        .into_iter()
+        .map(|row| {
+            Ok(WorkflowHistoryEntry {
+                id: row.try_get("id")?,
+                entity_id: row.try_get("entity_id")?,
+                document_id: row.try_get("document_id")?,
+                transition_id: row.try_get("transition_id")?,
+                action: row.try_get("action")?,
+                from_state: row.try_get("from_state")?,
+                to_state: row.try_get("to_state")?,
+                actor: row.try_get("actor")?,
+                created_at: row.try_get("created_at")?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(WorkflowHistoryList { items, total })
 }
 
 pub async fn count_documents_by_status(

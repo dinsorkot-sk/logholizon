@@ -329,6 +329,10 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
             "/v1/documents/{id}/transition",
             axum::routing::post(transition_document),
         )
+        .route(
+            "/v1/documents/{id}/workflow-history",
+            get(get_workflow_history),
+        )
         .route("/v1/dashboard/counts", get(dashboard_counts))
         .route("/v1/dashboard/pm", get(dashboard_pm))
         .route("/v1/reports/aggregate", get(report_aggregate))
@@ -1619,8 +1623,16 @@ async fn delete_workflow_state(
 #[derive(Debug, Deserialize)]
 pub struct CreateWorkflowTransition {
     pub from_state: String,
+
     pub to_state: String,
+
     pub action: String,
+
+    #[serde(default)]
+    pub condition: String,
+
+    #[serde(default)]
+    pub required_role: String,
 }
 
 async fn create_workflow_transition(
@@ -1628,12 +1640,14 @@ async fn create_workflow_transition(
     Path(id): Path<String>,
     Json(input): Json<CreateWorkflowTransition>,
 ) -> Result<(StatusCode, Json<repository::WorkflowTransition>), AppError> {
-    repository::create_workflow_transition(
+    repository::create_workflow_transition_with_options(
         &state.pool,
         &id,
         &input.from_state,
         &input.to_state,
         &input.action,
+        &input.condition,
+        &input.required_role,
     )
     .await
     .map(|row| (StatusCode::CREATED, Json(row)))
@@ -1716,6 +1730,17 @@ async fn transition_document(
     .await
     .map(Json)
     .map_err(map_db_error)
+}
+
+async fn get_workflow_history(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<ListDocumentsQuery>,
+) -> Result<Json<repository::WorkflowHistoryList>, AppError> {
+    repository::list_workflow_history(&state.pool, &id, query.limit, query.offset)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
 }
 
 #[derive(Debug, Deserialize)]

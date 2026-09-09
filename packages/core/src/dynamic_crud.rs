@@ -29,7 +29,7 @@ pub async fn resolve_entity(
         name,
         label,
         description,
-        settings: serde_json::from_str(&settings)?,
+        settings: serde_json::from_str::<serde_json::Value>(&settings)?,
         module: module_name,
     })
 }

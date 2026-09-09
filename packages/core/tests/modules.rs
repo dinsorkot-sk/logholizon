@@ -557,31 +557,51 @@ async fn automation_triggers() {
 async fn module_lifecycle_requires_ordered_transitions() {
     let pool = setup().await;
     let module = repository::create_module(
-        &pool, "lifecycle", "Lifecycle", None, None, None, "alice",
-        &vehicle_definition(), Some("alice"),
-    ).await.unwrap();
+        &pool,
+        "lifecycle",
+        "Lifecycle",
+        None,
+        None,
+        None,
+        "alice",
+        &vehicle_definition(),
+        Some("alice"),
+    )
+    .await
+    .unwrap();
     assert_eq!(module.status, "draft");
 
     repository::submit_module_for_review(&pool, &module.id, "alice", "user")
-        .await.unwrap();
+        .await
+        .unwrap();
     let module = repository::get_module(&pool, &module.id, "alice", "user")
-        .await.unwrap();
+        .await
+        .unwrap();
     assert_eq!(module.status, "review");
-    assert!(repository::enable_module(&pool, &module.id, "alice", "user").await.is_err());
+    assert!(
+        repository::enable_module(&pool, &module.id, "alice", "user")
+            .await
+            .is_err()
+    );
 
     let module = repository::publish_module(&pool, &module.id, "alice", "user", Some("alice"))
-        .await.unwrap();
+        .await
+        .unwrap();
     assert_eq!(module.status, "published");
     let module = repository::enable_module(&pool, &module.id, "alice", "user")
-        .await.unwrap();
+        .await
+        .unwrap();
     assert_eq!(module.status, "enabled");
     let module = repository::disable_module(&pool, &module.id, "alice", "user")
-        .await.unwrap();
+        .await
+        .unwrap();
     assert_eq!(module.status, "disabled");
     let module = repository::archive_module(&pool, &module.id, "alice", "user")
-        .await.unwrap();
+        .await
+        .unwrap();
     assert_eq!(module.status, "archived");
     let module = repository::restore_module(&pool, &module.id, "alice", "user")
-        .await.unwrap();
+        .await
+        .unwrap();
     assert_eq!(module.status, "draft");
 }
