@@ -1,4 +1,6 @@
+import { coreClient } from '../../../core/client'
+
 export default defineEventHandler(async (event) => {
-  const id = getRouterParam(event, 'id')
-  return proxyCore(event, `/v1/modules/${encodeURIComponent(id || '')}/disable`, { method: 'POST' })
+  const id = getRouterParam(event, 'id') || ''
+  return coreClient(event).disableModule(id)
 })

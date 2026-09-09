@@ -506,7 +506,7 @@ async function saveEntity() {
   try {
     await $fetch(`/api/meta/entities/${encodeURIComponent(detail.value.id)}`, {
       method: 'PUT',
-      body: { name: editForm.name, label: editForm.label, module: editForm.module || null, description: editForm.description || null, settings }
+      body: { name: editForm.name, label: editForm.label, module: editForm.module || null, description: editForm.description || null, settings: JSON.parse(editForm.settingsText || '{}') }
     })
     editOpen.value = false
     await refresh()

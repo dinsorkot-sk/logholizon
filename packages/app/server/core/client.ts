@@ -679,6 +679,12 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       request<void>(`/v1/modules/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     getModuleManifest: (id: string): Promise<CoreModule> =>
       request<CoreModule>(`/v1/modules/${encodeURIComponent(id)}/manifest`),
+    reviewModule: (id: string): Promise<CoreModule> =>
+      request<CoreModule>(`/v1/modules/${encodeURIComponent(id)}/review`, { method: 'POST' }),
+    enableModule: (id: string): Promise<CoreModule> =>
+      request<CoreModule>(`/v1/modules/${encodeURIComponent(id)}/enable`, { method: 'POST' }),
+    disableModule: (id: string): Promise<CoreModule> =>
+      request<CoreModule>(`/v1/modules/${encodeURIComponent(id)}/disable`, { method: 'POST' }),
     publishModule: (id: string): Promise<CoreModule> =>
       request<CoreModule>(`/v1/modules/${encodeURIComponent(id)}/publish`, { method: 'POST' }),
     archiveModule: (id: string): Promise<CoreModule> =>

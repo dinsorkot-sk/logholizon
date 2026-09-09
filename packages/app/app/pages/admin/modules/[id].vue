@@ -29,7 +29,7 @@ type Module = {
   owner: string
   status: string
   version: number
-  definition: { entities?: ModuleEntity[] }
+  definition: { entities?: ModuleEntity[]; settings?: Record<string, unknown> }
 }
 
 const toast = useToast()
@@ -44,11 +44,14 @@ const saving = ref(false)
 const saveError = ref('')
 const publishing = ref(false)
 const entityForm = reactive({ name: '', label: '' })
+const settingsText = ref('{}')
+const settingsError = ref('')
 const fieldForms = ref<Record<string, { name: string; type: string; required: boolean; is_status: boolean; ref_entity: string; computed_expr: string }>>({})
 const newState = reactive({ entity: '', name: '', label: '' })
 const newTransition = reactive({ entity: '', from_state: '', to_state: '', action: '' })
 
 const entities = computed(() => module.value?.definition?.entities || [])
+watch(module, value => { settingsText.value = JSON.stringify(value?.definition?.settings || {}, null, 2) }, { immediate: true })
 const isDraft = computed(() => module.value?.status === 'draft')
 const isReview = computed(() => module.value?.status === 'review')
 const isPublished = computed(() => module.value?.status === 'published')
@@ -79,7 +82,18 @@ function cloneDefinition() {
   return JSON.parse(JSON.stringify(module.value?.definition || { entities: [] }))
 }
 
-async function saveDefinition(definition: { entities: ModuleEntity[] }, message = 'Draft saved') {
+async function saveSettings() {
+  settingsError.value = ''
+  try {
+    const definition = cloneDefinition()
+    definition.settings = JSON.parse(settingsText.value || '{}')
+    await saveDefinition(definition, 'Module settings saved')
+  } catch {
+    settingsError.value = 'Settings must be valid JSON'
+  }
+}
+
+async function saveDefinition(definition: { entities: ModuleEntity[]; settings?: Record<string, unknown> }, message = 'Draft saved') {
   saveError.value = ''
   saving.value = true
   try {
