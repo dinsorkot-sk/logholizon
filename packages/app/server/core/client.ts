@@ -607,6 +607,8 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       request<CoreReport[]>(`/v1/entities/${encodeURIComponent(entityId)}/reports`),
     getReportForUser: (id: string): Promise<CoreReport> =>
       request<CoreReport>(`/v1/reports/${encodeURIComponent(id)}`),
+    runReport: (id: string, input: { config?: Record<string, unknown>; format?: string } = {}): Promise<unknown> =>
+      request<unknown>(`/v1/reports/${encodeURIComponent(id)}/run`, { method: 'POST', body: input }),
     deleteWorkflowTransition: (id: string): Promise<void> =>
       request<void>(`/v1/meta/workflow/transitions/${encodeURIComponent(id)}`, {
         method: 'DELETE'

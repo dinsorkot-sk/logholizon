@@ -18,3 +18,4 @@ pub mod automation;
 pub mod dynamic_crud;
 pub mod dynamic_http;
 pub mod notification;
+pub mod report;

@@ -157,7 +157,7 @@ Rust Axum Runtime
 - Signing/secrets where required.
 - Execution logs and isolation.
 
-### Phase 13 — Generic Report Engine — 87%
+### Phase 13 — Generic Report Engine — 87% — COMPLETE (100%)
 - Entity and relation data sources.
 - Fields, filters, grouping and sorting.
 - Aggregation.

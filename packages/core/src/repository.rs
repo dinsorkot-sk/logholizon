@@ -2138,21 +2138,26 @@ pub async fn delete_notification_rule(pool: &SqlitePool, id: &str) -> Result<()>
     Ok(())
 }
 
-/// Saved reports (Phase 4). Config shape: `{ "group_by": "<field>", "chart_type": "bar|pie" }`.
+/// Saved report definitions are generic JSON configurations; chart_type is validated when present.
 /// Admin-managed; users read reports for entities they can view.
 fn validate_report_config(config: &Value) -> Result<()> {
     let object = config
         .as_object()
         .ok_or_else(|| AppError::BadRequest("report config must be a JSON object".to_string()))?;
-    let group_by = object
-        .get("group_by")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| {
-            AppError::BadRequest("report config requires a group_by field".to_string())
-        })?;
-    let _ = group_by;
+    let has_query_definition = object.contains_key("group_by")
+        || object.contains_key("fields")
+        || object.contains_key("filters")
+        || object.contains_key("sort")
+        || object.contains_key("aggregates")
+        || object.contains_key("calculated")
+        || object.contains_key("date_range")
+        || object.contains_key("date_field")
+        || object.contains_key("relation_id");
+    if !has_query_definition {
+        return Err(
+            AppError::BadRequest("report config requires a query definition".to_string()).into(),
+        );
+    }
     if let Some(chart_type) = object.get("chart_type") {
         let chart_type = chart_type
             .as_str()

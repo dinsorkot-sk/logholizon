@@ -222,6 +222,7 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
         )
         .route("/v1/entities/{id}/reports", get(list_reports_for_user))
         .route("/v1/reports/{id}", get(get_report_for_user))
+        .route("/v1/reports/{id}/run", axum::routing::post(run_report))
         .route(
             "/v1/meta/entities/{id}/workflow/states",
             axum::routing::post(create_workflow_state),
@@ -1520,6 +1521,80 @@ async fn delete_notification_rule(
         .map_err(map_db_error)
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct RunReportRequest {
+    #[serde(default)]
+    config: Option<serde_json::Value>,
+    #[serde(default)]
+    format: Option<String>,
+}
+
+async fn run_report(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+    Json(input): Json<RunReportRequest>,
+) -> Result<Response, AppError> {
+    let saved = repository::get_report(&state.pool, &id)
+        .await
+        .map_err(map_db_error)?;
+    repository::check_permission(&state.pool, &saved.entity_id, &current_role(&user), false)
+        .await
+        .map_err(map_db_error)?;
+    let config_value = input.config.unwrap_or(saved.config);
+    let config: crate::report::ReportConfig =
+        serde_json::from_value(config_value).map_err(|e| AppError::BadRequest(e.to_string()))?;
+    let role = current_role(&user);
+    if input
+        .format
+        .as_deref()
+        .is_some_and(|f| f.eq_ignore_ascii_case("csv"))
+    {
+        repository::check_entity_capability(&state.pool, &saved.entity_id, &role, "export")
+            .await
+            .map_err(map_db_error)?;
+    }
+    let result = crate::report::run(&state.pool, &saved.entity_id, &config, &role)
+        .await
+        .map_err(map_db_error)?;
+    if input
+        .format
+        .as_deref()
+        .is_some_and(|f| f.eq_ignore_ascii_case("csv"))
+    {
+        let mut csv = result.columns.join(",");
+        csv.push('\n');
+        for row in &result.rows {
+            csv.push_str(
+                &result
+                    .columns
+                    .iter()
+                    .map(|c| csv_cell(row.get(c).unwrap_or(&Value::Null)))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
+            csv.push('\n');
+        }
+        return Ok((
+            [(axum::http::header::CONTENT_TYPE, "text/csv; charset=utf-8")],
+            csv,
+        )
+            .into_response());
+    }
+    Ok(Json(result).into_response())
+}
+
+fn csv_cell(v: &Value) -> String {
+    let s = v
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| v.to_string());
+    if s.contains(',') || s.contains('"') || s.contains('\n') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s
+    }
+}
 async fn list_reports(
     State(state): State<AppState>,
     Path(id): Path<String>,
