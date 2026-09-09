@@ -49,7 +49,11 @@ const newState = reactive({ entity: '', name: '', label: '' })
 const newTransition = reactive({ entity: '', from_state: '', to_state: '', action: '' })
 
 const entities = computed(() => module.value?.definition?.entities || [])
+const isDraft = computed(() => module.value?.status === 'draft')
+const isReview = computed(() => module.value?.status === 'review')
 const isPublished = computed(() => module.value?.status === 'published')
+const isEnabled = computed(() => module.value?.status === 'enabled')
+const isDisabled = computed(() => module.value?.status === 'disabled')
 const isArchived = computed(() => module.value?.status === 'archived')
 
 const typeItems = [
@@ -153,6 +157,34 @@ async function addTransition() {
   await saveDefinition(definition, 'Transition added')
 }
 
+async function review() {
+  try {
+    await $fetch(`/api/modules/${encodeURIComponent(moduleId.value)}/review`, { method: 'POST' })
+    await refresh()
+    toast.add({ title: 'Module submitted for review', color: 'success', icon: 'i-lucide-check' })
+  } catch (cause: any) {
+    saveError.value = cause?.data?.message || cause?.statusMessage || 'Review submission failed'
+  }
+}
+
+async function enable() {
+  try {
+    await $fetch(`/api/modules/${encodeURIComponent(moduleId.value)}/enable`, { method: 'POST' })
+    await refresh()
+  } catch (cause: any) {
+    saveError.value = cause?.data?.message || cause?.statusMessage || 'Enable failed'
+  }
+}
+
+async function disable() {
+  try {
+    await $fetch(`/api/modules/${encodeURIComponent(moduleId.value)}/disable`, { method: 'POST' })
+    await refresh()
+  } catch (cause: any) {
+    saveError.value = cause?.data?.message || cause?.statusMessage || 'Disable failed'
+  }
+}
+
 async function publish() {
   publishing.value = true
   saveError.value = ''
@@ -207,8 +239,11 @@ async function rollback(version: number) {
         </template>
         <template #right>
           <UButton variant="ghost" to="/admin/modules" icon="i-lucide-arrow-left">Modules</UButton>
-          <UButton v-if="!isPublished && !isArchived" :loading="publishing" icon="i-lucide-rocket" @click="publish">Publish</UButton>
-          <UButton v-if="isPublished" variant="outline" @click="archive">Archive</UButton>
+          <UButton v-if="isDraft" variant="outline" icon="i-lucide-send" @click="review">Submit for review</UButton>
+          <UButton v-if="isReview" :loading="publishing" icon="i-lucide-rocket" @click="publish">Publish</UButton>
+          <UButton v-if="isPublished" variant="outline" icon="i-lucide-play" @click="enable">Enable</UButton>
+          <UButton v-if="isEnabled" variant="outline" icon="i-lucide-pause" @click="disable">Disable</UButton>
+          <UButton v-if="isPublished || isDisabled" variant="outline" @click="archive">Archive</UButton>
           <UButton v-if="isArchived" variant="outline" @click="restore">Restore to draft</UButton>
         </template>
       </UDashboardNavbar>

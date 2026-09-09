@@ -13,6 +13,7 @@ use sqlx::SqlitePool;
 use crate::{
     auth, backup,
     error::AppError,
+    module_lifecycle,
     repository::{self, CreateDocument, UpdateDocument},
     Config,
 };
@@ -100,6 +101,18 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
         .route(
             "/v1/modules/{id}/publish",
             axum::routing::post(publish_module),
+        )
+        .route(
+            "/v1/modules/{id}/review",
+            axum::routing::post(review_module),
+        )
+        .route(
+            "/v1/modules/{id}/enable",
+            axum::routing::post(enable_module),
+        )
+        .route(
+            "/v1/modules/{id}/disable",
+            axum::routing::post(disable_module),
         )
         .route(
             "/v1/modules/{id}/archive",
@@ -749,6 +762,54 @@ async fn get_module_manifest(
     Path(id): Path<String>,
 ) -> Result<Json<repository::Module>, AppError> {
     repository::get_module_manifest(
+        &state.pool,
+        &id,
+        &current_owner(&user),
+        &current_role(&user),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
+
+async fn review_module(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::Module>, AppError> {
+    module_lifecycle::submit_module_for_review(
+        &state.pool,
+        &id,
+        &current_owner(&user),
+        &current_role(&user),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
+
+async fn enable_module(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::Module>, AppError> {
+    module_lifecycle::enable_module(
+        &state.pool,
+        &id,
+        &current_owner(&user),
+        &current_role(&user),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
+
+async fn disable_module(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::Module>, AppError> {
+    module_lifecycle::disable_module(
         &state.pool,
         &id,
         &current_owner(&user),

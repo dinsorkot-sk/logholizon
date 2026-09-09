@@ -5,6 +5,8 @@ use sqlx::SqlitePool;
 
 use crate::error::AppError;
 
+pub use crate::module_lifecycle::{disable_module, enable_module, submit_module_for_review};
+
 #[derive(Debug, Serialize)]
 pub struct Entity {
     pub id: String,
@@ -1096,8 +1098,12 @@ pub async fn publish_module(
 ) -> Result<Module> {
     let module = get_module_row(pool, id).await?;
     check_module_access(&module, owner, role)?;
-    if module.status == "archived" {
-        return Err(AppError::Conflict(format!("module is archived: {}", module.id)).into());
+    if module.status != "review" {
+        return Err(AppError::Conflict(format!(
+            "module must be in review before publishing: {}",
+            module.id
+        ))
+        .into());
     }
     validate_module_definition(&module.definition)?;
     check_publish_compatibility(pool, &module).await?;
@@ -1135,10 +1141,12 @@ pub async fn archive_module(
 ) -> Result<Module> {
     let module = get_module_row(pool, id).await?;
     check_module_access(&module, owner, role)?;
-    if module.status != "published" {
-        return Err(
-            AppError::Conflict(format!("only published modules archive: {}", module.id)).into(),
-        );
+    if !matches!(module.status.as_str(), "published" | "disabled") {
+        return Err(AppError::Conflict(format!(
+            "module must be published or disabled before archive: {}",
+            module.id
+        ))
+        .into());
     }
     sqlx::query(
         "UPDATE _module SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
