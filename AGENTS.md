@@ -1,4 +1,4 @@
-# Agent Instructions
+﻿# Agent Instructions
 
 ## Architecture
 
@@ -58,3 +58,20 @@ Do not commit `target/`, `.data/`, `.nuxt/`, `.output/`, `node_modules/`, `.turb
 - CLI command changes belong under `packages/cli`.
 - App UI belongs under `packages/app/app`; gateway routes under `packages/app/server/api`.
 - Keep gateway handlers thin: parse, validate, call client, map response.
+
+## Git Branch and Release Workflow
+
+- Development must proceed through sequential version branches: v0.0.6, v0.0.7, v0.0.8, and so on.
+- Start each new phase on a new version branch created from the previously completed version branch.
+- Never continue implementing the next phase on an already completed version branch.
+- Work on exactly one planned phase at a time. Use docs/plans/README.md as the source of truth and follow phases in order.
+- Before finishing a phase, run the relevant build, test, format, and lint gates.
+- When a phase is complete, review the diff, update the plan status if needed, then commit all phase changes with a focused commit message.
+- Push the completed version branch to the remote repository.
+- Only after the commit and push succeed, create and switch to the next sequential version branch.
+- Branch sequence is continuous: v0.0.5 -> v0.0.6 -> v0.0.7 -> ... until all phases in docs/plans/README.md are completed.
+- Do not skip version numbers, reuse an old version branch, force-push, or rewrite published phase history unless explicitly instructed.
+- A phase is complete only when its acceptance criteria are implemented and relevant tests/gates pass.
+- If a phase cannot be completed safely, stop on the current branch, report the blocker, and do not create the next version branch.
+- At the end of the entire plan, do not invent additional phases; stop and report that the master plan is complete.
+
