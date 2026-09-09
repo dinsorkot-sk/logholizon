@@ -8,6 +8,7 @@ pub mod formula;
 pub mod http;
 pub mod metadata;
 pub mod module_lifecycle;
+pub mod module_package;
 pub mod notify;
 pub mod rbac;
 pub mod relation;

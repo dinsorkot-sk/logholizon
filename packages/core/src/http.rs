@@ -13,7 +13,7 @@ use sqlx::SqlitePool;
 use crate::{
     auth, backup,
     error::AppError,
-    module_lifecycle, notification, relation,
+    module_lifecycle, module_package, notification, relation,
     repository::{self, CreateDocument, UpdateDocument},
     Config,
 };
@@ -123,7 +123,20 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
             "/v1/modules/{id}",
             get(get_module).put(update_module).delete(delete_module),
         )
+        .route(
+            "/v1/modules/packages/preview",
+            axum::routing::post(preview_module_package),
+        )
+        .route(
+            "/v1/modules/packages/install",
+            axum::routing::post(install_module_package),
+        )
         .route("/v1/modules/{id}/manifest", get(get_module_manifest))
+        .route("/v1/modules/{id}/package", get(export_module_package))
+        .route(
+            "/v1/modules/{id}/package/uninstall",
+            axum::routing::post(uninstall_module_package),
+        )
         .route(
             "/v1/modules/{id}/publish",
             axum::routing::post(publish_module),
@@ -1051,6 +1064,71 @@ async fn delete_module(
     .map_err(map_db_error)
 }
 
+#[derive(Debug, Deserialize)]
+struct ModulePackageRequest {
+    package: Value,
+}
+
+async fn export_module_package(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, AppError> {
+    let module = repository::get_module(
+        &state.pool,
+        &id,
+        &current_owner(&user),
+        &current_role(&user),
+    )
+    .await
+    .map_err(map_db_error)?;
+    module_package::export_package(&module)
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn preview_module_package(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Json(input): Json<ModulePackageRequest>,
+) -> Result<Json<module_package::PackagePreview>, AppError> {
+    module_package::preview_package(&state.pool, &input.package, &current_owner(&user))
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn install_module_package(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Json(input): Json<ModulePackageRequest>,
+) -> Result<(StatusCode, Json<repository::Module>), AppError> {
+    let module = module_package::install_package(
+        &state.pool,
+        &input.package,
+        &current_owner(&user),
+        current_actor(&user).as_deref(),
+    )
+    .await
+    .map_err(map_db_error)?;
+    Ok((StatusCode::CREATED, Json(module)))
+}
+
+async fn uninstall_module_package(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<Json<repository::Module>, AppError> {
+    module_package::uninstall_package(
+        &state.pool,
+        &id,
+        &current_owner(&user),
+        &current_role(&user),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
 async fn get_module_manifest(
     State(state): State<AppState>,
     user: Option<axum::extract::Extension<auth::User>>,

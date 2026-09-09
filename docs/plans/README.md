@@ -177,7 +177,7 @@ Rust Axum Runtime
 - Module/user dashboard permissions.
 - Saved dashboards.
 
-### Phase 15 — Module Versioning & Upgrade — 91% — COMPLETE (100%)
+### Phase 15 ï¿½ Module Versioning & Upgrade ï¿½ 91% ï¿½ COMPLETE (100%)
 - Semantic module versions.
 - Immutable published versions.
 - Metadata diff.
@@ -187,7 +187,7 @@ Rust Axum Runtime
 - Safe rollout and rollback strategy.
 - Never mutate production metadata unsafely.
 
-### Phase 16 â€” Module Package Import/Export â€” 93%
+### Phase 16 â€” Module Package Import/Export â€” 93% â€” COMPLETE (100%)
 - Export module metadata.
 - Manifest and version.
 - Dependencies.

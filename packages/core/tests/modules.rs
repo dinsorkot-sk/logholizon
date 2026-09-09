@@ -658,3 +658,58 @@ async fn module_lifecycle_requires_ordered_transitions() {
         .unwrap();
     assert_eq!(module.status, "draft");
 }
+
+#[tokio::test]
+async fn module_package_export_preview_install_uninstall() {
+    let pool = setup().await;
+    let definition = vehicle_definition();
+    let module = repository::create_module(
+        &pool,
+        "vehicle",
+        "Vehicle",
+        None,
+        None,
+        None,
+        "alice",
+        &definition,
+        Some("alice"),
+    )
+    .await
+    .unwrap();
+    let package = logholizon_core::module_package::export_package(&module).unwrap();
+    assert_eq!(package["kind"], "logholizon.module");
+    assert_eq!(package["manifest"]["version"], "1.0.0");
+
+    let preview = logholizon_core::module_package::preview_package(&pool, &package, "bob")
+        .await
+        .unwrap();
+    assert!(preview.valid);
+    assert_eq!(preview.action, "install");
+    assert!(!preview.migration.creates.is_empty());
+
+    let installed =
+        logholizon_core::module_package::install_package(&pool, &package, "bob", Some("bob"))
+            .await
+            .unwrap();
+    assert_eq!(installed.status, "enabled");
+    assert_eq!(installed.name, "vehicle");
+
+    let entity_id = format!("{}_vehicle", installed.id);
+    let entity_exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _meta_entity WHERE id = ?)")
+            .bind(&entity_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(entity_exists);
+
+    let disabled = repository::disable_module(&pool, &installed.id, "bob", "user")
+        .await
+        .unwrap();
+    assert_eq!(disabled.status, "disabled");
+    let uninstalled =
+        logholizon_core::module_package::uninstall_package(&pool, &installed.id, "bob", "user")
+            .await
+            .unwrap();
+    assert_eq!(uninstalled.status, "archived");
+}
