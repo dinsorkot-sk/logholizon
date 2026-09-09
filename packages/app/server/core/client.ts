@@ -205,6 +205,20 @@ export type CoreReportBucket = {
   count: number
 }
 
+export type CoreDashboard = {
+  id: string
+  name: string
+  description: string
+  layout: unknown[]
+  filters: Record<string, unknown>
+  roles: string[]
+  users: string[]
+  active: boolean
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
 export type CoreModule = {
   id: string
   name: string
@@ -609,6 +623,13 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       request<CoreReport>(`/v1/reports/${encodeURIComponent(id)}`),
     runReport: (id: string, input: { config?: Record<string, unknown>; format?: string } = {}): Promise<unknown> =>
       request<unknown>(`/v1/reports/${encodeURIComponent(id)}/run`, { method: 'POST', body: input }),
+    listDashboards: (): Promise<CoreDashboard[]> => request<CoreDashboard[]>('/v1/meta/dashboards'),
+    createDashboard: (input: Record<string, unknown>): Promise<CoreDashboard> => request<CoreDashboard>('/v1/meta/dashboards', { method: 'POST', body: input }),
+    getDashboard: (id: string): Promise<CoreDashboard> => request<CoreDashboard>(`/v1/meta/dashboards/${encodeURIComponent(id)}`),
+    updateDashboard: (id: string, input: Record<string, unknown>): Promise<CoreDashboard> => request<CoreDashboard>(`/v1/meta/dashboards/${encodeURIComponent(id)}`, { method: 'PUT', body: input }),
+    deleteDashboard: (id: string): Promise<void> => request<void>(`/v1/meta/dashboards/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    getDashboardForUser: (id: string): Promise<CoreDashboard> => request<CoreDashboard>(`/v1/dashboards/${encodeURIComponent(id)}`),
+    runDashboard: (id: string): Promise<unknown> => request<unknown>(`/v1/dashboards/${encodeURIComponent(id)}/run`, { method: 'POST' }),
     deleteWorkflowTransition: (id: string): Promise<void> =>
       request<void>(`/v1/meta/workflow/transitions/${encodeURIComponent(id)}`, {
         method: 'DELETE'

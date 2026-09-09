@@ -224,6 +224,21 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
         .route("/v1/reports/{id}", get(get_report_for_user))
         .route("/v1/reports/{id}/run", axum::routing::post(run_report))
         .route(
+            "/v1/meta/dashboards",
+            get(list_dashboards).post(create_dashboard),
+        )
+        .route(
+            "/v1/meta/dashboards/{id}",
+            get(get_dashboard)
+                .put(update_dashboard)
+                .delete(delete_dashboard),
+        )
+        .route("/v1/dashboards/{id}", get(get_dashboard_for_user))
+        .route(
+            "/v1/dashboards/{id}/run",
+            axum::routing::post(run_dashboard),
+        )
+        .route(
             "/v1/meta/entities/{id}/workflow/states",
             axum::routing::post(create_workflow_state),
         )
@@ -3223,4 +3238,149 @@ async fn admin_restart(
         std::process::exit(0);
     });
     Ok(Json(json!({ "message": "Core is restarting." })))
+}
+
+#[derive(Debug, Deserialize)]
+struct DashboardRequest {
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default = "empty_array")]
+    layout: Value,
+    #[serde(default = "empty_object")]
+    filters: Value,
+    #[serde(default)]
+    roles: Vec<String>,
+    #[serde(default)]
+    users: Vec<String>,
+    #[serde(default = "default_true")]
+    active: bool,
+}
+
+fn empty_array() -> Value {
+    Value::Array(Vec::new())
+}
+fn empty_object() -> Value {
+    Value::Object(serde_json::Map::new())
+}
+
+async fn list_dashboards(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
+    Ok(Json(
+        serde_json::to_value(
+            crate::dashboard::list(&state.pool)
+                .await
+                .map_err(AppError::from)?,
+        )
+        .map_err(|e| AppError::Internal(e.into()))?,
+    ))
+}
+
+async fn create_dashboard(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Json(input): Json<DashboardRequest>,
+) -> Result<Json<Value>, AppError> {
+    let created_by = user.as_ref().map(|u| u.0.username.as_str());
+    let dashboard = crate::dashboard::create(
+        &state.pool,
+        &input.name,
+        &input.description,
+        &input.layout,
+        &input.filters,
+        &input.roles,
+        &input.users,
+        created_by,
+    )
+    .await
+    .map_err(AppError::from)?;
+    Ok(Json(
+        serde_json::to_value(dashboard).map_err(|e| AppError::Internal(e.into()))?,
+    ))
+}
+
+async fn get_dashboard(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, AppError> {
+    Ok(Json(
+        serde_json::to_value(
+            crate::dashboard::get(&state.pool, &id)
+                .await
+                .map_err(AppError::from)?,
+        )
+        .map_err(|e| AppError::Internal(e.into()))?,
+    ))
+}
+
+async fn update_dashboard(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<DashboardRequest>,
+) -> Result<Json<Value>, AppError> {
+    let dashboard = crate::dashboard::update(
+        &state.pool,
+        &id,
+        &input.name,
+        &input.description,
+        &input.layout,
+        &input.filters,
+        &input.roles,
+        &input.users,
+        input.active,
+    )
+    .await
+    .map_err(AppError::from)?;
+    Ok(Json(
+        serde_json::to_value(dashboard).map_err(|e| AppError::Internal(e.into()))?,
+    ))
+}
+
+async fn delete_dashboard(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, AppError> {
+    crate::dashboard::delete(&state.pool, &id)
+        .await
+        .map_err(AppError::from)?;
+    Ok(Json(json!({ "deleted": true })))
+}
+
+async fn get_dashboard_for_user(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    user: Option<axum::extract::Extension<auth::User>>,
+) -> Result<Json<Value>, AppError> {
+    let u = user
+        .as_ref()
+        .ok_or_else(|| AppError::Unauthorized("authentication required".into()))?;
+    let d = crate::dashboard::get(&state.pool, &id)
+        .await
+        .map_err(AppError::from)?;
+    if !crate::dashboard::can_view(&d, Some(&u.0.username), &u.0.role) {
+        return Err(AppError::Forbidden("dashboard access denied".into()));
+    }
+    Ok(Json(
+        serde_json::to_value(d).map_err(|e| AppError::Internal(e.into()))?,
+    ))
+}
+
+async fn run_dashboard(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    user: Option<axum::extract::Extension<auth::User>>,
+) -> Result<Json<Value>, AppError> {
+    let u = user
+        .as_ref()
+        .ok_or_else(|| AppError::Unauthorized("authentication required".into()))?;
+    let d = crate::dashboard::get(&state.pool, &id)
+        .await
+        .map_err(AppError::from)?;
+    if !crate::dashboard::can_view(&d, Some(&u.0.username), &u.0.role) {
+        return Err(AppError::Forbidden("dashboard access denied".into()));
+    }
+    Ok(Json(
+        crate::dashboard::run(&state.pool, &d, &u.0.role)
+            .await
+            .map_err(AppError::from)?,
+    ))
 }
