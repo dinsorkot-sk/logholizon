@@ -129,6 +129,15 @@ async fn module_registry_publish_rollback() {
         .unwrap();
     assert_eq!(published.status, "published");
     assert_eq!(published.version, 2);
+    assert_eq!(published.semantic_version, "1.0.1");
+    let changes = repository::list_module_changes(&pool, &module.id, "alice", "user")
+        .await
+        .unwrap();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(
+        changes[0].get("change_type").and_then(|v| v.as_str()),
+        Some("publish")
+    );
 
     // Materialized entities are usable through the generic document runtime.
     let vehicle_entity = format!("{}_vehicle", module.id);
@@ -220,6 +229,13 @@ async fn module_registry_publish_rollback() {
         .await
         .unwrap();
     assert!(versions.len() >= 2);
+    assert!(versions.iter().any(|v| v.semantic_version == "1.0.2"));
+    let changes = repository::list_module_changes(&pool, &module.id, "alice", "user")
+        .await
+        .unwrap();
+    assert!(changes
+        .iter()
+        .any(|v| v.get("change_type").and_then(|x| x.as_str()) == Some("rollback")));
 
     // Automations CRUD.
     let automation = repository::create_automation(

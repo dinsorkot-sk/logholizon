@@ -149,6 +149,7 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
             axum::routing::post(restore_module),
         )
         .route("/v1/modules/{id}/versions", get(list_module_versions))
+        .route("/v1/modules/{id}/changes", get(list_module_changes))
         .route(
             "/v1/modules/{id}/rollback",
             axum::routing::post(rollback_module),
@@ -1163,6 +1164,21 @@ async fn restore_module(
     .map_err(map_db_error)
 }
 
+async fn list_module_changes(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<Value>>, AppError> {
+    repository::list_module_changes(
+        &state.pool,
+        &id,
+        &current_owner(&user),
+        &current_role(&user),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
 async fn list_module_versions(
     State(state): State<AppState>,
     user: Option<axum::extract::Extension<auth::User>>,

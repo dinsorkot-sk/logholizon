@@ -392,6 +392,7 @@ pub struct Module {
     pub owner: String,
     pub status: String,
     pub version: i64,
+    pub semantic_version: String,
     pub definition: Value,
     pub created_by: Option<String>,
     pub created_at: String,
@@ -403,6 +404,7 @@ pub struct ModuleVersion {
     pub id: String,
     pub module_id: String,
     pub version: i64,
+    pub semantic_version: String,
     pub definition: Value,
     pub actor: Option<String>,
     pub created_at: String,
@@ -417,6 +419,17 @@ pub struct Automation {
     pub target_url: String,
     pub active: bool,
     pub created_at: String,
+}
+
+fn bump_patch_version(version: &str) -> Result<String> {
+    let parts: Vec<i64> = version
+        .split(".")
+        .map(|p| p.parse::<i64>())
+        .collect::<std::result::Result<_, _>>()?;
+    if parts.len() != 3 || parts.iter().any(|p| *p < 0) {
+        bail!("invalid semantic version: {version}");
+    }
+    Ok(format!("{}.{}.{}", parts[0], parts[1], parts[2] + 1))
 }
 
 fn validate_module_name(name: &str) -> Result<()> {
@@ -440,6 +453,7 @@ type ModuleRow = (
     Option<String>,
     String,
     String,
+    String,
 );
 
 #[allow(clippy::too_many_arguments)]
@@ -457,6 +471,7 @@ fn module_row(
     created_by: Option<String>,
     created_at: String,
     updated_at: String,
+    semantic_version: String,
 ) -> Result<Module> {
     Ok(Module {
         id,
@@ -468,6 +483,7 @@ fn module_row(
         owner,
         status,
         version,
+        semantic_version,
         definition: serde_json::from_str(&definition)?,
         created_by,
         created_at,
@@ -478,7 +494,7 @@ fn module_row(
 async fn get_module_row(pool: &SqlitePool, id: &str) -> Result<Module> {
     #[allow(clippy::type_complexity)]
     let row: Option<ModuleRow> = sqlx::query_as(
-        "SELECT id, name, label, description, icon, color, owner, status, version, definition, created_by, created_at, updated_at FROM _module WHERE id = ?",
+        "SELECT id, name, label, description, icon, color, owner, status, version, definition, created_by, created_at, updated_at, semantic_version FROM _module WHERE id = ?",
     )
     .bind(id.trim())
     .fetch_optional(pool)
@@ -488,7 +504,7 @@ async fn get_module_row(pool: &SqlitePool, id: &str) -> Result<Module> {
     };
     module_row(
         row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7, row.8, row.9, row.10, row.11,
-        row.12,
+        row.12, row.13,
     )
 }
 
@@ -683,7 +699,7 @@ pub async fn create_module(
     let id = format!("{owner}_{name}");
     let definition_string = serde_json::to_string(definition)?;
     sqlx::query(
-        "INSERT INTO _module (id, name, label, description, icon, color, owner, status, version, definition, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', 1, ?, ?)",
+        "INSERT INTO _module (id, name, label, description, icon, color, owner, status, version, semantic_version, definition, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', 1, '1.0.0', ?, ?)",
     )
     .bind(&id)
     .bind(name)
@@ -703,13 +719,13 @@ pub async fn list_modules(pool: &SqlitePool, owner: &str, role: &str) -> Result<
     #[allow(clippy::type_complexity)]
     let rows: Vec<ModuleRow> = if role == "admin" {
         sqlx::query_as(
-            "SELECT id, name, label, description, icon, color, owner, status, version, definition, created_by, created_at, updated_at FROM _module ORDER BY owner, name",
+            "SELECT id, name, label, description, icon, color, owner, status, version, definition, created_by, created_at, updated_at, semantic_version FROM _module ORDER BY owner, name",
         )
         .fetch_all(pool)
         .await?
     } else {
         sqlx::query_as(
-            "SELECT id, name, label, description, icon, color, owner, status, version, definition, created_by, created_at, updated_at FROM _module WHERE owner = ? ORDER BY name",
+            "SELECT id, name, label, description, icon, color, owner, status, version, definition, created_by, created_at, updated_at, semantic_version FROM _module WHERE owner = ? ORDER BY name",
         )
         .bind(owner.trim())
         .fetch_all(pool)
@@ -719,7 +735,7 @@ pub async fn list_modules(pool: &SqlitePool, owner: &str, role: &str) -> Result<
     for row in rows {
         modules.push(module_row(
             row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7, row.8, row.9, row.10, row.11,
-            row.12,
+            row.12, row.13,
         )?);
     }
     Ok(modules)
@@ -1175,6 +1191,52 @@ async fn check_publish_compatibility(pool: &SqlitePool, module: &Module) -> Resu
     Ok(())
 }
 
+fn module_definition_diff(from: &Value, to: &Value) -> Value {
+    let mut changes = Vec::new();
+    let from_obj = from.as_object();
+    let to_obj = to.as_object();
+    let mut keys = std::collections::BTreeSet::new();
+    if let Some(obj) = from_obj {
+        keys.extend(obj.keys().cloned());
+    }
+    if let Some(obj) = to_obj {
+        keys.extend(obj.keys().cloned());
+    }
+    for key in keys {
+        let old = from_obj
+            .and_then(|obj| obj.get(&key))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let new = to_obj
+            .and_then(|obj| obj.get(&key))
+            .cloned()
+            .unwrap_or(Value::Null);
+        if old != new {
+            changes.push(serde_json::json!({"path": key, "from": old, "to": new}));
+        }
+    }
+    Value::Array(changes)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn record_module_change(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    module_id: &str,
+    from_version: Option<i64>,
+    to_version: i64,
+    from_semantic_version: Option<&str>,
+    to_semantic_version: &str,
+    change_type: &str,
+    diff: &Value,
+    actor: Option<&str>,
+) -> Result<()> {
+    let id = format!("{}_change_{}_{}", module_id, change_type, to_version);
+    sqlx::query("INSERT INTO _module_change (id, module_id, from_version, to_version, from_semantic_version, to_semantic_version, change_type, diff, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(id).bind(module_id).bind(from_version).bind(to_version)
+        .bind(from_semantic_version).bind(to_semantic_version).bind(change_type)
+        .bind(serde_json::to_string(diff)?).bind(actor).execute(&mut **tx).await?;
+    Ok(())
+}
 pub async fn publish_module(
     pool: &SqlitePool,
     id: &str,
@@ -1196,22 +1258,38 @@ pub async fn publish_module(
     let mut tx = pool.begin().await?;
     materialize_module_definition(&mut tx, &module).await?;
     let next_version = module.version + 1;
+    let next_semantic_version = bump_patch_version(&module.semantic_version)?;
+    let previous_definition = module.definition.clone();
     let definition_string = serde_json::to_string(&module.definition)?;
     let version_id = format!("{}_{}", module.id, next_version);
     sqlx::query(
-        "INSERT INTO _module_version (id, module_id, version, definition, actor) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO _module_version (id, module_id, version, semantic_version, definition, actor) VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(&version_id)
     .bind(&module.id)
     .bind(next_version)
+    .bind(&next_semantic_version)
     .bind(&definition_string)
     .bind(actor)
     .execute(&mut *tx)
     .await?;
+    record_module_change(
+        &mut tx,
+        &module.id,
+        Some(module.version),
+        next_version,
+        Some(&module.semantic_version),
+        &next_semantic_version,
+        "publish",
+        &module_definition_diff(&previous_definition, &module.definition),
+        actor,
+    )
+    .await?;
     sqlx::query(
-        "UPDATE _module SET status = 'published', version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        "UPDATE _module SET status = 'published', version = ?, semantic_version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
     )
     .bind(next_version)
+    .bind(&next_semantic_version)
     .bind(&module.id)
     .execute(&mut *tx)
     .await?;
@@ -1271,18 +1349,20 @@ pub async fn list_module_versions(
 ) -> Result<Vec<ModuleVersion>> {
     let module = get_module_row(pool, id).await?;
     check_module_access(&module, owner, role)?;
-    let rows: Vec<(String, String, i64, String, Option<String>, String)> = sqlx::query_as(
-        "SELECT id, module_id, version, definition, actor, created_at FROM _module_version WHERE module_id = ? ORDER BY version DESC",
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(String, String, i64, String, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT id, module_id, version, semantic_version, definition, actor, created_at FROM _module_version WHERE module_id = ? ORDER BY version DESC",
     )
     .bind(&module.id)
     .fetch_all(pool)
     .await?;
     let mut versions = Vec::new();
-    for (id, module_id, version, definition, actor, created_at) in rows {
+    for (id, module_id, version, semantic_version, definition, actor, created_at) in rows {
         versions.push(ModuleVersion {
             id,
             module_id,
             version,
+            semantic_version,
             definition: serde_json::from_str(&definition)?,
             actor,
             created_at,
@@ -1291,6 +1371,22 @@ pub async fn list_module_versions(
     Ok(versions)
 }
 
+pub async fn list_module_changes(
+    pool: &SqlitePool,
+    id: &str,
+    owner: &str,
+    role: &str,
+) -> Result<Vec<Value>> {
+    let module = get_module_row(pool, id).await?;
+    check_module_access(&module, owner, role)?;
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(String, i64, i64, Option<String>, String, String, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT id, COALESCE(from_version, 0), to_version, from_semantic_version, to_semantic_version, change_type, diff, actor, created_at FROM _module_change WHERE module_id = ? ORDER BY created_at DESC",
+    ).bind(&module.id).fetch_all(pool).await?;
+    Ok(rows.into_iter().map(|(id, from_version, to_version, from_semantic_version, to_semantic_version, change_type, diff, actor, created_at)| {
+        serde_json::json!({"id":id,"from_version":from_version,"to_version":to_version,"from_semantic_version":from_semantic_version,"to_semantic_version":to_semantic_version,"change_type":change_type,"diff":serde_json::from_str::<Value>(&diff).unwrap_or(Value::Array(vec![])),"actor":actor,"created_at":created_at})
+    }).collect())
+}
 pub async fn rollback_module(
     pool: &SqlitePool,
     id: &str,
@@ -1326,23 +1422,39 @@ pub async fn rollback_module(
     let mut tx = pool.begin().await?;
     materialize_module_definition(&mut tx, &rolled_back).await?;
     let next_version = rolled_back.version + 1;
+    let next_semantic_version = bump_patch_version(&rolled_back.semantic_version)?;
     let version_id = format!("{}_{}", rolled_back.id, next_version);
     sqlx::query(
-        "INSERT INTO _module_version (id, module_id, version, definition, actor) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO _module_version (id, module_id, version, semantic_version, definition, actor) VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(&version_id)
     .bind(&rolled_back.id)
     .bind(next_version)
+    .bind(&next_semantic_version)
     .bind(&definition_string)
     .bind(actor)
     .execute(&mut *tx)
     .await?;
+
     sqlx::query(
-        "UPDATE _module SET status = 'published', version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        "UPDATE _module SET status = 'published', version = ?, semantic_version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
     )
     .bind(next_version)
+    .bind(&next_semantic_version)
     .bind(&rolled_back.id)
     .execute(&mut *tx)
+    .await?;
+    record_module_change(
+        &mut tx,
+        &module.id,
+        Some(module.version),
+        next_version,
+        Some(&module.semantic_version),
+        &next_semantic_version,
+        "rollback",
+        &module_definition_diff(&module.definition, &definition),
+        actor,
+    )
     .await?;
     tx.commit().await?;
     get_module_row(pool, &rolled_back.id).await
