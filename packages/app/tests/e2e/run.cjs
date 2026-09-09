@@ -71,11 +71,13 @@ async function main() {
 
   let failed = false
   try {
+    // The core process runs migrations on startup. Wait for health before
+    // seeding so the CLI cannot race the migration runner on the same SQLite DB.
+    await waitFor(`http://127.0.0.1:${corePort}/health`, 120_000)
     await run(cargoBin, ['run', '-q', '-p', 'logholizon-cli', '--', 'seed', '--demo'], {
       cwd: repoRoot,
       env: { ...process.env, ...spawnEnv, CORE_DATABASE_URL: dbUrl }
     })
-    await waitFor(`http://127.0.0.1:${corePort}/health`, 120_000)
     await waitFor(`http://localhost:${appPort}/login`, 180_000)
     // Drop the runner's own `--` separator before forwarding args to the
     // Playwright CLI; otherwise every spec path is treated as a filter miss
