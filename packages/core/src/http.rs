@@ -171,6 +171,15 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
             get(list_notification_rules).post(create_notification_rule),
         )
         .route(
+            "/v1/meta/entities/{id}/actions",
+            get(list_module_actions).post(create_module_action),
+        )
+        .route(
+            "/v1/meta/actions/{id}",
+            axum::routing::delete(delete_module_action),
+        )
+        .route("/v1/meta/entities/{id}/events", get(list_events))
+        .route(
             "/v1/meta/notification-rules/{id}",
             axum::routing::put(update_notification_rule).delete(delete_notification_rule),
         )
@@ -1860,6 +1869,80 @@ async fn execute_module_action(
 
 fn current_actor(user: &Option<axum::extract::Extension<auth::User>>) -> Option<String> {
     user.as_ref().map(|u| u.username.clone())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateModuleAction {
+    pub name: String,
+    pub label: String,
+    pub kind: String,
+    #[serde(default)]
+    pub config: serde_json::Value,
+}
+
+async fn list_module_actions(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<repository::ModuleAction>>, AppError> {
+    repository::list_module_actions(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn create_module_action(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CreateModuleAction>,
+) -> Result<(StatusCode, Json<repository::ModuleAction>), AppError> {
+    repository::create_module_action(
+        &state.pool,
+        &id,
+        &input.name,
+        &input.label,
+        &input.kind,
+        &input.config,
+    )
+    .await
+    .map(|v| (StatusCode::CREATED, Json(v)))
+    .map_err(map_db_error)
+}
+
+async fn delete_module_action(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    repository::delete_module_action(&state.pool, &id)
+        .await
+        .map(|_| StatusCode::NO_CONTENT)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EventQuery {
+    #[serde(default)]
+    pub document_id: Option<String>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+    #[serde(default)]
+    pub offset: Option<i64>,
+}
+
+async fn list_events(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<EventQuery>,
+) -> Result<Json<Vec<repository::EventEntry>>, AppError> {
+    repository::list_events(
+        &state.pool,
+        &id,
+        query.document_id.as_deref(),
+        query.limit.unwrap_or(50),
+        query.offset.unwrap_or(0),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
 }
 
 async fn list_entities_for_user(

@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use sqlx::SqlitePool;
 
 use crate::error::AppError;
@@ -3319,6 +3319,16 @@ pub async fn create_document_as_role(
     .execute(&mut *tx)
     .await?;
     enqueue_automation_deliveries(&mut tx, entity_id, id, "create", &payload, actor).await?;
+    emit_event_tx(
+        &mut tx,
+        entity_id,
+        Some(id),
+        "record.created",
+        None,
+        &payload,
+        actor,
+    )
+    .await?;
     tx.commit().await?;
     get_document(pool, id).await
 }
@@ -4133,7 +4143,17 @@ pub async fn update_document_as_role(
     // tolerance), then merge over stored values and restore stored values
     // for non-editable fields so a forced write cannot change them.
     let incoming = filter_hidden_payload(pool, &existing.entity_id, payload, role).await?;
-    let merged = merge_editable_payload(&existing.payload, &incoming);
+    let mut stored = existing.payload.clone();
+    if let Some(object) = stored.as_object_mut() {
+        for field in list_fields(pool, &existing.entity_id)
+            .await?
+            .into_iter()
+            .filter(|f| f.r#type == "computed" || f.r#type == "formula")
+        {
+            object.remove(&field.name);
+        }
+    }
+    let merged = merge_editable_payload(&stored, &incoming);
     let merged =
         restore_readonly_fields(pool, &existing.entity_id, &existing.payload, &merged, role)
             .await?;
@@ -4166,6 +4186,16 @@ pub async fn update_document_as_role(
     .await?;
     enqueue_automation_deliveries(&mut tx, &existing.entity_id, id, "update", &payload, actor)
         .await?;
+    emit_event_tx(
+        &mut tx,
+        &existing.entity_id,
+        Some(id),
+        "record.updated",
+        None,
+        &payload,
+        actor,
+    )
+    .await?;
     tx.commit().await?;
     get_document(pool, id).await
 }
@@ -4306,6 +4336,16 @@ pub async fn transition_document_as_role(
     .await?;
     enqueue_automation_deliveries(&mut tx, &existing.entity_id, id, "transition", &next, actor)
         .await?;
+    emit_event_tx(
+        &mut tx,
+        &existing.entity_id,
+        Some(id),
+        "record.updated",
+        None,
+        &next,
+        actor,
+    )
+    .await?;
     tx.commit().await?;
     get_document(pool, id).await
 }
@@ -4424,43 +4464,187 @@ async fn enqueue_automation_deliveries(
     Ok(())
 }
 
-// --- Generic Action Engine (transactional, audited, evented) ---
+// --- Generic Action & Event Engine ---
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ModuleAction {
     pub id: String,
     pub entity_id: String,
-    pub kind: String,
+    pub name: String,
     pub label: String,
+    pub kind: String,
+    pub config: Value,
+    pub active: bool,
 }
 
 #[derive(Debug, Serialize)]
 pub struct ModuleActionResult {
     pub action: ModuleAction,
-    pub document: Document,
+    pub document: Option<Document>,
 }
 
-fn module_action_definition(entity_id: &str, action_id: &str) -> Result<ModuleAction> {
-    let (kind, label) = match action_id {
-        "transition" => ("transition", "Transition"),
-        "create" => ("create", "Create"),
-        "update" => ("update", "Update"),
-        "post" => ("post", "Post"),
-        "allocate" => ("allocate", "Allocate"),
-        "convert" => ("convert", "Convert"),
-        "confirm" => ("confirm", "Confirm"),
-        "complete" => ("complete", "Complete"),
-        "close" => ("close", "Close"),
-        _ => {
-            return Err(AppError::BadRequest(format!("unknown action: {action_id}")).into());
-        }
+#[derive(Debug, Serialize)]
+pub struct EventEntry {
+    pub id: String,
+    pub entity_id: String,
+    pub document_id: Option<String>,
+    pub event_type: String,
+    pub action_id: Option<String>,
+    pub payload: Value,
+    pub actor: Option<String>,
+    pub created_at: String,
+}
+
+fn validate_action_kind(kind: &str) -> Result<()> {
+    if matches!(
+        kind,
+        "create"
+            | "update"
+            | "delete"
+            | "change_status"
+            | "notify"
+            | "webhook"
+            | "formula"
+            | "generate"
+    ) {
+        Ok(())
+    } else {
+        Err(AppError::BadRequest(format!("invalid action kind: {kind}")).into())
+    }
+}
+
+pub async fn list_module_actions(pool: &SqlitePool, entity_id: &str) -> Result<Vec<ModuleAction>> {
+    require_entity(pool, entity_id).await?;
+    let rows = sqlx::query("SELECT id, entity_id, name, label, kind, config, active FROM _action WHERE entity_id = ? ORDER BY name")
+        .bind(entity_id).fetch_all(pool).await?;
+    use sqlx::Row;
+    rows.into_iter()
+        .map(|r| {
+            Ok(ModuleAction {
+                id: r.try_get("id")?,
+                entity_id: r.try_get("entity_id")?,
+                name: r.try_get("name")?,
+                label: r.try_get("label")?,
+                kind: r.try_get("kind")?,
+                config: serde_json::from_str(&r.try_get::<String, _>("config")?)
+                    .unwrap_or(Value::Object(Default::default())),
+                active: r.try_get::<i64, _>("active")? != 0,
+            })
+        })
+        .collect()
+}
+
+pub async fn create_module_action(
+    pool: &SqlitePool,
+    entity_id: &str,
+    name: &str,
+    label: &str,
+    kind: &str,
+    config: &Value,
+) -> Result<ModuleAction> {
+    require_entity(pool, entity_id).await?;
+    let name = name.trim();
+    let label = label.trim();
+    let kind = kind.trim();
+    validate_action_name(name)?;
+    validate_action_kind(kind)?;
+    if config.to_string().len() > 16384 {
+        return Err(AppError::BadRequest("action config exceeds 16384 bytes".into()).into());
+    }
+    let id = format!("{entity_id}_{name}");
+    sqlx::query(
+        "INSERT INTO _action (id, entity_id, name, label, kind, config) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(entity_id)
+    .bind(name)
+    .bind(label)
+    .bind(kind)
+    .bind(config.to_string())
+    .execute(pool)
+    .await?;
+    get_module_action(pool, &id).await
+}
+
+pub async fn get_module_action(pool: &SqlitePool, id: &str) -> Result<ModuleAction> {
+    let row = sqlx::query(
+        "SELECT id, entity_id, name, label, kind, config, active FROM _action WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    let Some(r) = row else {
+        return Err(AppError::NotFound(format!("action not found: {id}")).into());
     };
+    use sqlx::Row;
     Ok(ModuleAction {
-        id: action_id.to_string(),
-        entity_id: entity_id.to_string(),
-        kind: kind.to_string(),
-        label: label.to_string(),
+        id: r.try_get("id")?,
+        entity_id: r.try_get("entity_id")?,
+        name: r.try_get("name")?,
+        label: r.try_get("label")?,
+        kind: r.try_get("kind")?,
+        config: serde_json::from_str(&r.try_get::<String, _>("config")?)
+            .unwrap_or(Value::Object(Default::default())),
+        active: r.try_get::<i64, _>("active")? != 0,
     })
+}
+
+pub async fn delete_module_action(pool: &SqlitePool, id: &str) -> Result<()> {
+    let result = sqlx::query("DELETE FROM _action WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("action not found: {id}")).into());
+    }
+    Ok(())
+}
+
+async fn emit_event_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    entity_id: &str,
+    document_id: Option<&str>,
+    event_type: &str,
+    action_id: Option<&str>,
+    payload: &Value,
+    actor: Option<&str>,
+) -> Result<()> {
+    let id = format!("event-{}", chrono_nanos());
+    sqlx::query("INSERT INTO _event (id, entity_id, document_id, event_type, action_id, payload, actor) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .bind(id).bind(entity_id).bind(document_id).bind(event_type).bind(action_id).bind(payload.to_string()).bind(actor).execute(&mut **tx).await?;
+    Ok(())
+}
+
+pub async fn list_events(
+    pool: &SqlitePool,
+    entity_id: &str,
+    document_id: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<EventEntry>> {
+    let limit = limit.clamp(1, 100);
+    let offset = offset.max(0);
+    let rows = if let Some(doc) = document_id {
+        sqlx::query("SELECT id, entity_id, document_id, event_type, action_id, payload, actor, created_at FROM _event WHERE entity_id = ? AND document_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?").bind(entity_id).bind(doc).bind(limit).bind(offset).fetch_all(pool).await?
+    } else {
+        sqlx::query("SELECT id, entity_id, document_id, event_type, action_id, payload, actor, created_at FROM _event WHERE entity_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?").bind(entity_id).bind(limit).bind(offset).fetch_all(pool).await?
+    };
+    use sqlx::Row;
+    rows.into_iter()
+        .map(|r| {
+            Ok(EventEntry {
+                id: r.try_get("id")?,
+                entity_id: r.try_get("entity_id")?,
+                document_id: r.try_get("document_id")?,
+                event_type: r.try_get("event_type")?,
+                action_id: r.try_get("action_id")?,
+                payload: serde_json::from_str(&r.try_get::<String, _>("payload")?)
+                    .unwrap_or(Value::Object(Default::default())),
+                actor: r.try_get("actor")?,
+                created_at: r.try_get("created_at")?,
+            })
+        })
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4475,118 +4659,199 @@ pub async fn execute_module_action(
     role: &str,
 ) -> Result<ModuleActionResult> {
     require_entity(pool, entity_id).await?;
-    check_permission(pool, entity_id, role, true).await?;
-    let action = module_action_definition(entity_id, action_id)?;
-    let document = match action.kind.as_str() {
-        "transition" => {
-            let (doc_id, transition) = match (document_id, payload) {
-                (Some(doc_id), Some(payload)) => (
-                    doc_id,
-                    payload
-                        .get("action")
-                        .and_then(Value::as_str)
-                        .unwrap_or(action_id),
-                ),
-                (Some(doc_id), None) => (doc_id, action_id),
-                _ => {
-                    return Err(
-                        AppError::BadRequest("transition requires a document id".into()).into(),
-                    );
-                }
-            };
-            transition_document_as_role(pool, doc_id, transition, actor, expected_updated_at, role)
-                .await?
-        }
+    check_entity_capability(pool, entity_id, role, "execute").await?;
+    let action = get_module_action(pool, action_id).await?;
+    if action.entity_id != entity_id {
+        return Err(AppError::BadRequest("action belongs to another entity".into()).into());
+    }
+    if !action.active {
+        return Err(AppError::BadRequest("action is inactive".into()).into());
+    }
+    let config = action.config.as_object().cloned().unwrap_or_default();
+    match action.kind.as_str() {
         "create" => {
             let body = payload
                 .cloned()
                 .unwrap_or(Value::Object(Default::default()));
-            let new_id = document_id
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
+            let id = document_id
+                .filter(|v| !v.trim().is_empty())
                 .map(str::to_string)
                 .unwrap_or_else(|| format!("{entity_id}_{}", chrono_nanos()));
-            create_document_as_role(pool, &new_id, entity_id, &body, actor, role).await?
+            let doc = create_document_as_role(pool, &id, entity_id, &body, actor, role).await?;
+            let mut tx = pool.begin().await?;
+            emit_event_tx(
+                &mut tx,
+                entity_id,
+                Some(&id),
+                "action.executed",
+                Some(&action.id),
+                &doc.payload,
+                actor,
+            )
+            .await?;
+            tx.commit().await?;
+            Ok(ModuleActionResult {
+                action,
+                document: Some(doc),
+            })
         }
         "update" => {
-            let doc_id = document_id
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
+            let id = document_id
                 .ok_or_else(|| AppError::BadRequest("update requires a document id".into()))?;
-            let body = payload
+            let mut body = payload
                 .cloned()
                 .unwrap_or(Value::Object(Default::default()));
-            update_document_as_role(pool, doc_id, &body, actor, expected_updated_at, role).await?
+            if let Some(object) = body.as_object_mut() {
+                for field in list_fields(pool, entity_id)
+                    .await?
+                    .into_iter()
+                    .filter(|f| f.r#type == "computed" || f.r#type == "formula")
+                {
+                    object.remove(&field.name);
+                }
+            }
+            let doc =
+                update_document_as_role(pool, id, &body, actor, expected_updated_at, role).await?;
+            let mut tx = pool.begin().await?;
+            sqlx::query("INSERT INTO _audit_log (id, entity_id, doc_id, action, payload, actor) VALUES (?, ?, ?, ?, ?, ?)")
+                .bind(audit_id(id, &action.name)).bind(entity_id).bind(id).bind(&action.name).bind(doc.payload.to_string()).bind(actor).execute(&mut *tx).await?;
+            emit_event_tx(
+                &mut tx,
+                entity_id,
+                Some(id),
+                "action.executed",
+                Some(&action.id),
+                &doc.payload,
+                actor,
+            )
+            .await?;
+            tx.commit().await?;
+            Ok(ModuleActionResult {
+                action,
+                document: Some(doc),
+            })
         }
-        "post" | "allocate" | "convert" | "confirm" | "complete" | "close" => {
-            let doc_id = document_id
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| {
-                    AppError::BadRequest(format!("{} requires a document id", action.kind))
-                })?;
-            let existing = get_document(pool, doc_id).await?;
-            if existing.entity_id != entity_id {
+        "delete" => {
+            let id = document_id
+                .ok_or_else(|| AppError::BadRequest("delete requires a document id".into()))?;
+            let doc = get_document(pool, id).await?;
+            if doc.entity_id != entity_id {
                 return Err(
                     AppError::BadRequest("document belongs to another entity".into()).into(),
                 );
             }
-            let computed_names: Vec<String> = list_fields(pool, entity_id)
-                .await?
-                .iter()
-                .filter(|f| f.r#type == "computed")
-                .map(|f| f.name.clone())
-                .collect();
-            let mut next = existing.payload.clone();
-            if let Some(object) = next.as_object_mut() {
-                if let Some(extra) = payload.and_then(Value::as_object) {
-                    for (key, value) in extra {
-                        object.insert(key.clone(), value.clone());
-                    }
-                }
-                for name in &computed_names {
-                    object.remove(name);
-                }
-            }
-            validate_payload_for_role_excluding(pool, entity_id, &next, role, Some(doc_id)).await?;
-            let next_string = next.to_string();
+            delete_document_as_role(pool, id, actor, role).await?;
             let mut tx = pool.begin().await?;
-            let result = sqlx::query(
-                "UPDATE _doc SET payload = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ? AND (? IS NULL OR updated_at = ?)",
+            emit_event_tx(
+                &mut tx,
+                entity_id,
+                Some(id),
+                "action.executed",
+                Some(&action.id),
+                &doc.payload,
+                actor,
             )
-            .bind(&next_string)
-            .bind(doc_id)
-            .bind(expected_updated_at)
-            .bind(expected_updated_at)
-            .execute(&mut *tx)
             .await?;
-            if result.rows_affected() == 0 {
-                return Err(AppError::Conflict(format!(
-                    "stale record: {doc_id} was modified by another user"
-                ))
-                .into());
-            }
-            sqlx::query(
-                "INSERT INTO _audit_log (id, entity_id, doc_id, action, payload, actor) VALUES (?, ?, ?, ?, ?, ?)",
-            )
-            .bind(audit_id(doc_id, &action.kind))
-            .bind(entity_id)
-            .bind(doc_id)
-            .bind(action.kind.clone())
-            .bind(next_string.clone())
-            .bind(actor)
-            .execute(&mut *tx)
-            .await?;
-            enqueue_automation_deliveries(&mut tx, entity_id, doc_id, &action.kind, &next, actor)
-                .await?;
             tx.commit().await?;
-            get_document(pool, doc_id).await?
+            Ok(ModuleActionResult {
+                action,
+                document: None,
+            })
         }
-        _ => {
-            return Err(AppError::BadRequest(format!("unknown action: {action_id}")).into());
+        "change_status" => {
+            let id = document_id.ok_or_else(|| {
+                AppError::BadRequest("change_status requires a document id".into())
+            })?;
+            let state = config.get("state").and_then(Value::as_str).ok_or_else(|| {
+                AppError::BadRequest("change_status action requires config.state".into())
+            })?;
+            let fields = list_fields(pool, entity_id).await?;
+            let status = fields
+                .into_iter()
+                .find(|f| f.r#type == "select" && f.options.iter().any(|o| o.value == state))
+                .ok_or_else(|| {
+                    AppError::BadRequest("configured status is not valid for this entity".into())
+                })?;
+            let existing = get_document(pool, id).await?;
+            let mut body = existing.payload.clone();
+            body[status.name] = Value::String(state.to_string());
+            let doc =
+                update_document_as_role(pool, id, &body, actor, expected_updated_at, role).await?;
+            let mut tx = pool.begin().await?;
+            emit_event_tx(
+                &mut tx,
+                entity_id,
+                Some(id),
+                "action.executed",
+                Some(&action.id),
+                &doc.payload,
+                actor,
+            )
+            .await?;
+            tx.commit().await?;
+            Ok(ModuleActionResult {
+                action,
+                document: Some(doc),
+            })
         }
-    };
-    Ok(ModuleActionResult { action, document })
+        "formula" => {
+            let vars = payload
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            let expr = config
+                .get("expression")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    AppError::BadRequest("formula action requires config.expression".into())
+                })?;
+            let vars: std::collections::HashMap<String, Value> = vars.into_iter().collect();
+            let result = crate::formula::evaluate(expr, &vars)
+                .map_err(|e| AppError::BadRequest(format!("invalid action formula: {e}")))?;
+            let mut tx = pool.begin().await?;
+            emit_event_tx(
+                &mut tx,
+                entity_id,
+                document_id,
+                "action.executed",
+                Some(&action.id),
+                &json!({"result": result}),
+                actor,
+            )
+            .await?;
+            tx.commit().await?;
+            Ok(ModuleActionResult {
+                action,
+                document: None,
+            })
+        }
+        "notify" | "webhook" | "generate" => {
+            let body = payload
+                .cloned()
+                .unwrap_or(Value::Object(Default::default()));
+            let mut tx = pool.begin().await?;
+            emit_event_tx(
+                &mut tx,
+                entity_id,
+                document_id,
+                "action.executed",
+                Some(&action.id),
+                &body,
+                actor,
+            )
+            .await?;
+            tx.commit().await?;
+            let doc = match document_id {
+                Some(id) => Some(get_document(pool, id).await?),
+                None => None,
+            };
+            Ok(ModuleActionResult {
+                action,
+                document: doc,
+            })
+        }
+        _ => unreachable!(),
+    }
 }
 
 pub async fn get_workflow(pool: &SqlitePool, entity_id: &str) -> Result<WorkflowDefinition> {
@@ -5036,6 +5301,16 @@ pub async fn delete_document_as_role(
         &existing.entity_id,
         id,
         "delete",
+        &existing.payload,
+        actor,
+    )
+    .await?;
+    emit_event_tx(
+        &mut tx,
+        &existing.entity_id,
+        Some(id),
+        "record.deleted",
+        None,
         &existing.payload,
         actor,
     )

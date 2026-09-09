@@ -444,11 +444,22 @@ async fn action_transactional_audit_event() {
     .await
     .unwrap();
 
+    let create_action = repository::create_module_action(
+        &pool,
+        &vehicle_entity,
+        "create",
+        "Create",
+        "create",
+        &json!({}),
+    )
+    .await
+    .unwrap();
+
     // Generic create action writes _doc + audit.
     let created = repository::execute_module_action(
         &pool,
         &vehicle_entity,
-        "create",
+        &create_action.id,
         Some("veh-action-1"),
         Some(&json!({"code": "V9", "plate_number": "ZZ-9", "vehicle_type": "van", "status": "active", "driver": "drv-action"})),
         Some("alice"),
@@ -457,13 +468,24 @@ async fn action_transactional_audit_event() {
     )
     .await
     .unwrap();
-    assert_eq!(created.document.id, "veh-action-1");
+    assert_eq!(created.document.as_ref().unwrap().id, "veh-action-1");
+
+    let close_action = repository::create_module_action(
+        &pool,
+        &vehicle_entity,
+        "close",
+        "Close",
+        "update",
+        &json!({}),
+    )
+    .await
+    .unwrap();
 
     // Custom close action stamps audit without ERP tables.
     let closed = repository::execute_module_action(
         &pool,
         &vehicle_entity,
-        "close",
+        &close_action.id,
         Some("veh-action-1"),
         Some(&json!({"code": "V9"})),
         Some("alice"),
@@ -472,7 +494,22 @@ async fn action_transactional_audit_event() {
     )
     .await
     .unwrap();
-    assert!(closed.document.payload.get("code").is_some());
+    assert!(closed
+        .document
+        .as_ref()
+        .unwrap()
+        .payload
+        .get("code")
+        .is_some());
+
+    let events: Vec<String> =
+        sqlx::query_scalar("SELECT event_type FROM _event WHERE entity_id = ? ORDER BY rowid")
+            .bind(&vehicle_entity)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(events.iter().any(|e| e == "record.created"), "{events:?}");
+    assert!(events.iter().any(|e| e == "action.executed"), "{events:?}");
 
     // Unknown actions are rejected.
     assert!(repository::execute_module_action(

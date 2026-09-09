@@ -230,6 +230,8 @@ export type CoreModuleVersion = {
   created_at: string
 }
 
+export type CoreEvent = { id: string; entity_id: string; document_id: string | null; event_type: string; action_id: string | null; payload: Record<string, unknown>; actor: string | null; created_at: string }
+
 export type CoreAutomation = {
   id: string
   entity_id: string
@@ -243,13 +245,16 @@ export type CoreAutomation = {
 export type CoreModuleAction = {
   id: string
   entity_id: string
-  kind: string
+  name: string
   label: string
+  kind: string
+  config: Record<string, unknown>
+  active: boolean
 }
 
 export type CoreModuleActionResult = {
   action: CoreModuleAction
-  document: CoreDocument
+  document: CoreDocument | null
 }
 
 export type CreateDocumentInput = {
@@ -706,6 +711,14 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       request<CoreAutomation>(`/v1/meta/entities/${encodeURIComponent(entityId)}/automations`, { method: 'POST', body: input }),
     deleteAutomation: (id: string): Promise<void> =>
       request<void>(`/v1/meta/automations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    listModuleActions: (entityId: string): Promise<CoreModuleAction[]> =>
+      request<CoreModuleAction[]>(`/v1/meta/entities/${encodeURIComponent(entityId)}/actions`),
+    createModuleAction: (entityId: string, input: { name: string; label: string; kind: string; config?: Record<string, unknown> }): Promise<CoreModuleAction> =>
+      request<CoreModuleAction>(`/v1/meta/entities/${encodeURIComponent(entityId)}/actions`, { method: 'POST', body: input }),
+    deleteModuleAction: (id: string): Promise<void> =>
+      request<void>(`/v1/meta/actions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    listEvents: (entityId: string, documentId?: string): Promise<CoreEvent[]> =>
+      request<CoreEvent[]>(`/v1/meta/entities/${encodeURIComponent(entityId)}/events${documentId ? `?document_id=${encodeURIComponent(documentId)}` : ''}`),
     executeModuleAction: (entityId: string, actionId: string, input?: { document_id?: string; payload?: Record<string, unknown>; expected_updated_at?: string }): Promise<CoreModuleActionResult> =>
       request<CoreModuleActionResult>(`/v1/entities/${encodeURIComponent(entityId)}/actions/${encodeURIComponent(actionId)}`, {
         method: 'POST',
