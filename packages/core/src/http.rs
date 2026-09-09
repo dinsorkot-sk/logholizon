@@ -13,7 +13,7 @@ use sqlx::SqlitePool;
 use crate::{
     auth, backup,
     error::AppError,
-    module_lifecycle,
+    module_lifecycle, relation,
     repository::{self, CreateDocument, UpdateDocument},
     Config,
 };
@@ -219,6 +219,24 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
         .route(
             "/v1/meta/fields/{id}/options",
             axum::routing::post(create_field_option),
+        )
+        .route(
+            "/v1/meta/entities/{id}/relations",
+            get(list_relations).post(create_relation),
+        )
+        .route(
+            "/v1/meta/relations/{id}",
+            get(get_relation)
+                .put(update_relation)
+                .delete(delete_relation),
+        )
+        .route(
+            "/v1/meta/relations/{id}/links/{source_doc_id}",
+            get(list_relation_links).put(set_relation_links),
+        )
+        .route(
+            "/v1/entities/{id}/relations/{relation_id}",
+            get(related_documents),
         )
         .route(
             "/v1/meta/options/{id}",
@@ -524,6 +542,128 @@ pub struct CreateField {
     pub help_text: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct CreateRelation {
+    source_field_id: Option<String>,
+    target_entity_id: String,
+    target_field_id: Option<String>,
+    name: String,
+    relation_type: String,
+    #[serde(default = "default_relation_delete")]
+    on_delete: String,
+}
+fn default_relation_delete() -> String {
+    "restrict".into()
+}
+#[derive(Debug, Deserialize)]
+struct UpdateRelation {
+    source_field_id: Option<String>,
+    target_field_id: Option<String>,
+    name: String,
+    relation_type: String,
+    on_delete: String,
+}
+#[derive(Debug, Deserialize)]
+struct RelationLinksInput {
+    target_doc_ids: Vec<String>,
+}
+async fn list_relations(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<relation::Relation>>, AppError> {
+    relation::list_relations(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+async fn create_relation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CreateRelation>,
+) -> Result<(StatusCode, Json<relation::Relation>), AppError> {
+    relation::create_relation(
+        &state.pool,
+        &id,
+        input.source_field_id.as_deref(),
+        &input.target_entity_id,
+        input.target_field_id.as_deref(),
+        &input.name,
+        &input.relation_type,
+        &input.on_delete,
+    )
+    .await
+    .map(|r| (StatusCode::CREATED, Json(r)))
+    .map_err(map_db_error)
+}
+async fn get_relation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<relation::Relation>, AppError> {
+    relation::get_relation(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+async fn update_relation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<UpdateRelation>,
+) -> Result<Json<relation::Relation>, AppError> {
+    relation::update_relation(
+        &state.pool,
+        &id,
+        &input.name,
+        &input.relation_type,
+        &input.on_delete,
+        input.source_field_id.as_deref(),
+        input.target_field_id.as_deref(),
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
+async fn delete_relation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    relation::delete_relation(&state.pool, &id)
+        .await
+        .map(|_| StatusCode::NO_CONTENT)
+        .map_err(map_db_error)
+}
+async fn list_relation_links(
+    State(state): State<AppState>,
+    Path((relation_id, source_doc_id)): Path<(String, String)>,
+) -> Result<Json<Vec<relation::RelationLink>>, AppError> {
+    relation::list_links(&state.pool, &relation_id, &source_doc_id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+async fn set_relation_links(
+    State(state): State<AppState>,
+    Path((relation_id, source_doc_id)): Path<(String, String)>,
+    Json(input): Json<RelationLinksInput>,
+) -> Result<Json<Vec<relation::RelationLink>>, AppError> {
+    relation::set_links(
+        &state.pool,
+        &relation_id,
+        &source_doc_id,
+        &input.target_doc_ids,
+    )
+    .await
+    .map(Json)
+    .map_err(map_db_error)
+}
+async fn related_documents(
+    State(state): State<AppState>,
+    Path((id, relation_id)): Path<(String, String)>,
+) -> Result<Json<Vec<Value>>, AppError> {
+    relation::related_documents(&state.pool, &relation_id, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
 async fn create_field(
     State(state): State<AppState>,
     Path(id): Path<String>,

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 definePageMeta({ middleware: 'auth' })
 
-import { h, resolveComponent } from 'vue'
+import { h, nextTick, resolveComponent } from 'vue'
 import type { TableColumn } from '@nuxt/ui'
 
 const UButton = resolveComponent('UButton')
@@ -11,6 +11,8 @@ type Entity = { id: string; name: string; label: string; module?: string | null 
 type FieldOption = { id: string; value: string; label: string }
 type Field = { id: string; name: string; label: string; description: string; type: string; required: boolean; is_status: boolean; position: number; ref_entity?: string | null; computed_expr?: string | null; is_unique: boolean; min_value?: number | null; max_value?: number | null; pattern?: string | null; min_length?: number | null; max_length?: number | null; default_value?: string | null; auto_number_prefix?: string | null; auto_number_width?: number | null; readonly: boolean; hidden: boolean; searchable: boolean; sortable: boolean; filterable: boolean; indexed: boolean; precision?: number | null; help_text: string; options: FieldOption[] }
 type EntityDetail = Entity & { fields: Field[] }
+
+ type Relation = { id: string; source_entity_id: string; source_field_id?: string | null; target_entity_id: string; target_field_id?: string | null; name: string; relation_type: string; on_delete: string }
 type WorkflowState = { id: string; name: string; label: string; position: number }
 type WorkflowTransition = { id: string; action: string; from_state: string; to_state: string }
 type WorkflowDefinition = { states: WorkflowState[]; transitions: WorkflowTransition[] }
@@ -83,8 +85,10 @@ function typeBadgeColor(type: string) {
   }
 }
 
-function selectEntity(id: string) {
+async function selectEntity(id: string) {
   selectedId.value = id
+  await nextTick()
+  await refreshRelations()
   refreshDetail()
   refreshWorkflow()
   refreshPermissions()
@@ -541,6 +545,25 @@ async function removeEntity() {
 }
 
 // --- Field editor ---
+const relationUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/relations` : '')
+const { data: relations, refresh: refreshRelations } = await useFetch<Relation[]>(relationUrl, { immediate: false })
+const relationForm = reactive({ name: '', target_entity_id: '', source_field_id: '', relation_type: 'many_to_one', on_delete: 'restrict' })
+const relationSaving = ref(false)
+async function saveRelation() {
+  if (!selectedId.value || !relationForm.name.trim() || !relationForm.target_entity_id) return
+  relationSaving.value = true
+  try {
+    await $fetch(relationUrl.value, { method: 'POST', body: { ...relationForm, source_field_id: relationForm.source_field_id || null } })
+    relationForm.name = ''; relationForm.source_field_id = ''
+    await refreshRelations()
+    toast.add({ title: 'Relation created', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) { toast.add({ title: 'Unable to create relation', description: e?.data?.message || 'Create failed', color: 'error' }) }
+  finally { relationSaving.value = false }
+}
+async function removeRelation(id: string) {
+  try { await $fetch(`/api/meta/relations/${encodeURIComponent(id)}`, { method: 'DELETE' }); await refreshRelations(); toast.add({ title: 'Relation deleted', color: 'success' }) }
+  catch (e: any) { toast.add({ title: 'Unable to delete relation', description: e?.data?.message || 'Delete failed', color: 'error' }) }
+}
 const fieldOpen = ref(false)
 const editingField = ref<Field | null>(null)
 const fieldForm = reactive({ name: '', label: '', description: '', type: 'text', required: false, is_status: false, ref_entity: '', computed_expr: '', is_unique: false, min_value: null as number | null, max_value: null as number | null, pattern: '', min_length: null as number | null, max_length: null as number | null, default_value: '', auto_number_prefix: '', auto_number_width: null as number | null, readonly: false, hidden: false, searchable: false, sortable: false, filterable: false, indexed: false, precision: null as number | null, help_text: '' })
@@ -1011,7 +1034,25 @@ const fieldColumns: TableColumn<Field>[] = [
           </div>
 
           <UTabs :items="tabItems" class="w-full">
-            <template #fields>
+                        <template #relations>
+              <div class="space-y-4 py-3">
+                <div class="grid gap-3 md:grid-cols-2">
+                  <UInput v-model="relationForm.name" placeholder="Relation name (e.g. driver)" />
+                  <USelectMenu v-model="relationForm.target_entity_id" :items="(entities || []).filter(e => e.id !== detail?.id).map(e => ({ label: e.label, value: e.id }))" value-key="value" placeholder="Target entity" />
+                  <USelectMenu v-model="relationForm.source_field_id" :items="(detail?.fields || []).map(f => ({ label: `${f.label} (${f.name})`, value: f.id })).filter(f => (detail?.fields || []).find(x => x.id === f.value)?.type === 'reference')" value-key="value" placeholder="Source reference field" />
+                  <USelectMenu v-model="relationForm.relation_type" :items="['one_to_one','one_to_many','many_to_one','many_to_many']" placeholder="Relation type" />
+                  <USelectMenu v-model="relationForm.on_delete" :items="['restrict','set_null','cascade']" placeholder="Delete rule" />
+                </div>
+                <UButton icon="i-lucide-plus" :loading="relationSaving" @click="saveRelation">Add relation</UButton>
+                <div v-if="relations?.length" class="divide-y rounded border">
+                  <div v-for="r in relations" :key="r.id" class="flex items-center justify-between gap-3 p-3 text-sm">
+                    <div><span class="font-medium">{{ r.name }}</span><span class="ml-2 text-muted">{{ r.relation_type }} → {{ r.target_entity_id }}</span><span class="ml-2 text-xs text-muted">{{ r.on_delete }}</span></div>
+                    <UButton size="xs" variant="ghost" color="error" icon="i-lucide-trash" @click="removeRelation(r.id)" />
+                  </div>
+                </div>
+                <p v-else class="text-sm text-muted">No relations defined.</p>
+              </div>
+            </template><template #fields>
               <div class="flex items-center justify-between py-3">
                 <p class="text-sm text-muted">{{ detail.fields.length }} fields</p>
                 <UButton size="sm" icon="i-lucide-plus" @click="openAddField">Add field</UButton>

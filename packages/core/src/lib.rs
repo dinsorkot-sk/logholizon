@@ -7,6 +7,7 @@ pub mod http;
 pub mod metadata;
 pub mod module_lifecycle;
 pub mod notify;
+pub mod relation;
 pub mod repository;
 pub mod seed;
 
