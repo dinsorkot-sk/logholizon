@@ -167,7 +167,7 @@ Rust Axum Runtime
 - Export.
 - Reports must be metadata-driven, not domain-hardcoded.
 
-### Phase 14 — Dashboard Builder — 89%
+### Phase 14 — Dashboard Builder — 89% — COMPLETE (100%)
 - Dashboard definition.
 - KPI widgets.
 - Table/list widgets.
