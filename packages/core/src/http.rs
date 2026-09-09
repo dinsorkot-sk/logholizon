@@ -13,7 +13,7 @@ use sqlx::SqlitePool;
 use crate::{
     auth, backup,
     error::AppError,
-    module_lifecycle, module_package, notification, relation,
+    module_lifecycle, module_package, notification, observability, relation,
     repository::{self, CreateDocument, UpdateDocument},
     Config,
 };
@@ -58,16 +58,89 @@ async fn auth_middleware(
         return Ok(next.run(request).await);
     }
 
+    let started = std::time::Instant::now();
+    let request_id = request
+        .headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| !v.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("req_{}", repository::chrono_nanos_public()));
+    let correlation_id = request
+        .headers()
+        .get("x-correlation-id")
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| !v.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| request_id.clone());
     let user = require_user(&state, request.headers()).await?;
     if (path.starts_with("/v1/meta/") || path.starts_with("/v1/admin/") || path == "/v1/audit")
         && user.role != "admin"
     {
+        let _ = observability::record(
+            &state.pool,
+            "warn",
+            "security",
+            "permission_denied",
+            Some(&user.username),
+            Some(&request_id),
+            Some(&correlation_id),
+            Some("route"),
+            Some(&path),
+            Some(403),
+            Some(started.elapsed().as_millis() as i64),
+            "admin role required",
+            &json!({"method": request.method().as_str()}),
+        )
+        .await;
         return Err(AppError::Forbidden("admin role required".into()));
     }
-
+    let actor = user.username.clone();
+    let method = request.method().to_string();
     let mut request = request;
     request.extensions_mut().insert(user);
-    Ok(next.run(request).await)
+    let mut response = next.run(request).await;
+    let status = response.status().as_u16() as i64;
+    let level = if status >= 500 {
+        "error"
+    } else if status >= 400 {
+        "warn"
+    } else {
+        "info"
+    };
+    let category = if path.starts_with("/v1/auth/") {
+        "security"
+    } else {
+        "request"
+    };
+    let action = if status >= 500 {
+        "runtime_error"
+    } else {
+        "request"
+    };
+    let _ = observability::record(
+        &state.pool,
+        level,
+        category,
+        action,
+        Some(&actor),
+        Some(&request_id),
+        Some(&correlation_id),
+        Some("route"),
+        Some(&path),
+        Some(status),
+        Some(started.elapsed().as_millis() as i64),
+        "",
+        &json!({"method": method}),
+    )
+    .await;
+    if let Ok(value) = request_id.parse() {
+        response.headers_mut().insert("x-request-id", value);
+    }
+    if let Ok(value) = correlation_id.parse() {
+        response.headers_mut().insert("x-correlation-id", value);
+    }
+    Ok(response)
 }
 
 pub fn router(config: &Config, pool: SqlitePool) -> Router {
@@ -391,6 +464,11 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
             get(download_doc_attachment).delete(delete_doc_attachment),
         )
         .route("/v1/audit", get(list_global_audit))
+        .route("/v1/admin/observability/logs", get(list_observability_logs))
+        .route(
+            "/v1/admin/observability/metrics",
+            get(observability_metrics),
+        )
         .route(
             "/v1/documents/{id}/transition",
             axum::routing::post(transition_document),
@@ -2952,6 +3030,63 @@ pub struct GlobalAuditQuery {
     pub search: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct ObservabilityQuery {
+    category: Option<String>,
+    level: Option<String>,
+    actor: Option<String>,
+    request_id: Option<String>,
+    correlation_id: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+async fn observability_metrics(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _observability_log")
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|e| AppError::from(anyhow::Error::from(e)))?;
+    let errors: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM _observability_log WHERE level='error'")
+            .fetch_one(&state.pool)
+            .await
+            .map_err(|e| AppError::from(anyhow::Error::from(e)))?;
+    let denied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _observability_log WHERE action IN ('permission_denied','authentication_failed','login_failed')").fetch_one(&state.pool).await.map_err(|e| AppError::from(anyhow::Error::from(e)))?;
+    let pending_automation: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM _automation_execution WHERE status='pending'")
+            .fetch_one(&state.pool)
+            .await
+            .map_err(|e| AppError::from(anyhow::Error::from(e)))?;
+    let pending_webhooks: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM _webhook_delivery WHERE status='pending'")
+            .fetch_one(&state.pool)
+            .await
+            .map_err(|e| AppError::from(anyhow::Error::from(e)))?;
+    Ok(Json(
+        json!({"observability_events":total,"errors":errors,"security_denials":denied,"pending_automation":pending_automation,"pending_webhooks":pending_webhooks}),
+    ))
+}
+async fn list_observability_logs(
+    State(state): State<AppState>,
+    Query(query): Query<ObservabilityQuery>,
+) -> Result<Json<Value>, AppError> {
+    let filter = observability::ObservabilityFilter {
+        category: query.category,
+        level: query.level,
+        actor: query.actor,
+        request_id: query.request_id,
+        correlation_id: query.correlation_id,
+    };
+    let (total, items) = observability::list(
+        &state.pool,
+        &filter,
+        query.limit.unwrap_or(100),
+        query.offset.unwrap_or(0),
+    )
+    .await
+    .map_err(AppError::from)?;
+    Ok(Json(json!({"total": total, "items": items})))
+}
 async fn list_global_audit(
     State(state): State<AppState>,
     user: Option<axum::extract::Extension<auth::User>>,

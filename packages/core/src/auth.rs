@@ -85,9 +85,41 @@ pub async fn login(pool: &SqlitePool, username: &str, password: &str) -> Result<
     .fetch_optional(pool)
     .await?;
     let Some((id, username, hash, role)) = row else {
+        let _ = crate::observability::record(
+            pool,
+            "warn",
+            "security",
+            "login_failed",
+            None,
+            None,
+            None,
+            Some("user"),
+            Some(username.trim()),
+            Some(401),
+            None,
+            "invalid username or password",
+            &serde_json::json!({}),
+        )
+        .await;
         return Err(AppError::Unauthorized("invalid username or password".into()).into());
     };
     if !verify_password(password, &hash) {
+        let _ = crate::observability::record(
+            pool,
+            "warn",
+            "security",
+            "login_failed",
+            Some(&username),
+            None,
+            None,
+            Some("user"),
+            Some(&id),
+            Some(401),
+            None,
+            "invalid username or password",
+            &serde_json::json!({}),
+        )
+        .await;
         return Err(AppError::Unauthorized("invalid username or password".into()).into());
     }
     let token = new_token();
