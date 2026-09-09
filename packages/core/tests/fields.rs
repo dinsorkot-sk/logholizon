@@ -516,11 +516,18 @@ async fn form_layout_crud_and_validation() {
 async fn field_validation_rejects_bad_input() {
     let pool = setup().await;
     // invalid type
-    assert!(
-        repository::create_field(&pool, "work_order", "bad", "json", false, false, None, None)
-            .await
-            .is_err()
-    );
+    assert!(repository::create_field(
+        &pool,
+        "work_order",
+        "bad",
+        "not_a_type",
+        false,
+        false,
+        None,
+        None
+    )
+    .await
+    .is_err());
     // invalid name (uppercase / spaces)
     assert!(repository::create_field(
         &pool,
@@ -928,4 +935,61 @@ async fn entity_update_and_delete_guards() {
     assert!(repository::delete_entity(&pool, "work_order")
         .await
         .is_err());
+}
+
+#[tokio::test]
+async fn canonical_field_types_are_accepted() {
+    let pool = setup().await;
+    repository::create_entity(&pool, "driver", "driver", "Driver")
+        .await
+        .unwrap();
+    let types = [
+        "text",
+        "long_text",
+        "number",
+        "decimal",
+        "currency",
+        "percentage",
+        "integer",
+        "boolean",
+        "date",
+        "datetime",
+        "time",
+        "select",
+        "multi_select",
+        "email",
+        "phone",
+        "url",
+        "json",
+        "file",
+        "image",
+        "reference",
+        "computed",
+        "formula",
+        "auto_number",
+    ];
+    for (index, field_type) in types.iter().enumerate() {
+        let name = format!("field_{index}");
+        let result = repository::create_field(
+            &pool,
+            "work_order",
+            &name,
+            field_type,
+            false,
+            false,
+            match *field_type {
+                "reference" => Some("driver"),
+                _ => None,
+            },
+            match *field_type {
+                "computed" => Some("{title}"),
+                _ => None,
+            },
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "field type {field_type} should be accepted: {result:?}"
+        );
+    }
 }

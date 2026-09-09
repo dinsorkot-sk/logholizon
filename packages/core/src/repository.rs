@@ -4,6 +4,7 @@ use serde_json::Value;
 use sqlx::SqlitePool;
 
 use crate::error::AppError;
+use crate::metadata;
 
 pub use crate::module_lifecycle::{disable_module, enable_module, submit_module_for_review};
 
@@ -2710,21 +2711,7 @@ fn validate_field_name(name: &str) -> Result<()> {
 }
 
 fn validate_field_type(field_type: &str) -> Result<()> {
-    if !matches!(
-        field_type,
-        "text"
-            | "number"
-            | "date"
-            | "select"
-            | "checkbox"
-            | "textarea"
-            | "currency"
-            | "reference"
-            | "computed"
-    ) {
-        return Err(AppError::BadRequest(format!("invalid field type: {field_type}")).into());
-    }
-    Ok(())
+    metadata::validate_field_type(field_type)
 }
 
 async fn validate_reference_field(
@@ -2867,7 +2854,7 @@ fn field_rules_from_definition(field: &Value) -> FieldRules {
 
 fn validate_field_rules(field_type: &str, rules: &FieldRules) -> Result<()> {
     if let Some(min) = rules.min_value {
-        if !matches!(field_type, "number" | "currency") {
+        if !metadata::is_numeric_type(field_type) {
             return Err(
                 AppError::BadRequest("min_value is only valid for number fields".into()).into(),
             );
@@ -2877,7 +2864,7 @@ fn validate_field_rules(field_type: &str, rules: &FieldRules) -> Result<()> {
         }
     }
     if let Some(max) = rules.max_value {
-        if !matches!(field_type, "number" | "currency") {
+        if !metadata::is_numeric_type(field_type) {
             return Err(
                 AppError::BadRequest("max_value is only valid for number fields".into()).into(),
             );
@@ -2897,7 +2884,7 @@ fn validate_field_rules(field_type: &str, rules: &FieldRules) -> Result<()> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        if !matches!(field_type, "text" | "textarea") {
+        if !metadata::is_text_type(field_type) {
             return Err(
                 AppError::BadRequest("pattern is only valid for text fields".into()).into(),
             );
@@ -2907,7 +2894,7 @@ fn validate_field_rules(field_type: &str, rules: &FieldRules) -> Result<()> {
         }
     }
     if (rules.min_length.is_some() || rules.max_length.is_some())
-        && !matches!(field_type, "text" | "textarea")
+        && !metadata::is_text_type(field_type)
     {
         return Err(
             AppError::BadRequest("length limits are only valid for text fields".into()).into(),
@@ -2934,17 +2921,17 @@ fn validate_field_rules(field_type: &str, rules: &FieldRules) -> Result<()> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        if matches!(field_type, "number" | "currency") && default.parse::<f64>().is_err() {
+        if metadata::is_numeric_type(field_type) && default.parse::<f64>().is_err() {
             return Err(AppError::BadRequest("default_value must be a number".into()).into());
         }
-        if matches!(field_type, "checkbox" | "boolean")
+        if metadata::is_boolean_type(field_type)
             && !matches!(default.to_ascii_lowercase().as_str(), "true" | "false")
         {
             return Err(AppError::BadRequest("default_value must be true or false".into()).into());
         }
     }
     if rules.auto_number_prefix.is_some() || rules.auto_number_width.is_some() {
-        if !matches!(field_type, "text") {
+        if !metadata::is_text_type(field_type) {
             return Err(
                 AppError::BadRequest("auto_number is only valid for text fields".into()).into(),
             );

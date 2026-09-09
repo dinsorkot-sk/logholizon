@@ -4,6 +4,7 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod http;
+pub mod metadata;
 pub mod module_lifecycle;
 pub mod notify;
 pub mod repository;
