@@ -6,7 +6,7 @@ use argon2::{
 use serde::Serialize;
 use sqlx::SqlitePool;
 
-use crate::error::AppError;
+use crate::{error::AppError, rbac};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct User {
@@ -54,25 +54,32 @@ pub async fn register(pool: &SqlitePool, username: &str, password: &str) -> Resu
         .fetch_one(pool)
         .await?;
     let role = if count == 0 { "admin" } else { "user" };
+    let role_id = sqlx::query_as::<_, (String,)>("SELECT id FROM _role WHERE name=?")
+        .bind(role)
+        .fetch_one(pool)
+        .await?
+        .0;
     let id = format!("user_{username}");
     let hash = hash_password(password)?;
     sqlx::query("INSERT INTO _user (id, username, password_hash, role) VALUES (?, ?, ?, ?)")
         .bind(&id)
         .bind(username)
         .bind(&hash)
-        .bind(role)
+        .bind("user")
         .execute(pool)
         .await?;
+    rbac::assign_role(pool, &id, &role_id).await?;
+    let effective = rbac::effective_role_name(pool, &id).await?;
     Ok(User {
         id,
         username: username.to_string(),
-        role: role.to_string(),
+        role: effective,
     })
 }
 
 pub async fn login(pool: &SqlitePool, username: &str, password: &str) -> Result<Session> {
     let row = sqlx::query_as::<_, (String, String, String, String)>(
-        "SELECT id, username, password_hash, role FROM _user WHERE username = ?",
+        "SELECT u.id, u.username, u.password_hash, COALESCE(r.name, u.role) FROM _user u LEFT JOIN _user_role ur ON ur.user_id=u.id LEFT JOIN _role r ON r.id=ur.role_id WHERE u.username = ?",
     )
     .bind(username.trim())
     .fetch_optional(pool)
@@ -115,7 +122,7 @@ pub struct UserRow {
 
 pub async fn list_users(pool: &SqlitePool) -> Result<Vec<UserRow>> {
     let rows = sqlx::query_as::<_, (String, String, String, String)>(
-        "SELECT id, username, role, created_at FROM _user ORDER BY username",
+        "SELECT u.id, u.username, COALESCE(r.name, u.role), u.created_at FROM _user u LEFT JOIN _user_role ur ON ur.user_id=u.id LEFT JOIN _role r ON r.id=ur.role_id ORDER BY u.username",
     )
     .fetch_all(pool)
     .await?;
@@ -140,52 +147,54 @@ pub async fn create_user(
     if username.is_empty() || password.len() < 8 {
         bail!("username is required and password must be at least 8 characters");
     }
-    if !matches!(role, "admin" | "user") {
-        bail!("role must be admin or user");
-    }
+    let role_id = sqlx::query_as::<_, (String,)>("SELECT id FROM _role WHERE id=? OR name=?")
+        .bind(role)
+        .bind(role)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| AppError::BadRequest(format!("unknown role: {role}")))?
+        .0;
     let id = format!("user_{username}");
     let hash = hash_password(password)?;
     sqlx::query("INSERT INTO _user (id, username, password_hash, role) VALUES (?, ?, ?, ?)")
         .bind(&id)
         .bind(username)
         .bind(&hash)
-        .bind(role)
+        .bind("user")
         .execute(pool)
         .await?;
+    rbac::assign_role(pool, &id, &role_id).await?;
+    let effective = rbac::effective_role_name(pool, &id).await?;
     Ok(User {
         id,
         username: username.to_string(),
-        role: role.to_string(),
+        role: effective,
     })
 }
 
 pub async fn update_user_role(pool: &SqlitePool, id: &str, role: &str) -> Result<User> {
-    if !matches!(role, "admin" | "user") {
-        bail!("role must be admin or user");
-    }
-    let result = sqlx::query("UPDATE _user SET role = ? WHERE id = ?")
+    let role_id = sqlx::query_as::<_, (String,)>("SELECT id FROM _role WHERE id=? OR name=?")
         .bind(role)
+        .bind(role)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| AppError::BadRequest(format!("unknown role: {role}")))?
+        .0;
+    rbac::assign_role(pool, id, &role_id).await?;
+    let row = sqlx::query_as::<_, (String, String)>("SELECT id, username FROM _user WHERE id=?")
         .bind(id)
-        .execute(pool)
-        .await?;
-    if result.rows_affected() == 0 {
-        return Err(AppError::NotFound(format!("user not found: {id}")).into());
-    }
-    let row = sqlx::query_as::<_, (String, String, String)>(
-        "SELECT id, username, role FROM _user WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_one(pool)
-    .await?;
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("user not found: {id}")))?;
     Ok(User {
         id: row.0,
         username: row.1,
-        role: row.2,
+        role: rbac::effective_role_name(pool, id).await?,
     })
 }
 
 pub async fn delete_user(pool: &SqlitePool, id: &str) -> Result<()> {
-    let row = sqlx::query_as::<_, (String, String)>("SELECT id, role FROM _user WHERE id = ?")
+    let row = sqlx::query_as::<_, (String, String)>("SELECT u.id, COALESCE(r.name,u.role) FROM _user u LEFT JOIN _user_role ur ON ur.user_id=u.id LEFT JOIN _role r ON r.id=ur.role_id WHERE u.id = ?")
         .bind(id)
         .fetch_optional(pool)
         .await?;
@@ -193,7 +202,7 @@ pub async fn delete_user(pool: &SqlitePool, id: &str) -> Result<()> {
         return Err(AppError::NotFound(format!("user not found: {id}")).into());
     };
     if role == "admin" {
-        let admins: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _user WHERE role = 'admin'")
+        let admins: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _user u LEFT JOIN _user_role ur ON ur.user_id=u.id LEFT JOIN _role r ON r.id=ur.role_id WHERE COALESCE(r.name,u.role) = 'admin'")
             .fetch_one(pool)
             .await?;
         if admins <= 1 {
@@ -232,7 +241,7 @@ pub async fn has_users(pool: &SqlitePool) -> Result<bool> {
 
 pub async fn user_for_token(pool: &SqlitePool, token: &str) -> Result<User> {
     let row = sqlx::query_as::<_, (String, String, String)>(
-        "SELECT u.id, u.username, u.role FROM _session s JOIN _user u ON u.id = s.user_id WHERE s.token = ? AND s.expires_at > datetime('now')",
+        "SELECT u.id, u.username, COALESCE(r.name, u.role) FROM _session s JOIN _user u ON u.id = s.user_id LEFT JOIN _user_role ur ON ur.user_id=u.id LEFT JOIN _role r ON r.id=ur.role_id WHERE s.token = ? AND s.expires_at > datetime('now')",
     )
     .bind(token)
     .fetch_optional(pool)

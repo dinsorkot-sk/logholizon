@@ -5,6 +5,7 @@ export type CoreEntityOption = { id: string; label: string }
 export type CoreUser = { id: string; username: string; role: string }
 export type CoreSession = { token: string; user: CoreUser }
 export type CoreUserRow = { id: string; username: string; role: string; created_at: string }
+export type CoreRole = { id: string; name: string; label: string; description: string; system: boolean; created_at: string }
 
 export type CoreFieldOption = { id: string; value: string; label: string }
 
@@ -313,6 +314,10 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       request<{ has_users: boolean }>('/v1/auth/status'),
     listUsers: (): Promise<CoreUserRow[]> =>
       request<CoreUserRow[]>('/v1/admin/users'),
+    listRoles: (): Promise<CoreRole[]> => request<CoreRole[]>('/v1/admin/roles'),
+    createRole: (input: { name: string; label: string; description?: string }): Promise<CoreRole> => request<CoreRole>('/v1/admin/roles', { method: 'POST', body: input }),
+    updateRole: (id: string, input: { label: string; description?: string }): Promise<CoreRole> => request<CoreRole>('/v1/admin/roles/' + encodeURIComponent(id), { method: 'PUT', body: input }),
+    deleteRole: (id: string): Promise<void> => request<void>('/v1/admin/roles/' + encodeURIComponent(id), { method: 'DELETE' }),
     createUser: (user: { username: string; password: string; role: string }): Promise<CoreUser> =>
       request<CoreUser>('/v1/admin/users', { method: 'POST', body: user }),
     updateUser: (id: string, role: string): Promise<CoreUser> =>

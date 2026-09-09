@@ -6042,3 +6042,36 @@ fn validate_field_value(field: &Field, value: &Value) -> Result<()> {
     }
     Ok(())
 }
+
+/// Evaluate generic entity capabilities such as export/import/execute/approve.
+#[allow(dead_code)]
+pub async fn check_entity_capability(
+    pool: &SqlitePool,
+    entity_id: &str,
+    role: &str,
+    capability: &str,
+) -> Result<()> {
+    if role == "admin" {
+        return Ok(());
+    }
+    let column = match capability {
+        "export" => "can_export",
+        "import" => "can_import",
+        "execute" => "can_execute",
+        "approve" => "can_approve",
+        _ => return Err(AppError::BadRequest("unknown permission capability".into()).into()),
+    };
+    let query = format!("SELECT {column} FROM _entity_permission WHERE entity_id=? AND role=?");
+    let value: Option<i64> = sqlx::query_scalar(&query)
+        .bind(entity_id)
+        .bind(role)
+        .fetch_optional(pool)
+        .await?;
+    if value.unwrap_or(1) == 0 {
+        return Err(AppError::Forbidden(format!(
+            "no {capability} permission for entity: {entity_id}"
+        ))
+        .into());
+    }
+    Ok(())
+}

@@ -78,6 +78,11 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
         .route("/v1/auth/me", get(auth_me))
         .route("/v1/auth/status", get(auth_status))
         .route("/v1/admin/users", get(list_users).post(create_user))
+        .route("/v1/admin/roles", get(list_roles).post(create_role))
+        .route(
+            "/v1/admin/roles/{id}",
+            axum::routing::put(update_role).delete(delete_role),
+        )
         .route(
             "/v1/admin/users/{id}",
             axum::routing::put(update_user).delete(delete_user),
@@ -2490,6 +2495,60 @@ async fn auth_status(State(state): State<AppState>) -> Result<Json<serde_json::V
     Ok(Json(json!({ "has_users": has_users })))
 }
 
+async fn list_roles(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::rbac::Role>>, AppError> {
+    crate::rbac::list_roles(&state.pool)
+        .await
+        .map(Json)
+        .map_err(AppError::from)
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateRoleRequest {
+    name: String,
+    label: String,
+    #[serde(default)]
+    description: String,
+}
+
+async fn create_role(
+    State(state): State<AppState>,
+    Json(input): Json<CreateRoleRequest>,
+) -> Result<(StatusCode, Json<crate::rbac::Role>), AppError> {
+    crate::rbac::create_role(&state.pool, &input.name, &input.label, &input.description)
+        .await
+        .map(|r| (StatusCode::CREATED, Json(r)))
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateRoleRequest {
+    label: String,
+    #[serde(default)]
+    description: String,
+}
+
+async fn update_role(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<UpdateRoleRequest>,
+) -> Result<Json<crate::rbac::Role>, AppError> {
+    crate::rbac::update_role(&state.pool, &id, &input.label, &input.description)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn delete_role(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    crate::rbac::delete_role(&state.pool, &id)
+        .await
+        .map(|_| StatusCode::NO_CONTENT)
+        .map_err(map_db_error)
+}
 async fn list_users(State(state): State<AppState>) -> Result<Json<Vec<auth::UserRow>>, AppError> {
     auth::list_users(&state.pool)
         .await
