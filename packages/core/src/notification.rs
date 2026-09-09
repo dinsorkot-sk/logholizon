@@ -247,10 +247,8 @@ pub async fn create_webhook(
     max_attempts: i64,
     active: bool,
 ) -> Result<WebhookEndpoint> {
-    anyhow::ensure!(
-        url.starts_with("https://") || url.starts_with("http://"),
-        "webhook url must use http or https"
-    );
+    crate::security::validate_outbound_url(url)?;
+    crate::security::validate_webhook_headers(headers)?;
     anyhow::ensure!(timeout > 0 && timeout <= 300, "invalid webhook timeout");
     anyhow::ensure!(
         (1..=20).contains(&max_attempts),
@@ -295,7 +293,7 @@ pub async fn enqueue_webhook(
     let e = get_webhook(pool, endpoint_id).await?;
     anyhow::ensure!(e.active, "webhook endpoint is inactive");
     anyhow::ensure!(
-        payload.to_string().len() <= 1_000_000,
+        payload.to_string().len() <= crate::security::MAX_WEBHOOK_BODY_BYTES,
         "webhook payload is too large"
     );
     let id = format!(
@@ -324,8 +322,20 @@ pub async fn deliver_pending(pool: &SqlitePool) -> Result<usize> {
     let rows=sqlx::query_as::<_,(String,String,String,String,String,i64,i64,i64,String)>("SELECT d.id,e.url,e.secret,e.headers,d.payload,d.attempts,e.timeout_secs,e.max_attempts,d.event_type FROM _webhook_delivery d JOIN _webhook_endpoint e ON e.id=d.endpoint_id WHERE d.status='pending' ORDER BY d.created_at LIMIT 50").fetch_all(pool).await?;
     let mut sent = 0;
     for (id, url, secret, headers, payload, attempts, timeout, max_attempts, event_type) in rows {
+        if let Err(error) = crate::security::validate_outbound_url(&url) {
+            let message = error.to_string();
+            sqlx::query(
+                "UPDATE _webhook_delivery SET status = 'failed', last_error = ? WHERE id = ?",
+            )
+            .bind(message)
+            .bind(&id)
+            .execute(pool)
+            .await?;
+            continue;
+        }
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(timeout.max(1) as u64))
+            .redirect(reqwest::redirect::Policy::none())
             .build()?;
         let mut req = client
             .post(&url)

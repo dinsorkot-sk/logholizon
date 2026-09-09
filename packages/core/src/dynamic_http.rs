@@ -49,6 +49,8 @@ pub async fn list(
     }
     let entity = dynamic_crud::resolve_entity(&state.pool, &module, &entity).await?;
     let r = role(&user);
+    let owner = user.as_ref().map(|u| u.0.username.as_str()).unwrap_or("");
+    repository::check_entity_tenant_access(&state.pool, &entity.id, owner, r).await?;
     repository::check_permission(&state.pool, &entity.id, r, false).await?;
     repository::list_documents_as_role(
         &state.pool,
@@ -84,6 +86,8 @@ pub async fn create(
 ) -> Result<(StatusCode, Json<repository::Document>), AppError> {
     let entity = dynamic_crud::resolve_entity(&state.pool, &module, &entity).await?;
     let r = role(&user);
+    let owner = user.as_ref().map(|u| u.0.username.as_str()).unwrap_or("");
+    repository::check_entity_tenant_access(&state.pool, &entity.id, owner, r).await?;
     repository::check_permission(&state.pool, &entity.id, r, true).await?;
     repository::create_document_as_role(
         &state.pool,
@@ -105,7 +109,16 @@ pub async fn get(
 ) -> Result<Json<repository::Document>, AppError> {
     let entity = dynamic_crud::resolve_entity(&state.pool, &module, &entity).await?;
     let r = role(&user);
+    let owner = user.as_ref().map(|u| u.0.username.as_str()).unwrap_or("");
+    repository::check_entity_tenant_access(&state.pool, &entity.id, owner, r).await?;
     repository::check_permission(&state.pool, &entity.id, r, false).await?;
+    repository::check_document_tenant_access(
+        &state.pool,
+        &id,
+        user.as_ref().map(|u| u.0.username.as_str()).unwrap_or(""),
+        r,
+    )
+    .await?;
     let doc = repository::get_document(&state.pool, &id).await?;
     if doc.entity_id != entity.id {
         return Err(AppError::NotFound(format!("document not found: {id}")));
@@ -131,7 +144,16 @@ pub async fn update(
 ) -> Result<Json<repository::Document>, AppError> {
     let entity = dynamic_crud::resolve_entity(&state.pool, &module, &entity).await?;
     let r = role(&user);
+    let owner = user.as_ref().map(|u| u.0.username.as_str()).unwrap_or("");
+    repository::check_entity_tenant_access(&state.pool, &entity.id, owner, r).await?;
     repository::check_permission(&state.pool, &entity.id, r, true).await?;
+    repository::check_document_tenant_access(
+        &state.pool,
+        &id,
+        user.as_ref().map(|u| u.0.username.as_str()).unwrap_or(""),
+        r,
+    )
+    .await?;
     let existing = repository::get_document(&state.pool, &id).await?;
     if existing.entity_id != entity.id {
         return Err(AppError::NotFound(format!("document not found: {id}")));
@@ -156,7 +178,16 @@ pub async fn delete(
 ) -> Result<StatusCode, AppError> {
     let entity = dynamic_crud::resolve_entity(&state.pool, &module, &entity).await?;
     let r = role(&user);
+    let owner = user.as_ref().map(|u| u.0.username.as_str()).unwrap_or("");
+    repository::check_entity_tenant_access(&state.pool, &entity.id, owner, r).await?;
     repository::check_permission(&state.pool, &entity.id, r, true).await?;
+    repository::check_document_tenant_access(
+        &state.pool,
+        &id,
+        user.as_ref().map(|u| u.0.username.as_str()).unwrap_or(""),
+        r,
+    )
+    .await?;
     let existing = repository::get_document(&state.pool, &id).await?;
     if existing.entity_id != entity.id {
         return Err(AppError::NotFound(format!("document not found: {id}")));

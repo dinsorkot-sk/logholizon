@@ -697,9 +697,14 @@ pub async fn create_module(
         bail!("owner is required");
     }
     let id = format!("{owner}_{name}");
+    sqlx::query("INSERT OR IGNORE INTO _tenant (id, name) VALUES (?, ?)")
+        .bind(owner)
+        .bind(owner)
+        .execute(pool)
+        .await?;
     let definition_string = serde_json::to_string(definition)?;
     sqlx::query(
-        "INSERT INTO _module (id, name, label, description, icon, color, owner, status, version, semantic_version, definition, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', 1, '1.0.0', ?, ?)",
+        "INSERT INTO _module (id, name, label, description, icon, color, owner, status, version, semantic_version, definition, created_by, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', 1, '1.0.0', ?, ?, ?)",
     )
     .bind(&id)
     .bind(name)
@@ -710,6 +715,7 @@ pub async fn create_module(
     .bind(owner)
     .bind(&definition_string)
     .bind(actor)
+    .bind(owner)
     .execute(pool)
     .await?;
     get_module_row(pool, &id).await
@@ -836,8 +842,8 @@ async fn materialize_module_definition(
             .unwrap_or(name);
         let entity_id = format!("{}_{}", module.id, name);
         sqlx::query(
-            "INSERT INTO _meta_entity (id, name, label, description, settings, module, module_id) VALUES (?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(id) DO UPDATE SET label = excluded.label, description = excluded.description, settings = excluded.settings, module = excluded.module, module_id = excluded.module_id",
+            "INSERT INTO _meta_entity (id, name, label, description, settings, module, module_id, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(id) DO UPDATE SET label = excluded.label, description = excluded.description, settings = excluded.settings, module = excluded.module, module_id = excluded.module_id, tenant_id = excluded.tenant_id",
         )
         .bind(&entity_id)
         .bind(name)
@@ -846,6 +852,7 @@ async fn materialize_module_definition(
         .bind(entity.get("settings").cloned().unwrap_or_else(|| Value::Object(Default::default())).to_string())
         .bind(&module.label)
         .bind(&module.id)
+        .bind(&module.owner)
         .execute(&mut **tx)
         .await?;
         for role in ["admin", "user"] {
@@ -1515,6 +1522,7 @@ pub async fn create_automation(
     if target_url.trim().is_empty() {
         bail!("target_url is required");
     }
+    crate::security::validate_outbound_url(target_url)?;
     let id = format!("{entity_id}_automation_{}", chrono_nanos());
     sqlx::query(
         "INSERT INTO _automation (id, entity_id, trigger, action, target_url, active) VALUES (?, ?, ?, ?, ?, ?)",
@@ -1762,6 +1770,56 @@ pub async fn update_entity_permissions(
     }
     tx.commit().await?;
     get_entity_permissions(pool, entity_id).await
+}
+
+pub async fn check_entity_tenant_access(
+    pool: &SqlitePool,
+    entity_id: &str,
+    owner: &str,
+    role: &str,
+) -> Result<()> {
+    if role == "admin" {
+        return Ok(());
+    }
+    let tenant_owner: Option<String> = sqlx::query_scalar(
+        "SELECT m.owner FROM _meta_entity e JOIN _module m ON m.id = e.module_id WHERE e.id = ?",
+    )
+    .bind(entity_id)
+    .fetch_optional(pool)
+    .await?;
+    match tenant_owner {
+        Some(value) if value == owner.trim() => Ok(()),
+        Some(_) => {
+            Err(AppError::Forbidden(format!("no tenant access to entity: {entity_id}")).into())
+        }
+        None => Err(AppError::Forbidden(format!("entity has no tenant owner: {entity_id}")).into()),
+    }
+}
+
+pub async fn check_document_tenant_access(
+    pool: &SqlitePool,
+    document_id: &str,
+    owner: &str,
+    role: &str,
+) -> Result<()> {
+    if role == "admin" {
+        return Ok(());
+    }
+    let tenant_owner: Option<String> = sqlx::query_scalar(
+        "SELECT m.owner FROM _doc d JOIN _meta_entity e ON e.id = d.entity_id JOIN _module m ON m.id = e.module_id WHERE d.id = ?",
+    )
+    .bind(document_id)
+    .fetch_optional(pool)
+    .await?;
+    match tenant_owner {
+        Some(value) if value == owner.trim() => Ok(()),
+        Some(_) => {
+            Err(AppError::Forbidden(format!("no tenant access to document: {document_id}")).into())
+        }
+        None => {
+            Err(AppError::Forbidden(format!("document has no tenant owner: {document_id}")).into())
+        }
+    }
 }
 
 pub async fn check_permission(
@@ -3423,10 +3481,11 @@ pub async fn create_document_as_role(
     validate_payload_for_role(pool, entity_id, &with_defaults, role).await?;
     let payload = with_defaults;
     let mut tx = pool.begin().await?;
-    sqlx::query("INSERT INTO _doc (id, entity_id, payload) VALUES (?, ?, ?)")
+    sqlx::query("INSERT INTO _doc (id, entity_id, payload, tenant_id) VALUES (?, ?, ?, (SELECT tenant_id FROM _meta_entity WHERE id = ?))")
         .bind(id)
         .bind(entity_id)
         .bind(payload.to_string())
+        .bind(entity_id)
         .execute(&mut *tx)
         .await?;
     sqlx::query(
@@ -3856,10 +3915,11 @@ async fn upsert_document_in_tx(
             .execute(&mut **transaction)
             .await?;
     } else {
-        sqlx::query("INSERT INTO _doc (id, entity_id, payload) VALUES (?, ?, ?)")
+        sqlx::query("INSERT INTO _doc (id, entity_id, payload, tenant_id) VALUES (?, ?, ?, (SELECT tenant_id FROM _meta_entity WHERE id = ?))")
             .bind(id)
             .bind(entity_id)
             .bind(payload.to_string())
+            .bind(entity_id)
             .execute(&mut **transaction)
             .await?;
     }
@@ -5764,6 +5824,7 @@ fn valid_activity_date(date: &str) -> bool {
 /// uploading and deleting require edit access. Files are stored as DB
 /// blobs with a 5MB per-file cap; MIME allowlist blocks executables.
 pub fn validate_attachment(filename: &str, content_type: &str, size: usize) -> Result<()> {
+    crate::security::validate_filename(filename)?;
     let filename = filename.trim();
     if filename.is_empty() {
         return Err(AppError::BadRequest("filename is required".into()).into());

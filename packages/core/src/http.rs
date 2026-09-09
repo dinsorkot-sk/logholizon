@@ -59,7 +59,9 @@ async fn auth_middleware(
     }
 
     let user = require_user(&state, request.headers()).await?;
-    if (path.starts_with("/v1/meta/") || path.starts_with("/v1/admin/")) && user.role != "admin" {
+    if (path.starts_with("/v1/meta/") || path.starts_with("/v1/admin/") || path == "/v1/audit")
+        && user.role != "admin"
+    {
         return Err(AppError::Forbidden("admin role required".into()));
     }
 
@@ -3309,6 +3311,20 @@ async fn admin_restore(
         return Err(AppError::BadRequest("restore requires force=true".into()));
     }
     let source = std::path::PathBuf::from(&input.path);
+    let allowed_dir = backups_dir(&state)?;
+    let allowed_dir = tokio::fs::canonicalize(&allowed_dir)
+        .await
+        .map_err(|error| {
+            AppError::BadRequest(format!("backup directory is unavailable: {error}"))
+        })?;
+    let source = tokio::fs::canonicalize(&source)
+        .await
+        .map_err(|error| AppError::BadRequest(format!("invalid backup source: {error}")))?;
+    if !source.starts_with(&allowed_dir) {
+        return Err(AppError::Forbidden(
+            "restore source must be inside the backup directory".into(),
+        ));
+    }
     backup::validate(&source).await.map_err(AppError::from)?;
     let db_path = database_path(&state)?;
     let staging = db_path

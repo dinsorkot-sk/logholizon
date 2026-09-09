@@ -31,10 +31,21 @@ pub async fn deliver_pending(
         return Ok(0);
     }
     let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(timeout_secs.max(1)))
         .build()?;
     let mut delivered = 0;
     for (id, target_url, payload) in pending {
+        if let Err(error) = crate::security::validate_outbound_url(&target_url) {
+            sqlx::query(
+                "UPDATE _notification_delivery SET status = 'failed', last_error = ? WHERE id = ?",
+            )
+            .bind(error.to_string())
+            .bind(&id)
+            .execute(pool)
+            .await?;
+            continue;
+        }
         // Cap response bodies at 1MB; the stored payload is capped at enqueue.
         match client
             .post(&target_url)

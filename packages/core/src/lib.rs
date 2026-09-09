@@ -13,6 +13,7 @@ pub mod notify;
 pub mod rbac;
 pub mod relation;
 pub mod repository;
+pub mod security;
 pub mod seed;
 
 pub use config::Config;
