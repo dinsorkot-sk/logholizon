@@ -993,3 +993,95 @@ async fn canonical_field_types_are_accepted() {
         );
     }
 }
+
+#[tokio::test]
+async fn field_metadata_persists_and_roundtrips() {
+    let pool = setup().await;
+    let field = repository::create_field_with_rules(
+        &pool,
+        "work_order",
+        "amount",
+        "decimal",
+        false,
+        false,
+        None,
+        None,
+        &repository::FieldRules {
+            label: Some("Amount".into()),
+            description: Some("Total amount".into()),
+            readonly: true,
+            hidden: true,
+            searchable: true,
+            sortable: true,
+            filterable: true,
+            indexed: true,
+            precision: Some(3),
+            help_text: Some("Enter the amount".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(field.label, "Amount");
+    assert_eq!(field.description, "Total amount");
+    assert!(field.readonly && field.hidden && field.searchable && field.sortable);
+    assert!(field.filterable && field.indexed);
+    assert_eq!(field.precision, Some(3));
+    assert_eq!(field.help_text, "Enter the amount");
+
+    let listed = repository::list_fields(&pool, "work_order").await.unwrap();
+    let listed = listed.into_iter().find(|f| f.id == field.id).unwrap();
+    assert_eq!(listed.precision, Some(3));
+
+    let updated = repository::update_field_with_rules(
+        &pool,
+        &field.id,
+        "amount",
+        "decimal",
+        false,
+        false,
+        None,
+        None,
+        &repository::FieldRules {
+            label: Some("Updated amount".into()),
+            description: Some("Updated".into()),
+            readonly: false,
+            hidden: false,
+            searchable: true,
+            sortable: false,
+            filterable: true,
+            indexed: false,
+            precision: Some(2),
+            help_text: Some("Updated help".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(updated.label, "Updated amount");
+    assert!(!updated.readonly && !updated.hidden && updated.searchable);
+    assert!(updated.filterable && !updated.indexed);
+    assert_eq!(updated.precision, Some(2));
+    assert_eq!(updated.help_text, "Updated help");
+}
+
+#[tokio::test]
+async fn entity_metadata_persists_and_roundtrips() {
+    let pool = setup().await;
+    let settings = serde_json::json!({"icon":"car","title_field":"plate_number"});
+    let detail = repository::update_entity_metadata(
+        &pool,
+        "work_order",
+        Some("Work orders"),
+        Some(&settings),
+    )
+    .await
+    .unwrap();
+    assert_eq!(detail.description, "Work orders");
+    assert_eq!(detail.settings, settings);
+    let listed = repository::get_entity_detail(&pool, "work_order")
+        .await
+        .unwrap();
+    assert_eq!(listed.description, "Work orders");
+    assert_eq!(listed.settings["icon"], "car");
+}

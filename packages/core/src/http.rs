@@ -7,7 +7,7 @@ use axum::{
     Json, Router,
 };
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use sqlx::SqlitePool;
 
 use crate::{
@@ -422,6 +422,10 @@ pub struct UpdateEntity {
     pub label: String,
     #[serde(default)]
     pub module: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub settings: Option<Value>,
 }
 
 async fn update_entity(
@@ -437,7 +441,24 @@ async fn update_entity(
         input.module.as_deref(),
     )
     .await
-    .map(Json)
+    .map_err(map_db_error)?;
+    repository::update_entity_metadata(
+        &state.pool,
+        &id,
+        input.description.as_deref(),
+        input.settings.as_ref(),
+    )
+    .await
+    .map(|detail| {
+        Json(repository::Entity {
+            id: detail.id,
+            name: detail.name,
+            label: detail.label,
+            description: detail.description,
+            settings: detail.settings,
+            module: detail.module,
+        })
+    })
     .map_err(map_db_error)
 }
 
@@ -481,6 +502,26 @@ pub struct CreateField {
     pub auto_number_prefix: Option<String>,
     #[serde(default)]
     pub auto_number_width: Option<i64>,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub readonly: bool,
+    #[serde(default)]
+    pub hidden: bool,
+    #[serde(default)]
+    pub searchable: bool,
+    #[serde(default)]
+    pub sortable: bool,
+    #[serde(default)]
+    pub filterable: bool,
+    #[serde(default)]
+    pub indexed: bool,
+    #[serde(default)]
+    pub precision: Option<i64>,
+    #[serde(default)]
+    pub help_text: Option<String>,
 }
 
 async fn create_field(
@@ -507,6 +548,16 @@ async fn create_field(
             default_value: input.default_value.clone(),
             auto_number_prefix: input.auto_number_prefix.clone(),
             auto_number_width: input.auto_number_width,
+            label: input.label.clone(),
+            description: input.description.clone(),
+            readonly: input.readonly,
+            hidden: input.hidden,
+            searchable: input.searchable,
+            sortable: input.sortable,
+            filterable: input.filterable,
+            indexed: input.indexed,
+            precision: input.precision,
+            help_text: input.help_text.clone(),
         },
     )
     .await
@@ -544,6 +595,26 @@ pub struct UpdateField {
     pub auto_number_prefix: Option<String>,
     #[serde(default)]
     pub auto_number_width: Option<i64>,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub readonly: bool,
+    #[serde(default)]
+    pub hidden: bool,
+    #[serde(default)]
+    pub searchable: bool,
+    #[serde(default)]
+    pub sortable: bool,
+    #[serde(default)]
+    pub filterable: bool,
+    #[serde(default)]
+    pub indexed: bool,
+    #[serde(default)]
+    pub precision: Option<i64>,
+    #[serde(default)]
+    pub help_text: Option<String>,
 }
 
 async fn update_field(
@@ -570,6 +641,16 @@ async fn update_field(
             default_value: input.default_value.clone(),
             auto_number_prefix: input.auto_number_prefix.clone(),
             auto_number_width: input.auto_number_width,
+            label: input.label.clone(),
+            description: input.description.clone(),
+            readonly: input.readonly,
+            hidden: input.hidden,
+            searchable: input.searchable,
+            sortable: input.sortable,
+            filterable: input.filterable,
+            indexed: input.indexed,
+            precision: input.precision,
+            help_text: input.help_text.clone(),
         },
     )
     .await

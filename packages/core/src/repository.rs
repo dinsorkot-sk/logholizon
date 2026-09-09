@@ -13,6 +13,8 @@ pub struct Entity {
     pub id: String,
     pub name: String,
     pub label: String,
+    pub description: String,
+    pub settings: Value,
     pub module: Option<String>,
 }
 
@@ -20,6 +22,8 @@ pub struct Entity {
 pub struct Field {
     pub id: String,
     pub name: String,
+    pub label: String,
+    pub description: String,
     pub r#type: String,
     pub required: bool,
     pub is_status: bool,
@@ -35,6 +39,14 @@ pub struct Field {
     pub default_value: Option<String>,
     pub auto_number_prefix: Option<String>,
     pub auto_number_width: Option<i64>,
+    pub readonly: bool,
+    pub hidden: bool,
+    pub searchable: bool,
+    pub sortable: bool,
+    pub filterable: bool,
+    pub indexed: bool,
+    pub precision: Option<i64>,
+    pub help_text: String,
     pub options: Vec<FieldOption>,
 }
 
@@ -50,6 +62,8 @@ pub struct EntityDetail {
     pub id: String,
     pub name: String,
     pub label: String,
+    pub description: String,
+    pub settings: Value,
     pub module: Option<String>,
     pub fields: Vec<Field>,
 }
@@ -68,6 +82,8 @@ pub struct EntityWithPermission {
 pub struct FieldWithPermission {
     pub id: String,
     pub name: String,
+    pub label: String,
+    pub description: String,
     pub r#type: String,
     pub required: bool,
     pub is_status: bool,
@@ -83,6 +99,14 @@ pub struct FieldWithPermission {
     pub default_value: Option<String>,
     pub auto_number_prefix: Option<String>,
     pub auto_number_width: Option<i64>,
+    pub readonly: bool,
+    pub hidden: bool,
+    pub searchable: bool,
+    pub sortable: bool,
+    pub filterable: bool,
+    pub indexed: bool,
+    pub precision: Option<i64>,
+    pub help_text: String,
     pub options: Vec<FieldOption>,
     pub can_view: bool,
     pub can_edit: bool,
@@ -747,12 +771,14 @@ async fn materialize_module_definition(
             .unwrap_or(name);
         let entity_id = format!("{}_{}", module.id, name);
         sqlx::query(
-            "INSERT INTO _meta_entity (id, name, label, module, module_id) VALUES (?, ?, ?, ?, ?) \
-             ON CONFLICT(id) DO UPDATE SET label = excluded.label, module = excluded.module, module_id = excluded.module_id",
+            "INSERT INTO _meta_entity (id, name, label, description, settings, module, module_id) VALUES (?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(id) DO UPDATE SET label = excluded.label, description = excluded.description, settings = excluded.settings, module = excluded.module, module_id = excluded.module_id",
         )
         .bind(&entity_id)
         .bind(name)
         .bind(label)
+        .bind(entity.get("description").and_then(Value::as_str).unwrap_or(""))
+        .bind(entity.get("settings").cloned().unwrap_or_else(|| Value::Object(Default::default())).to_string())
         .bind(&module.label)
         .bind(&module.id)
         .execute(&mut **tx)
@@ -800,12 +826,14 @@ async fn materialize_module_definition(
                 let rules = field_rules_from_definition(field);
                 let field_id = format!("{entity_id}_{field_name}");
                 sqlx::query(
-                    "INSERT INTO _meta_field (id, entity_id, name, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-                     ON CONFLICT(id) DO UPDATE SET type = excluded.type, required = excluded.required, is_status = excluded.is_status, position = excluded.position, ref_entity = excluded.ref_entity, computed_expr = excluded.computed_expr, is_unique = excluded.is_unique, min_value = excluded.min_value, max_value = excluded.max_value, pattern = excluded.pattern, min_length = excluded.min_length, max_length = excluded.max_length, default_value = excluded.default_value, auto_number_prefix = excluded.auto_number_prefix, auto_number_width = excluded.auto_number_width",
+                    "INSERT INTO _meta_field (id, entity_id, name, label, description, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width, readonly, hidden, searchable, sortable, filterable, indexed, precision, help_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                     ON CONFLICT(id) DO UPDATE SET label = excluded.label, description = excluded.description, type = excluded.type, required = excluded.required, is_status = excluded.is_status, position = excluded.position, ref_entity = excluded.ref_entity, computed_expr = excluded.computed_expr, is_unique = excluded.is_unique, min_value = excluded.min_value, max_value = excluded.max_value, pattern = excluded.pattern, min_length = excluded.min_length, max_length = excluded.max_length, default_value = excluded.default_value, auto_number_prefix = excluded.auto_number_prefix, auto_number_width = excluded.auto_number_width, readonly = excluded.readonly, hidden = excluded.hidden, searchable = excluded.searchable, sortable = excluded.sortable, filterable = excluded.filterable, indexed = excluded.indexed, precision = excluded.precision, help_text = excluded.help_text",
                 )
                 .bind(&field_id)
                 .bind(&entity_id)
                 .bind(field_name)
+                .bind(field.get("label").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).unwrap_or(field_name))
+                .bind(field.get("description").and_then(Value::as_str).unwrap_or(""))
                 .bind(field_type)
                 .bind(required as i64)
                 .bind(is_status as i64)
@@ -821,6 +849,14 @@ async fn materialize_module_definition(
                 .bind(rules.default_value.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
                 .bind(rules.auto_number_prefix.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
                 .bind(rules.auto_number_width)
+                .bind(field.get("readonly").and_then(Value::as_bool).unwrap_or(false) as i64)
+                .bind(field.get("hidden").and_then(Value::as_bool).unwrap_or(false) as i64)
+                .bind(field.get("searchable").and_then(Value::as_bool).unwrap_or(false) as i64)
+                .bind(field.get("sortable").and_then(Value::as_bool).unwrap_or(false) as i64)
+                .bind(field.get("filterable").and_then(Value::as_bool).unwrap_or(false) as i64)
+                .bind(field.get("indexed").and_then(Value::as_bool).unwrap_or(false) as i64)
+                .bind(field.get("precision").and_then(Value::as_i64))
+                .bind(field.get("help_text").and_then(Value::as_str).unwrap_or(""))
                 .execute(&mut **tx)
                 .await?;
                 for role in ["admin", "user"] {
@@ -1399,7 +1435,7 @@ pub async fn list_entities(pool: &SqlitePool) -> Result<Vec<Entity>> {
 
 pub async fn list_entities_for_role(pool: &SqlitePool, role: &str) -> Result<Vec<Entity>> {
     let rows = sqlx::query(
-        "SELECT e.id, e.name, e.label, e.module FROM _meta_entity e \
+        "SELECT e.id, e.name, e.label, e.description, e.settings, e.module FROM _meta_entity e \
          LEFT JOIN _entity_permission p ON p.entity_id = e.id AND p.role = ? \
          WHERE COALESCE(p.can_view, 1) != 0 ORDER BY e.name",
     )
@@ -1413,6 +1449,8 @@ pub async fn list_entities_for_role(pool: &SqlitePool, role: &str) -> Result<Vec
             id: row.try_get("id")?,
             name: row.try_get("name")?,
             label: row.try_get("label")?,
+            description: row.try_get("description")?,
+            settings: serde_json::from_str(row.try_get::<String, _>("settings")?.as_str())?,
             module: row.try_get("module")?,
         });
     }
@@ -1443,22 +1481,28 @@ pub async fn create_entity(pool: &SqlitePool, id: &str, name: &str, label: &str)
         id: id.to_string(),
         name: name.to_string(),
         label: label.to_string(),
+        description: String::new(),
+        settings: Value::Object(Default::default()),
         module: None,
     })
 }
 
 pub async fn get_entity_detail(pool: &SqlitePool, entity_id: &str) -> Result<EntityDetail> {
-    let entity = sqlx::query("SELECT id, name, label, module FROM _meta_entity WHERE id = ?")
-        .bind(entity_id)
-        .fetch_optional(pool)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("entity not found: {entity_id}")))?;
+    let entity = sqlx::query(
+        "SELECT id, name, label, description, settings, module FROM _meta_entity WHERE id = ?",
+    )
+    .bind(entity_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("entity not found: {entity_id}")))?;
     use sqlx::Row;
     let fields = list_fields(pool, entity_id).await?;
     Ok(EntityDetail {
         id: entity.try_get("id")?,
         name: entity.try_get("name")?,
         label: entity.try_get("label")?,
+        description: entity.try_get("description")?,
+        settings: serde_json::from_str(entity.try_get::<String, _>("settings")?.as_str())?,
         module: entity.try_get("module")?,
         fields,
     })
@@ -1466,7 +1510,7 @@ pub async fn get_entity_detail(pool: &SqlitePool, entity_id: &str) -> Result<Ent
 
 pub async fn list_fields(pool: &SqlitePool, entity_id: &str) -> Result<Vec<Field>> {
     let rows = sqlx::query(
-        "SELECT id, name, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width FROM _meta_field WHERE entity_id = ? ORDER BY position, name",
+        "SELECT id, name, label, description, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width, readonly, hidden, searchable, sortable, filterable, indexed, precision, help_text FROM _meta_field WHERE entity_id = ? ORDER BY position, name",
     )
     .bind(entity_id)
     .fetch_all(pool)
@@ -1479,6 +1523,8 @@ pub async fn list_fields(pool: &SqlitePool, entity_id: &str) -> Result<Vec<Field
         fields.push(Field {
             id: field_id,
             name: row.try_get("name")?,
+            label: row.try_get("label")?,
+            description: row.try_get("description")?,
             r#type: row.try_get("type")?,
             required: row.try_get::<i64, _>("required")? != 0,
             is_status: row.try_get::<i64, _>("is_status")? != 0,
@@ -1494,6 +1540,14 @@ pub async fn list_fields(pool: &SqlitePool, entity_id: &str) -> Result<Vec<Field
             default_value: row.try_get("default_value")?,
             auto_number_prefix: row.try_get("auto_number_prefix")?,
             auto_number_width: row.try_get("auto_number_width")?,
+            readonly: row.try_get::<i64, _>("readonly")? != 0,
+            hidden: row.try_get::<i64, _>("hidden")? != 0,
+            searchable: row.try_get::<i64, _>("searchable")? != 0,
+            sortable: row.try_get::<i64, _>("sortable")? != 0,
+            filterable: row.try_get::<i64, _>("filterable")? != 0,
+            indexed: row.try_get::<i64, _>("indexed")? != 0,
+            precision: row.try_get("precision")?,
+            help_text: row.try_get("help_text")?,
             options,
         });
     }
@@ -1614,6 +1668,8 @@ pub async fn get_entity_with_permission(
             FieldWithPermission {
                 id: f.id,
                 name: f.name,
+                label: f.label,
+                description: f.description,
                 r#type: f.r#type,
                 required: f.required,
                 is_status: f.is_status,
@@ -1629,6 +1685,14 @@ pub async fn get_entity_with_permission(
                 default_value: f.default_value,
                 auto_number_prefix: f.auto_number_prefix,
                 auto_number_width: f.auto_number_width,
+                readonly: f.readonly,
+                hidden: f.hidden,
+                searchable: f.searchable,
+                sortable: f.sortable,
+                filterable: f.filterable,
+                indexed: f.indexed,
+                precision: f.precision,
+                help_text: f.help_text,
                 options: f.options,
                 can_view,
                 can_edit,
@@ -2340,11 +2404,36 @@ pub async fn update_entity(
         id: id.to_string(),
         name: name.to_string(),
         label: label.to_string(),
+        description: String::new(),
+        settings: Value::Object(Default::default()),
         module: module
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_string),
     })
+}
+
+pub async fn update_entity_metadata(
+    pool: &SqlitePool,
+    id: &str,
+    description: Option<&str>,
+    settings: Option<&Value>,
+) -> Result<EntityDetail> {
+    require_entity(pool, id).await?;
+    if let Some(settings) = settings {
+        if !settings.is_object() {
+            return Err(
+                AppError::BadRequest("entity settings must be a JSON object".into()).into(),
+            );
+        }
+    }
+    sqlx::query("UPDATE _meta_entity SET description = COALESCE(?, description), settings = COALESCE(?, settings) WHERE id = ?")
+        .bind(description.map(str::trim))
+        .bind(settings.map(Value::to_string))
+        .bind(id)
+        .execute(pool)
+        .await?;
+    get_entity_detail(pool, id).await
 }
 
 pub async fn delete_entity(pool: &SqlitePool, id: &str) -> Result<()> {
@@ -2383,6 +2472,16 @@ pub struct FieldRules {
     pub default_value: Option<String>,
     pub auto_number_prefix: Option<String>,
     pub auto_number_width: Option<i64>,
+    pub label: Option<String>,
+    pub description: Option<String>,
+    pub readonly: bool,
+    pub hidden: bool,
+    pub searchable: bool,
+    pub sortable: bool,
+    pub filterable: bool,
+    pub indexed: bool,
+    pub precision: Option<i64>,
+    pub help_text: Option<String>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2443,11 +2542,13 @@ pub async fn create_field_with_rules(
     .await?;
     let field_id = format!("{entity_id}_{name}");
     sqlx::query(
-        "INSERT INTO _meta_field (id, entity_id, name, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO _meta_field (id, entity_id, name, label, description, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width, readonly, hidden, searchable, sortable, filterable, indexed, precision, help_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&field_id)
     .bind(entity_id)
     .bind(name)
+    .bind(rules.label.as_deref().unwrap_or(name))
+    .bind(rules.description.as_deref().unwrap_or(""))
     .bind(field_type)
     .bind(required as i64)
     .bind(is_status as i64)
@@ -2463,6 +2564,14 @@ pub async fn create_field_with_rules(
     .bind(rules.default_value.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
     .bind(rules.auto_number_prefix.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
     .bind(rules.auto_number_width)
+    .bind(rules.readonly as i64)
+    .bind(rules.hidden as i64)
+    .bind(rules.searchable as i64)
+    .bind(rules.sortable as i64)
+    .bind(rules.filterable as i64)
+    .bind(rules.indexed as i64)
+    .bind(rules.precision)
+    .bind(rules.help_text.as_deref().unwrap_or(""))
     .execute(pool)
     .await?;
     // Default field permissions: both roles can view and edit.
@@ -2480,7 +2589,7 @@ pub async fn create_field_with_rules(
 
 pub async fn get_field(pool: &SqlitePool, field_id: &str) -> Result<Field> {
     let row = sqlx::query(
-        "SELECT id, name, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width FROM _meta_field WHERE id = ?",
+        "SELECT id, name, label, description, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width, readonly, hidden, searchable, sortable, filterable, indexed, precision, help_text FROM _meta_field WHERE id = ?",
     )
     .bind(field_id)
     .fetch_optional(pool)
@@ -2491,6 +2600,8 @@ pub async fn get_field(pool: &SqlitePool, field_id: &str) -> Result<Field> {
     Ok(Field {
         id: row.try_get("id")?,
         name: row.try_get("name")?,
+        label: row.try_get("label")?,
+        description: row.try_get("description")?,
         r#type: row.try_get("type")?,
         required: row.try_get::<i64, _>("required")? != 0,
         is_status: row.try_get::<i64, _>("is_status")? != 0,
@@ -2506,6 +2617,14 @@ pub async fn get_field(pool: &SqlitePool, field_id: &str) -> Result<Field> {
         default_value: row.try_get("default_value")?,
         auto_number_prefix: row.try_get("auto_number_prefix")?,
         auto_number_width: row.try_get("auto_number_width")?,
+        readonly: row.try_get::<i64, _>("readonly")? != 0,
+        hidden: row.try_get::<i64, _>("hidden")? != 0,
+        searchable: row.try_get::<i64, _>("searchable")? != 0,
+        sortable: row.try_get::<i64, _>("sortable")? != 0,
+        filterable: row.try_get::<i64, _>("filterable")? != 0,
+        indexed: row.try_get::<i64, _>("indexed")? != 0,
+        precision: row.try_get("precision")?,
+        help_text: row.try_get("help_text")?,
         options,
     })
 }
@@ -2559,9 +2678,11 @@ pub async fn update_field_with_rules(
     validate_computed_field(field_type, computed_expr)?;
     validate_field_rules(field_type, rules)?;
     let result = sqlx::query(
-        "UPDATE _meta_field SET name = ?, type = ?, required = ?, is_status = ?, ref_entity = ?, computed_expr = ?, is_unique = ?, min_value = ?, max_value = ?, pattern = ?, min_length = ?, max_length = ?, default_value = ?, auto_number_prefix = ?, auto_number_width = ? WHERE id = ?",
+        "UPDATE _meta_field SET name = ?, label = ?, description = ?, type = ?, required = ?, is_status = ?, ref_entity = ?, computed_expr = ?, is_unique = ?, min_value = ?, max_value = ?, pattern = ?, min_length = ?, max_length = ?, default_value = ?, auto_number_prefix = ?, auto_number_width = ?, readonly = ?, hidden = ?, searchable = ?, sortable = ?, filterable = ?, indexed = ?, precision = ?, help_text = ? WHERE id = ?",
     )
     .bind(name)
+    .bind(rules.label.as_deref().unwrap_or(name))
+    .bind(rules.description.as_deref().unwrap_or(""))
     .bind(field_type)
     .bind(required as i64)
     .bind(is_status as i64)
@@ -2576,6 +2697,14 @@ pub async fn update_field_with_rules(
     .bind(rules.default_value.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
     .bind(rules.auto_number_prefix.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
     .bind(rules.auto_number_width)
+    .bind(rules.readonly as i64)
+    .bind(rules.hidden as i64)
+    .bind(rules.searchable as i64)
+    .bind(rules.sortable as i64)
+    .bind(rules.filterable as i64)
+    .bind(rules.indexed as i64)
+    .bind(rules.precision)
+    .bind(rules.help_text.as_deref().unwrap_or(""))
     .bind(field_id)
     .execute(pool)
     .await?;
@@ -2755,6 +2884,43 @@ async fn validate_reference_field(
 fn field_rules_from_definition(field: &Value) -> FieldRules {
     let rules = field.get("rules");
     FieldRules {
+        label: field
+            .get("label")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        description: field
+            .get("description")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        readonly: field
+            .get("readonly")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        hidden: field
+            .get("hidden")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        searchable: field
+            .get("searchable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        sortable: field
+            .get("sortable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        filterable: field
+            .get("filterable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        indexed: field
+            .get("indexed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        precision: field.get("precision").and_then(Value::as_i64),
+        help_text: field
+            .get("help_text")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         is_unique: field
             .get("unique")
             .and_then(Value::as_bool)
@@ -2853,6 +3019,16 @@ fn field_rules_from_definition(field: &Value) -> FieldRules {
 }
 
 fn validate_field_rules(field_type: &str, rules: &FieldRules) -> Result<()> {
+    if let Some(precision) = rules.precision {
+        if !(0..=38).contains(&precision) {
+            return Err(AppError::BadRequest("precision must be between 0 and 38".into()).into());
+        }
+        if !metadata::is_numeric_type(field_type) {
+            return Err(
+                AppError::BadRequest("precision is only valid for number fields".into()).into(),
+            );
+        }
+    }
     if let Some(min) = rules.min_value {
         if !metadata::is_numeric_type(field_type) {
             return Err(

@@ -9,7 +9,7 @@ const UBadge = resolveComponent('UBadge')
 
 type Entity = { id: string; name: string; label: string; module?: string | null }
 type FieldOption = { id: string; value: string; label: string }
-type Field = { id: string; name: string; type: string; required: boolean; is_status: boolean; position: number; ref_entity?: string | null; computed_expr?: string | null; options: FieldOption[] }
+type Field = { id: string; name: string; label: string; description: string; type: string; required: boolean; is_status: boolean; position: number; ref_entity?: string | null; computed_expr?: string | null; is_unique: boolean; min_value?: number | null; max_value?: number | null; pattern?: string | null; min_length?: number | null; max_length?: number | null; default_value?: string | null; auto_number_prefix?: string | null; auto_number_width?: number | null; readonly: boolean; hidden: boolean; searchable: boolean; sortable: boolean; filterable: boolean; indexed: boolean; precision?: number | null; help_text: string; options: FieldOption[] }
 type EntityDetail = Entity & { fields: Field[] }
 type WorkflowState = { id: string; name: string; label: string; position: number }
 type WorkflowTransition = { id: string; action: string; from_state: string; to_state: string }
@@ -478,7 +478,7 @@ async function createEntity() {
 
 // --- Edit entity ---
 const editOpen = ref(false)
-const editForm = reactive({ name: '', label: '', module: '' })
+const editForm = reactive({ name: '', label: '', module: '', description: '', settingsText: '{}' })
 const editing = ref(false)
 const editError = ref('')
 
@@ -502,7 +502,7 @@ async function saveEntity() {
   try {
     await $fetch(`/api/meta/entities/${encodeURIComponent(detail.value.id)}`, {
       method: 'PUT',
-      body: { ...editForm }
+      body: { name: editForm.name, label: editForm.label, module: editForm.module || null, description: editForm.description || null, settings }
     })
     editOpen.value = false
     await refresh()
@@ -543,7 +543,7 @@ async function removeEntity() {
 // --- Field editor ---
 const fieldOpen = ref(false)
 const editingField = ref<Field | null>(null)
-const fieldForm = reactive({ name: '', type: 'text', required: false, is_status: false, ref_entity: '', computed_expr: '' })
+const fieldForm = reactive({ name: '', label: '', description: '', type: 'text', required: false, is_status: false, ref_entity: '', computed_expr: '', is_unique: false, min_value: null as number | null, max_value: null as number | null, pattern: '', min_length: null as number | null, max_length: null as number | null, default_value: '', auto_number_prefix: '', auto_number_width: null as number | null, readonly: false, hidden: false, searchable: false, sortable: false, filterable: false, indexed: false, precision: null as number | null, help_text: '' })
 const fieldError = ref('')
 const savingField = ref(false)
 const newOption = reactive({ value: '', label: '' })
@@ -600,7 +600,7 @@ async function saveField() {
     if (editingField.value) {
       await $fetch(`/api/meta/fields/${encodeURIComponent(editingField.value.id)}`, {
         method: 'PUT',
-        body: { name: fieldForm.name, type: fieldForm.type, required: fieldForm.required, is_status: fieldForm.is_status, ref_entity: fieldForm.ref_entity || null, computed_expr: fieldForm.computed_expr || null }
+        body: { name: fieldForm.name, label: fieldForm.label || null, description: fieldForm.description || null, type: fieldForm.type, required: fieldForm.required, is_status: fieldForm.is_status, ref_entity: fieldForm.ref_entity || null, computed_expr: fieldForm.computed_expr || null, is_unique: fieldForm.is_unique, min_value: fieldForm.min_value, max_value: fieldForm.max_value, pattern: fieldForm.pattern || null, min_length: fieldForm.min_length, max_length: fieldForm.max_length, default_value: fieldForm.default_value || null, auto_number_prefix: fieldForm.auto_number_prefix || null, auto_number_width: fieldForm.auto_number_width, readonly: fieldForm.readonly, hidden: fieldForm.hidden, searchable: fieldForm.searchable, sortable: fieldForm.sortable, filterable: fieldForm.filterable, indexed: fieldForm.indexed, precision: fieldForm.precision, help_text: fieldForm.help_text || null }
       })
       fieldOpen.value = false
       await refreshDetail()
@@ -1330,6 +1330,8 @@ const fieldColumns: TableColumn<Field>[] = [
             <UFormField label="Label">
               <UInput v-model="editForm.label" />
             </UFormField>
+            <UFormField label="Description"><UTextarea v-model="editForm.description" placeholder="What this entity represents" /></UFormField>
+            <UFormField label="Settings" hint="JSON object for runtime/entity configuration"><UTextarea v-model="editForm.settingsText" :rows="5" class="font-mono text-xs" /></UFormField>
             <UFormField label="Module" hint="Groups entities in the sidebar, e.g. Stock">
               <UInput v-model="editForm.module" placeholder="e.g. Stock" />
             </UFormField>
@@ -1378,6 +1380,28 @@ const fieldColumns: TableColumn<Field>[] = [
             <UFormField v-if="fieldForm.type === 'reference'" label="Target entity" hint="Documents to pick from">
               <USelectMenu v-model="fieldForm.ref_entity" :items="(entities || []).map(e => ({ label: e.label, value: e.id }))" value-key="value" placeholder="Select entity…" class="w-full" />
             </UFormField>
+            <UFormField label="Label"><UInput v-model="fieldForm.label" placeholder="Title" /></UFormField>
+            <UFormField label="Description"><UTextarea v-model="fieldForm.description" placeholder="What this field means" /></UFormField>
+            <div class="grid grid-cols-2 gap-3">
+              <UFormField label="Required"><USwitch v-model="fieldForm.required" /></UFormField>
+              <UFormField label="Readonly"><USwitch v-model="fieldForm.readonly" /></UFormField>
+              <UFormField label="Hidden"><USwitch v-model="fieldForm.hidden" /></UFormField>
+              <UFormField label="Searchable"><USwitch v-model="fieldForm.searchable" /></UFormField>
+              <UFormField label="Sortable"><USwitch v-model="fieldForm.sortable" /></UFormField>
+              <UFormField label="Filterable"><USwitch v-model="fieldForm.filterable" /></UFormField>
+              <UFormField label="Indexed"><USwitch v-model="fieldForm.indexed" /></UFormField>
+              <UFormField label="Unique"><USwitch v-model="fieldForm.is_unique" /></UFormField>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <UFormField label="Precision"><UInput v-model.number="fieldForm.precision" type="number" min="0" /></UFormField>
+              <UFormField label="Default"><UInput v-model="fieldForm.default_value" placeholder="Default value" /></UFormField>
+              <UFormField label="Min"><UInput v-model.number="fieldForm.min_value" type="number" /></UFormField>
+              <UFormField label="Max"><UInput v-model.number="fieldForm.max_value" type="number" /></UFormField>
+              <UFormField label="Min length"><UInput v-model.number="fieldForm.min_length" type="number" min="0" /></UFormField>
+              <UFormField label="Max length"><UInput v-model.number="fieldForm.max_length" type="number" min="0" /></UFormField>
+            </div>
+            <UFormField label="Pattern"><UInput v-model="fieldForm.pattern" placeholder="Regular expression" /></UFormField>
+            <UFormField label="Help text"><UTextarea v-model="fieldForm.help_text" placeholder="Shown to users while editing" /></UFormField>
             <UFormField v-if="fieldForm.type === 'computed'" label="Expression" hint="Template with {field} placeholders, e.g. {title} - {sku}">
               <UInput v-model="fieldForm.computed_expr" placeholder="{title} - {sku}" />
             </UFormField>
