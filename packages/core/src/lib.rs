@@ -12,3 +12,5 @@ pub mod repository;
 pub mod seed;
 
 pub use config::Config;
+pub mod dynamic_crud;
+pub mod dynamic_http;

@@ -273,6 +273,20 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
             "/v1/entities/{id}/import/confirm",
             axum::routing::post(confirm_import_for_user),
         )
+        .route(
+            "/v1/modules/{module}/entities/{entity}",
+            get(crate::dynamic_http::list).post(crate::dynamic_http::create),
+        )
+        .route(
+            "/v1/modules/{module}/entities/{entity}/{id}",
+            get(crate::dynamic_http::get)
+                .put(crate::dynamic_http::update)
+                .delete(crate::dynamic_http::delete),
+        )
+        .route(
+            "/v1/modules/{module}/entities/{entity}/bulk-delete",
+            axum::routing::post(crate::dynamic_http::bulk_delete),
+        )
         .route("/v1/documents", get(list_documents).post(create_document))
         .route(
             "/v1/documents/{id}",
