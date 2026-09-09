@@ -4,6 +4,7 @@ use serde_json::Value;
 use sqlx::SqlitePool;
 
 use crate::error::AppError;
+use crate::formula;
 use crate::metadata;
 
 pub use crate::module_lifecycle::{disable_module, enable_module, submit_module_for_review};
@@ -551,12 +552,26 @@ pub fn validate_module_definition(definition: &Value) -> Result<()> {
                     .into());
                 }
             }
-            if field_type == "computed" {
+            if matches!(field_type, "computed" | "formula") {
                 let expr = field
                     .get("computed_expr")
                     .and_then(Value::as_str)
                     .unwrap_or("");
-                validate_computed_field(field_type, Some(expr))?;
+                if field_type == "computed" && (expr.contains("[") || expr.contains("]")) {
+                    continue;
+                }
+                let names: std::collections::HashSet<String> = entities
+                    .iter()
+                    .filter(|e| e.get("name").and_then(Value::as_str) == Some(name))
+                    .flat_map(|e| {
+                        e.get("fields")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                    })
+                    .filter_map(|f| f.get("name").and_then(Value::as_str).map(str::to_string))
+                    .collect();
+                formula::validate(expr, &names)?;
             }
             validate_field_rules(field_type, &field_rules_from_definition(field))?;
         }
@@ -1767,32 +1782,9 @@ pub async fn list_entity_options(
     Ok(options)
 }
 
-/// Apply computed fields to a stored payload (on read). Each computed
-/// field's `{placeholder}` template is interpolated from the payload.
-pub fn apply_computed_fields(fields: &[Field], payload: &Value) -> Value {
-    let computed: Vec<(&str, &str)> = fields
-        .iter()
-        .filter_map(|f| {
-            if f.r#type == "computed" {
-                f.computed_expr
-                    .as_deref()
-                    .map(|expr| (f.name.as_str(), expr))
-            } else {
-                None
-            }
-        })
-        .collect();
-    if computed.is_empty() {
-        return payload.clone();
-    }
-    let mut object = payload.as_object().cloned().unwrap_or_default();
-    for (name, expr) in computed {
-        object.insert(
-            name.to_string(),
-            Value::String(compute_field_value(expr, payload)),
-        );
-    }
-    Value::Object(object)
+/// Evaluate computed/formula fields on read. Derived values are never persisted.
+pub fn apply_computed_fields(fields: &[Field], payload: &Value) -> Result<Value> {
+    formula::apply(fields, payload)
 }
 
 pub async fn get_field_permissions(
@@ -2534,6 +2526,15 @@ pub async fn create_field_with_rules(
     if !exists {
         return Err(AppError::NotFound(format!("entity not found: {entity_id}")).into());
     }
+    if matches!(field_type, "computed" | "formula")
+        && !computed_expr
+            .map(|e| e.contains('[') || e.contains(']'))
+            .unwrap_or(false)
+    {
+        if let Some(expr) = computed_expr {
+            formula::validate_syntax(expr)?;
+        }
+    }
     let position: i64 = sqlx::query_scalar(
         "SELECT COALESCE(MAX(position), -1) + 1 FROM _meta_field WHERE entity_id = ?",
     )
@@ -2677,6 +2678,21 @@ pub async fn update_field_with_rules(
     validate_reference_field(pool, &entity_id, field_type, ref_entity).await?;
     validate_computed_field(field_type, computed_expr)?;
     validate_field_rules(field_type, rules)?;
+    if matches!(field_type, "computed" | "formula")
+        && !computed_expr
+            .map(|e| e.contains('[') || e.contains(']'))
+            .unwrap_or(false)
+    {
+        let mut names: std::collections::HashSet<String> = list_fields(pool, &entity_id)
+            .await?
+            .into_iter()
+            .map(|f| f.name)
+            .collect();
+        names.insert(name.to_string());
+        if let Some(expr) = computed_expr {
+            formula::validate(expr, &names)?;
+        }
+    }
     let result = sqlx::query(
         "UPDATE _meta_field SET name = ?, label = ?, description = ?, type = ?, required = ?, is_status = ?, ref_entity = ?, computed_expr = ?, is_unique = ?, min_value = ?, max_value = ?, pattern = ?, min_length = ?, max_length = ?, default_value = ?, auto_number_prefix = ?, auto_number_width = ?, readonly = ?, hidden = ?, searchable = ?, sortable = ?, filterable = ?, indexed = ?, precision = ?, help_text = ? WHERE id = ?",
     )
@@ -3122,7 +3138,7 @@ fn validate_field_rules(field_type: &str, rules: &FieldRules) -> Result<()> {
 }
 
 fn validate_computed_field(field_type: &str, computed_expr: Option<&str>) -> Result<()> {
-    if field_type != "computed" {
+    if !matches!(field_type, "computed" | "formula") {
         if computed_expr
             .map(str::trim)
             .filter(|s| !s.is_empty())
@@ -3135,16 +3151,17 @@ fn validate_computed_field(field_type: &str, computed_expr: Option<&str>) -> Res
         }
         return Ok(());
     }
-    let expr = computed_expr
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| AppError::BadRequest("computed fields require a computed_expr".into()))?;
-    if !expr.contains('{') || !expr.contains('}') {
-        return Err(AppError::BadRequest(
-            "computed_expr must reference fields like {title}".into(),
-        )
-        .into());
+    let Some(expr) = computed_expr.map(str::trim).filter(|s| !s.is_empty()) else {
+        if field_type == "formula" {
+            return Ok(());
+        }
+        return Err(AppError::BadRequest("computed fields require a computed_expr".into()).into());
+    };
+    // Legacy computed templates support literal square brackets, e.g. `{title} [{status}]`.
+    if field_type == "computed" && (expr.contains('[') || expr.contains(']')) {
+        return Ok(());
     }
+    formula::validate_syntax(expr)?;
     Ok(())
 }
 
@@ -3286,7 +3303,7 @@ pub async fn get_document(pool: &SqlitePool, id: &str) -> Result<Document> {
     Ok(Document {
         id: row.try_get("id")?,
         entity_id,
-        payload: apply_computed_fields(&fields, &payload),
+        payload: apply_computed_fields(&fields, &payload)?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
     })
@@ -4047,7 +4064,7 @@ pub async fn list_documents_as_role(
     let mut items = Vec::new();
     for row in rows {
         let payload: Value = serde_json::from_str(&row.try_get::<String, _>("payload")?)?;
-        let with_computed = apply_computed_fields(&fields, &payload);
+        let with_computed = apply_computed_fields(&fields, &payload)?;
         items.push(Document {
             id: row.try_get("id")?,
             entity_id: row.try_get("entity_id")?,
@@ -5571,10 +5588,10 @@ async fn validate_payload_for_role_excluding(
         .collect();
     for field in &visible {
         // Computed fields are derived on read; never accepted from clients.
-        if field.r#type == "computed" {
+        if matches!(field.r#type.as_str(), "computed" | "formula") {
             if object.contains_key(&field.name) {
                 return Err(AppError::BadRequest(format!(
-                    "computed field is read-only: {}",
+                    "derived field is read-only: {}",
                     field.name
                 ))
                 .into());
@@ -5860,7 +5877,8 @@ fn apply_field_defaults(fields: &[Field], payload: &Value) -> Value {
     };
     let mut next = object.clone();
     for field in fields {
-        if field.r#type == "computed" || next.contains_key(&field.name) {
+        if matches!(field.r#type.as_str(), "computed" | "formula") || next.contains_key(&field.name)
+        {
             continue;
         }
         if let Some(default) = field_default_payload(field) {

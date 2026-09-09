@@ -3,6 +3,7 @@ pub mod backup;
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod formula;
 pub mod http;
 pub mod metadata;
 pub mod module_lifecycle;
