@@ -1,7 +1,7 @@
+import { coreClient } from '../../../core/client'
+
 export default defineEventHandler(async (event) => {
-  const config = useRuntimeConfig(event)
-  const id = getRouterParam(event, 'id')
-  return await $fetch(`${config.coreApiBase}/v1/meta/relations/${encodeURIComponent(id!)}`, {
-    method: 'DELETE', headers: { authorization: getHeader(event, 'authorization') || '' }
-  })
+  const id = getRouterParam(event, 'id') || ''
+  await coreClient(event).deleteRelation(id)
+  return null
 })

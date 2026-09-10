@@ -246,6 +246,20 @@ export type CoreModuleVersion = {
 
 export type CoreEvent = { id: string; entity_id: string; document_id: string | null; event_type: string; action_id: string | null; payload: Record<string, unknown>; actor: string | null; created_at: string }
 
+export type CoreRelation = {
+  id: string
+  source_entity_id: string
+  source_field_id: string | null
+  target_entity_id: string
+  target_field_id: string | null
+  name: string
+  relation_type: string
+  on_delete: string
+  created_at: string
+}
+
+export type CoreRelationLink = { relation_id: string; source_doc_id: string; target_doc_id: string }
+
 export type CoreAutomation = {
   id: string
   entity_id: string
@@ -284,6 +298,90 @@ export type CoreStatusCount = { status: string; count: number }
 export type CorePmSummary = { open: number; overdue: number; done_this_week: number; total: number }
 export type CoreAdminStatus = { version: string; database_path: string; integrity: boolean; entities: number; documents: number }
 export type CoreBackupInfo = { name: string; size: number; modified: number }
+
+export type CoreWorkflowHistoryEntry = {
+  id: string
+  entity_id: string
+  document_id: string
+  transition_id: string
+  action: string
+  from_state: string
+  to_state: string
+  actor: string | null
+  created_at: string
+}
+export type CoreWorkflowHistoryList = { items: CoreWorkflowHistoryEntry[]; total: number }
+
+export type CoreObservabilityLog = {
+  id: string
+  occurred_at: string
+  level: string
+  category: string
+  action: string
+  actor: string | null
+  request_id: string | null
+  correlation_id: string | null
+  target_type: string | null
+  target_id: string | null
+  status_code: number | null
+  duration_ms: number | null
+  message: string
+  metadata: Record<string, unknown>
+}
+export type CoreObservabilityList = { total: number; items: CoreObservabilityLog[] }
+export type CoreObservabilityMetrics = {
+  observability_events: number
+  errors: number
+  security_denials: number
+  pending_automation: number
+  pending_webhooks: number
+}
+
+export type CoreNotificationTemplate = {
+  id: string
+  name: string
+  channel: string
+  subject: string
+  body: string
+  variables: Record<string, unknown>
+  active: boolean
+}
+export type CoreNotificationItem = {
+  id: string
+  user_id: string
+  channel: string
+  subject: string
+  body: string
+  data: Record<string, unknown>
+  status: string
+  attempts: number
+  last_error: string | null
+  created_at: string
+  read_at: string | null
+}
+export type CoreWebhookEndpoint = {
+  id: string
+  name: string
+  url: string
+  headers: Record<string, unknown>
+  active: boolean
+  timeout_secs: number
+  max_attempts: number
+}
+export type CoreAutomationExecution = {
+  id: string
+  automation_id: string
+  event_id: string | null
+  document_id: string | null
+  status: string
+  attempt: number
+  error: string | null
+  result: Record<string, unknown>
+  scheduled_at: string
+  started_at: string | null
+  finished_at: string | null
+  created_at: string
+}
 export type CoreMultiImportSheet = {
   entity_id: string
   rows: { id: string; payload: Record<string, unknown> }[]
@@ -732,6 +830,10 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       request<CoreAutomation[]>(`/v1/meta/entities/${encodeURIComponent(entityId)}/automations`),
     createAutomation: (entityId: string, input: { trigger: string; action?: string; target_url: string; active?: boolean }): Promise<CoreAutomation> =>
       request<CoreAutomation>(`/v1/meta/entities/${encodeURIComponent(entityId)}/automations`, { method: 'POST', body: input }),
+    updateAutomation: (id: string, input: { condition?: string; schedule?: string; actions?: unknown; max_attempts?: number; active?: boolean }): Promise<CoreAutomation> =>
+      request<CoreAutomation>(`/v1/meta/automations/${encodeURIComponent(id)}`, { method: 'PUT', body: input }),
+    listAutomationExecutions: (id: string): Promise<CoreAutomationExecution[]> =>
+      request<CoreAutomationExecution[]>(`/v1/meta/automations/${encodeURIComponent(id)}/executions`),
     deleteAutomation: (id: string): Promise<void> =>
       request<void>(`/v1/meta/automations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     listModuleActions: (entityId: string): Promise<CoreModuleAction[]> =>
@@ -742,6 +844,71 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       request<void>(`/v1/meta/actions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     listEvents: (entityId: string, documentId?: string): Promise<CoreEvent[]> =>
       request<CoreEvent[]>(`/v1/meta/entities/${encodeURIComponent(entityId)}/events${documentId ? `?document_id=${encodeURIComponent(documentId)}` : ''}`),
+    listWorkflowHistory: (id: string, limit = 50, offset = 0): Promise<CoreWorkflowHistoryList> =>
+      request<CoreWorkflowHistoryList>(`/v1/documents/${encodeURIComponent(id)}/workflow-history`, { query: { limit, offset } }),
+    listObservabilityLogs: (query: Record<string, unknown> = {}): Promise<CoreObservabilityList> =>
+      request<CoreObservabilityList>('/v1/admin/observability/logs', { query }),
+    getObservabilityMetrics: (): Promise<CoreObservabilityMetrics> =>
+      request<CoreObservabilityMetrics>('/v1/admin/observability/metrics'),
+    listNotificationTemplates: (): Promise<CoreNotificationTemplate[]> =>
+      request<CoreNotificationTemplate[]>('/v1/meta/notification-templates'),
+    createNotificationTemplate: (input: Record<string, unknown>): Promise<CoreNotificationTemplate> =>
+      request<CoreNotificationTemplate>('/v1/meta/notification-templates', { method: 'POST', body: input }),
+    updateNotificationTemplate: (id: string, input: Record<string, unknown>): Promise<CoreNotificationTemplate> =>
+      request<CoreNotificationTemplate>(`/v1/meta/notification-templates/${encodeURIComponent(id)}`, { method: 'PUT', body: input }),
+    deleteNotificationTemplate: (id: string): Promise<void> =>
+      request<void>(`/v1/meta/notification-templates/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    listWebhooks: (): Promise<CoreWebhookEndpoint[]> =>
+      request<CoreWebhookEndpoint[]>('/v1/meta/webhooks'),
+    createWebhook: (input: Record<string, unknown>): Promise<CoreWebhookEndpoint> =>
+      request<CoreWebhookEndpoint[]>('/v1/meta/webhooks', { method: 'POST', body: input }) as unknown as Promise<CoreWebhookEndpoint>,
+    deliverWebhook: (id: string, input: { event_type: string; document_id?: string; payload?: Record<string, unknown> }): Promise<{ id: string; status: string }> =>
+      request<{ id: string; status: string }>(`/v1/meta/webhooks/${encodeURIComponent(id)}/deliver`, { method: 'POST', body: input }),
+    listMyNotifications: (unread = false): Promise<CoreNotificationItem[]> =>
+      request<CoreNotificationItem[]>('/v1/notifications', { query: unread ? { unread: 'true' } : {} }),
+    sendNotification: (input: Record<string, unknown>): Promise<{ sent: number }> =>
+      request<{ sent: number }>('/v1/notifications', { method: 'POST', body: input }),
+    markNotificationRead: (id: string): Promise<void> =>
+      request<void>(`/v1/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' }),
+    previewModulePackage: (pkg: Record<string, unknown>): Promise<Record<string, unknown>> =>
+      request<Record<string, unknown>>('/v1/modules/packages/preview', { method: 'POST', body: { package: pkg } }),
+    installModulePackage: (pkg: Record<string, unknown>): Promise<CoreModule> =>
+      request<CoreModule>('/v1/modules/packages/install', { method: 'POST', body: { package: pkg } }),
+    exportModulePackage: (id: string): Promise<Record<string, unknown>> =>
+      request<Record<string, unknown>>(`/v1/modules/${encodeURIComponent(id)}/package`),
+    uninstallModulePackage: (id: string): Promise<CoreModule> =>
+      request<CoreModule>(`/v1/modules/${encodeURIComponent(id)}/package/uninstall`, { method: 'POST' }),
+    listModuleDocuments: (module: string, entity: string, query: Record<string, unknown> = {}): Promise<CoreDocumentList> =>
+      request<CoreDocumentList>(`/v1/modules/${encodeURIComponent(module)}/entities/${encodeURIComponent(entity)}`, { query }),
+    createModuleDocument: (module: string, entity: string, id: string, payload: Record<string, unknown>): Promise<CoreDocument> =>
+      request<CoreDocument>(`/v1/modules/${encodeURIComponent(module)}/entities/${encodeURIComponent(entity)}`, { method: 'POST', body: { id, payload } }),
+    getModuleDocument: (module: string, entity: string, id: string): Promise<CoreDocument> =>
+      request<CoreDocument>(`/v1/modules/${encodeURIComponent(module)}/entities/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`),
+    updateModuleDocument: (module: string, entity: string, id: string, payload: Record<string, unknown>, expectedUpdatedAt?: string): Promise<CoreDocument> =>
+      request<CoreDocument>(`/v1/modules/${encodeURIComponent(module)}/entities/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: { payload, ...(expectedUpdatedAt ? { expected_updated_at: expectedUpdatedAt } : {}) }
+      }),
+    deleteModuleDocument: (module: string, entity: string, id: string): Promise<void> =>
+      request<void>(`/v1/modules/${encodeURIComponent(module)}/entities/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    bulkDeleteModuleDocuments: (module: string, entity: string, ids: string[]): Promise<{ deleted: number }> =>
+      request<{ deleted: number }>(`/v1/modules/${encodeURIComponent(module)}/entities/${encodeURIComponent(entity)}/bulk-delete`, { method: 'POST', body: { ids } }),
+    listRelations: (entityId: string): Promise<CoreRelation[]> =>
+      request<CoreRelation[]>(`/v1/meta/entities/${encodeURIComponent(entityId)}/relations`),
+    createRelation: (entityId: string, input: Record<string, unknown>): Promise<CoreRelation> =>
+      request<CoreRelation>(`/v1/meta/entities/${encodeURIComponent(entityId)}/relations`, { method: 'POST', body: input }),
+    getRelation: (id: string): Promise<CoreRelation> =>
+      request<CoreRelation>(`/v1/meta/relations/${encodeURIComponent(id)}`),
+    updateRelation: (id: string, input: Record<string, unknown>): Promise<CoreRelation> =>
+      request<CoreRelation>(`/v1/meta/relations/${encodeURIComponent(id)}`, { method: 'PUT', body: input }),
+    deleteRelation: (id: string): Promise<void> =>
+      request<void>(`/v1/meta/relations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    listRelationLinks: (id: string, sourceDocId: string): Promise<CoreRelationLink[]> =>
+      request<CoreRelationLink[]>(`/v1/meta/relations/${encodeURIComponent(id)}/links/${encodeURIComponent(sourceDocId)}`),
+    setRelationLinks: (id: string, sourceDocId: string, targetDocIds: string[]): Promise<CoreRelationLink[]> =>
+      request<CoreRelationLink[]>(`/v1/meta/relations/${encodeURIComponent(id)}/links/${encodeURIComponent(sourceDocId)}`, { method: 'PUT', body: { target_doc_ids: targetDocIds } }),
+    relatedDocuments: (id: string, relationId: string): Promise<Record<string, unknown>[]> =>
+      request<Record<string, unknown>[]>(`/v1/entities/${encodeURIComponent(id)}/relations/${encodeURIComponent(relationId)}`),
     executeModuleAction: (entityId: string, actionId: string, input?: { document_id?: string; payload?: Record<string, unknown>; expected_updated_at?: string }): Promise<CoreModuleActionResult> =>
       request<CoreModuleActionResult>(`/v1/entities/${encodeURIComponent(entityId)}/actions/${encodeURIComponent(actionId)}`, {
         method: 'POST',

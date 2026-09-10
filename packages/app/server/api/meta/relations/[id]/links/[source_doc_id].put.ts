@@ -1,9 +1,9 @@
+import { coreClient } from '../../../../../core/client'
+
 export default defineEventHandler(async (event) => {
-  const config = useRuntimeConfig(event)
-  const id = getRouterParam(event, 'id')
-  const sourceDocId = getRouterParam(event, 'source_doc_id')
-  return await $fetch(`${config.coreApiBase}/v1/meta/relations/${encodeURIComponent(id!)}/links/${encodeURIComponent(sourceDocId!)}`, {
-    method: 'PUT', body: await readBody(event),
-    headers: { authorization: getHeader(event, 'authorization') || '' }
-  })
+  const id = getRouterParam(event, 'id') || ''
+  const sourceDocId = getRouterParam(event, 'source_doc_id') || ''
+  const body = await readBody<{ target_doc_ids?: unknown }>(event)
+  const ids = Array.isArray(body?.target_doc_ids) ? (body.target_doc_ids as unknown[]).map(String) : []
+  return coreClient(event).setRelationLinks(id, sourceDocId, ids)
 })

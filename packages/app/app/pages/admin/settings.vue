@@ -3,6 +3,7 @@ import { h, resolveComponent } from 'vue'
 
 definePageMeta({ middleware: 'auth' })
 
+const UButton = resolveComponent('UButton')
 const UBadge = resolveComponent('UBadge')
 
 type AdminStatus = { version: string; database_path: string; integrity: boolean; entities: number; documents: number; backup_interval_hours: number; backup_keep: number }
@@ -178,8 +179,8 @@ async function restartCore() {
               { accessorKey: 'size', header: 'Size', cell: ({ row }) => formatSize(row.original.size) },
               { accessorKey: 'modified', header: 'Created', cell: ({ row }) => formatTime(row.original.modified) },
               { id: 'actions', header: () => h('span', { class: 'sr-only' }, 'Actions'), cell: ({ row }) => h('div', { class: 'flex justify-end gap-1' }, [
-                h(resolveComponent('UButton'), { size: 'xs', variant: 'ghost', icon: 'i-lucide-download', onClick: () => downloadBackup(row.original) }, () => 'Download'),
-                h(resolveComponent('UButton'), { size: 'xs', variant: 'ghost', color: 'error', onClick: () => openRestore(row.original) }, () => 'Restore')
+                h(UButton, { size: 'xs', variant: 'ghost', icon: 'i-lucide-download', onClick: () => downloadBackup(row.original) }, () => 'Download'),
+                h(UButton, { size: 'xs', variant: 'ghost', color: 'error', onClick: () => openRestore(row.original) }, () => 'Restore')
               ]) }
             ]" :get-row-id="(row: BackupInfo) => row.name" class="w-full" />
           </UCard>
@@ -203,7 +204,7 @@ async function restartCore() {
             <UTable v-else :data="deliveries.items" :columns="[
               { accessorKey: 'document_id', header: 'Document', cell: ({ row }) => h('span', { class: 'font-mono' }, row.original.document_id) },
               { accessorKey: 'action', header: 'Action', cell: ({ row }) => h('span', { class: 'font-mono' }, row.original.action) },
-              { accessorKey: 'status', header: 'Status', cell: ({ row }) => h(resolveComponent('UBadge'), { color: deliveryColor(row.original.status), variant: 'subtle' }, () => row.original.status) },
+              { accessorKey: 'status', header: 'Status', cell: ({ row }) => h(UBadge, { color: deliveryColor(row.original.status), variant: 'subtle' }, () => row.original.status) },
               { accessorKey: 'attempts', header: 'Attempts' },
               { accessorKey: 'last_error', header: 'Last error', cell: ({ row }) => h('span', { class: 'truncate text-xs text-muted', title: row.original.last_error || '' }, row.original.last_error || '—') },
               { accessorKey: 'created_at', header: 'When', cell: ({ row }) => h('span', { class: 'text-xs' }, row.original.created_at) }

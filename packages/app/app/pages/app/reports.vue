@@ -57,7 +57,7 @@ const chartItems = [
 ]
 
 const aggregateUrl = computed(() => {
-  if (!entityId.value || !groupBy.value) return ''
+  if (!entityId.value || !groupBy.value) return '/api/reports/aggregate?entity_id=__none__&group_by=__none__'
   return `/api/reports/aggregate?entity_id=${encodeURIComponent(entityId.value)}&group_by=${encodeURIComponent(groupBy.value)}`
 })
 const { data: buckets, status, error, refresh } = await useFetch<Bucket[]>(aggregateUrl, { watch: [aggregateUrl] })
@@ -94,7 +94,7 @@ function csvCell(value: string) {
 }
 
 // --- Saved reports ---
-const reportsUrl = computed(() => `/api/entities/${encodeURIComponent(entityId.value)}/reports`)
+const reportsUrl = computed(() => `/api/entities/${encodeURIComponent(entityId.value || '__none__')}/reports`)
 const { data: reports, refresh: refreshReports } = await useFetch<Report[]>(reportsUrl, { watch: [reportsUrl] })
 const reportOpen = ref(false)
 const reportForm = reactive({ name: '' })

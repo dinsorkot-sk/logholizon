@@ -2284,12 +2284,20 @@ async fn transition_document(
 async fn get_workflow_history(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Query(query): Query<ListDocumentsQuery>,
+    Query(query): Query<WorkflowHistoryQuery>,
 ) -> Result<Json<repository::WorkflowHistoryList>, AppError> {
     repository::list_workflow_history(&state.pool, &id, query.limit, query.offset)
         .await
         .map(Json)
         .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WorkflowHistoryQuery {
+    #[serde(default = "default_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
 }
 
 #[derive(Debug, Deserialize)]
