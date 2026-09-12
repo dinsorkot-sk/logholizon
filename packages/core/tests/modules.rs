@@ -61,16 +61,124 @@ fn vehicle_definition() -> serde_json::Value {
                         {"from_state": "maintenance", "to_state": "retired", "action": "retire"}
                     ]
                 },
-                "views": [{"name": "All vehicles", "config": {}}]
+                "views": [{"name": "All vehicles", "config": {}}],
+                "form_layout": {"config": {"sections": [
+                    {"id": "main", "label": "Main", "fields": ["code", "plate_number"]}
+                ]}}
             }
         ]
     })
 }
 
 #[tokio::test]
+async fn module_form_layout_names_translate_to_ids() {
+    let pool = setup().await;
+    // Unknown layout refs fail fast at draft time.
+    let bad = json!({"entities": [{"name": "a", "label": "A",
+        "fields": [{"name": "x", "type": "text"}],
+        "form_layout": {"config": {"sections": [{"id": "s", "label": "S", "fields": ["missing"]}]}}} ]});
+    assert!(repository::create_module(
+        &pool,
+        "badlayout",
+        "BadLayout",
+        None,
+        None,
+        None,
+        "alice",
+        &bad,
+        None
+    )
+    .await
+    .is_err());
+
+    let module = repository::create_module(
+        &pool,
+        "layout",
+        "Layout",
+        None,
+        None,
+        None,
+        "alice",
+        &vehicle_definition(),
+        Some("alice"),
+    )
+    .await
+    .unwrap();
+    repository::submit_module_for_review(&pool, &module.id, "alice", "user")
+        .await
+        .unwrap();
+    repository::publish_module(&pool, &module.id, "alice", "user", Some("alice"))
+        .await
+        .unwrap();
+    let vehicle_entity = format!("{}_vehicle", module.id);
+    let layout = repository::get_entity_form_layout(&pool, &vehicle_entity)
+        .await
+        .unwrap();
+    let sections = layout
+        .config
+        .get("sections")
+        .and_then(|s| s.as_array())
+        .unwrap();
+    assert_eq!(sections.len(), 1);
+    let refs: Vec<&str> = sections[0]
+        .get("fields")
+        .and_then(|f| f.as_array())
+        .unwrap()
+        .iter()
+        .filter_map(|f| f.as_str())
+        .collect();
+    // Builder-authored names translate to materialized field IDs.
+    assert_eq!(
+        refs,
+        vec![
+            format!("{vehicle_entity}_code").as_str(),
+            format!("{vehicle_entity}_plate_number").as_str(),
+        ]
+    );
+}
+
+#[tokio::test]
 async fn module_registry_publish_rollback() {
     let pool = setup().await;
     let definition = vehicle_definition();
+
+    // Drafts may start empty: the Module Builder creates the module shell
+    // first and adds entities afterwards. Review still requires completeness.
+    let empty = repository::create_module(
+        &pool,
+        "empty_shell",
+        "Empty Shell",
+        None,
+        None,
+        None,
+        "alice",
+        &json!({"entities": []}),
+        Some("alice"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(empty.status, "draft");
+    assert!(
+        repository::submit_module_for_review(&pool, &empty.id, "alice", "user")
+            .await
+            .is_err()
+    );
+    repository::update_module_draft(
+        &pool,
+        &empty.id,
+        None,
+        None,
+        None,
+        None,
+        Some(&vehicle_definition()),
+        "alice",
+        "user",
+    )
+    .await
+    .unwrap();
+    repository::submit_module_for_review(&pool, &empty.id, "alice", "user")
+        .await
+        .unwrap();
 
     // Invalid: reference to unknown entity.
     let bad = json!({"entities": [{"name": "a", "label": "A", "fields": [{"name": "x", "type": "reference", "ref_entity": "missing"}]}]});

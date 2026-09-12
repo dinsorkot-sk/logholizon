@@ -522,11 +522,25 @@ fn check_module_access(module: &Module, owner: &str, role: &str) -> Result<()> {
 /// types, reference targets inside the same definition, no self references,
 /// at most one status field per entity, and valid workflow states.
 pub fn validate_module_definition(definition: &Value) -> Result<()> {
+    validate_module_definition_inner(definition, false)
+}
+
+/// Validate a draft module definition. Drafts may start empty so the Module
+/// Builder can create a module shell first and add entities afterwards.
+/// Completeness (at least one entity) is enforced at review/publish time.
+pub fn validate_module_draft(definition: &Value) -> Result<()> {
+    validate_module_definition_inner(definition, true)
+}
+
+fn validate_module_definition_inner(definition: &Value, allow_empty: bool) -> Result<()> {
     let entities = definition
         .get("entities")
         .and_then(Value::as_array)
         .ok_or_else(|| AppError::BadRequest("definition.entities must be an array".into()))?;
     if entities.is_empty() {
+        if allow_empty {
+            return Ok(());
+        }
         return Err(
             AppError::BadRequest("definition must declare at least one entity".into()).into(),
         );
@@ -631,6 +645,75 @@ pub fn validate_module_definition(definition: &Value) -> Result<()> {
             ))
             .into());
         }
+        // Form layout sections reference fields by name (translated to
+        // materialized IDs at publish). Reject unknown names here so
+        // typos fail fast instead of rendering empty sections.
+        if let Some(layout) = entity.get("form_layout") {
+            let config = layout.get("config").unwrap_or(layout);
+            let field_names: std::collections::HashSet<&str> = fields
+                .iter()
+                .filter_map(|f| f.get("name").and_then(Value::as_str))
+                .collect();
+            if let Some(sections) = config.get("sections").and_then(Value::as_array) {
+                let mut seen_sections: std::collections::HashSet<&str> =
+                    std::collections::HashSet::new();
+                let mut seen_fields: std::collections::HashSet<&str> =
+                    std::collections::HashSet::new();
+                for section in sections {
+                    let section_id = section
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .ok_or_else(|| {
+                            AppError::BadRequest(format!(
+                                "form layout section requires a non-empty id in {name}"
+                            ))
+                        })?;
+                    if !seen_sections.insert(section_id) {
+                        return Err(AppError::BadRequest(format!(
+                            "duplicate form layout section: {name}.{section_id}"
+                        ))
+                        .into());
+                    }
+                    let section_fields = section
+                        .get("fields")
+                        .and_then(Value::as_array)
+                        .ok_or_else(|| {
+                            AppError::BadRequest(format!(
+                                "form layout section requires a fields array: {name}.{section_id}"
+                            ))
+                        })?;
+                    for field_ref in section_fields {
+                        let field_ref = field_ref.as_str().ok_or_else(|| {
+                            AppError::BadRequest(format!(
+                                "form layout field refs must be strings: {name}.{section_id}"
+                            ))
+                        })?;
+                        // Accept plain names (builder convention) and
+                        // materialized IDs (entity-manager convention).
+                        let matches = field_names.contains(field_ref)
+                            || fields.iter().any(|f| {
+                                f.get("name").and_then(Value::as_str).is_some_and(|n| {
+                                    field_ref == n || field_ref.ends_with(&format!("_{n}"))
+                                })
+                            });
+                        if !matches {
+                            return Err(AppError::BadRequest(format!(
+                                "unknown field {field_ref} in form layout: {name}.{section_id}"
+                            ))
+                            .into());
+                        }
+                        if !seen_fields.insert(field_ref) {
+                            return Err(AppError::BadRequest(format!(
+                                "duplicate field {field_ref} in form layout: {name}"
+                            ))
+                            .into());
+                        }
+                    }
+                }
+            }
+        }
         if let Some(workflow) = entity.get("workflow") {
             let states: Vec<String> = workflow
                 .get("states")
@@ -691,7 +774,7 @@ pub async fn create_module(
         bail!("name and label are required");
     }
     validate_module_name(name)?;
-    validate_module_definition(definition)?;
+    validate_module_draft(definition)?;
     let owner = owner.trim();
     if owner.is_empty() {
         bail!("owner is required");
@@ -773,7 +856,7 @@ pub async fn update_module_draft(
         );
     }
     if let Some(definition) = definition {
-        validate_module_definition(definition)?;
+        validate_module_draft(definition)?;
     }
     let label = label
         .map(str::trim)
@@ -1062,10 +1145,31 @@ async fn materialize_module_definition(
             }
         }
         if let Some(layout) = entity.get("form_layout") {
-            let config = layout
+            let mut config = layout
                 .get("config")
                 .cloned()
                 .unwrap_or_else(|| layout.clone());
+            // The Module Builder writes field names in layout sections, but
+            // the runtime resolves entries by materialized field ID
+            // (`<module>_<entity>_<field>`). Translate names to IDs here so
+            // builder-authored layouts render correctly after publish.
+            // Entries that already look like IDs pass through untouched.
+            if let Some(sections) = config.get_mut("sections").and_then(Value::as_array_mut) {
+                for section in sections.iter_mut() {
+                    if let Some(fields) = section.get_mut("fields").and_then(Value::as_array_mut) {
+                        for field in fields.iter_mut() {
+                            if let Some(name) = field.as_str() {
+                                let id = format!("{entity_id}_{name}");
+                                let already_id =
+                                    name == entity_id || name.starts_with(&format!("{entity_id}_"));
+                                if !already_id {
+                                    *field = Value::String(id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             sqlx::query(
                 "INSERT INTO _entity_form_layout (entity_id, config) VALUES (?, ?) \
                  ON CONFLICT(entity_id) DO UPDATE SET config = excluded.config",
