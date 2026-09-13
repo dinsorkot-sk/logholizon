@@ -221,7 +221,7 @@ function fieldDisplayName(entityName: string, ref: string) {
   return ref.startsWith(prefix) ? ref.slice(prefix.length) : ref
 }
 
-function cloneDefinition() {
+function cloneDefinition(): { entities: ModuleEntity[]; settings?: Record<string, unknown> } {
   return JSON.parse(JSON.stringify(module.value?.definition || { entities: [] }))
 }
 
@@ -750,7 +750,7 @@ async function rollback(version: number) {
             <p v-if="entity.description" class="mt-1 text-xs text-muted">{{ entity.description }}</p>
             <div class="mt-2 space-y-1">
               <div v-for="field in entity.fields" :key="field.name" class="flex items-center justify-between rounded bg-muted/40 px-2 py-1 text-sm">
-                <span class="font-mono">{{ field.name }} <span class="text-muted">· {{ field.type }}{{ field.required ? ' · required' : '' }}{{ field.is_status ? ' · status' : '' }}{{ field.unique ? ' · unique' : '' }}{{ field.ref_entity ? ` → ${field.ref_entity}` : '' }}{{ field.computed_expr ? ` = ${field.computed_expr}` : '' }}{{(field.options || []).length ? ` · ${field.options.length} options` : '' }}</span></span>
+                <span class="font-mono">{{ field.name }} <span class="text-muted">· {{ field.type }}{{ field.required ? ' · required' : '' }}{{ field.is_status ? ' · status' : '' }}{{ field.unique ? ' · unique' : '' }}{{ field.ref_entity ? ` → ${field.ref_entity}` : '' }}{{ field.computed_expr ? ` = ${field.computed_expr}` : '' }}{{(field.options || []).length ? ` · ${(field.options || []).length} options` : '' }}</span></span>
                 <UButton size="xs" variant="ghost" color="error" @click="removeField(entity.name, field.name)">Remove</UButton>
               </div>
               <p v-if="!entity.fields.length" class="text-xs text-muted">No fields yet.</p>
@@ -837,7 +837,7 @@ async function rollback(version: number) {
           </div>
           <div v-for="entity in entities" :key="`wf-${entity.name}`" class="mt-2 text-sm">
             <p class="font-mono">{{ entity.name }}: {{ (entity.workflow?.states || []).map(s => s.name).join(' → ') || 'no states' }}</p>
-            <p v-if="(entity.workflow?.transitions || []).length" class="font-mono text-muted">{{ entity.workflow.transitions.map(t => `${t.from_state} --${t.action}--> ${t.to_state}`).join(' · ') }}</p>
+            <p v-if="(entity.workflow?.transitions || []).length" class="font-mono text-muted">{{ (entity.workflow?.transitions || []).map(t => `${t.from_state} --${t.action}--> ${t.to_state}`).join(' · ') }}</p>
           </div>
         </UCard>
         <UCard>

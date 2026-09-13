@@ -276,6 +276,38 @@ BOM/manufacturing, POS, Customer, Sales) are now user-defined-module
 territory, proven by `packages/core/tests/phase20_http.rs` (accounting-like
 module with no Core changes).
 
+## Canonical Baseline — v0.0.28 (Phase A — COMPLETE)
+
+`v0.0.27` at `7f3b44d` is the canonical superset baseline. Verified by ancestry
+check on 2026-09-13: `origin/main` (`024c2a2` CSV import preview/confirm),
+`origin/dev` (`ec5d340` multi-sheet Excel import/export), and
+`origin/audit/uxui` (`710e8e0` field position/status + UX) are all ancestors of
+`HEAD` (`git merge-base --is-ancestor` = CONTAINED for all three, zero commits
+behind). Feature presence confirmed in-tree: `preview_import`,
+`preview_workbook_xlsx`/`confirm_workbook_xlsx`/`export_workbook_xlsx` in
+`packages/core/src/http.rs` + `repository.rs`; `position`/`is_status` ordering
+in `repository.rs` backed by `migrations/0004_field_position.sql` and
+`migrations/0005_status_field.sql`.
+
+CI inventory (`.github/workflows/ci.yml`): `rust` job runs
+`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --
+-D warnings`, `cargo test --workspace -- --test-threads=1`,
+`cargo build --workspace --release`; `app` job runs `pnpm install
+--frozen-lockfile` then `packages/app` `test`/`check`/`build`; `e2e` job needs
+`[rust, app]` and runs Playwright Chromium `run e2e`.
+
+Release discipline from `v0.0.28` onward: one sequential version branch per
+phase (`v0.0.28` -> `v0.0.29` -> ...), branched from the previously completed
+version branch only after commit + push succeed. Never reuse a completed
+branch, never skip numbers, never force-push published phase history. `v0.0.28`
+is docs-only (this section) plus a type-only repair: `pnpm app check` failed on
+the `v0.0.27` baseline with 19 errors in
+`packages/app/app/pages/admin/modules/[id].vue` (untyped `cloneDefinition()`
+returning `any` poisoned 17 lambdas, plus 2 template narrowing errors); fixed
+with type annotations only, no behavior change. All gates green on `v0.0.28`:
+`cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace`,
+`pnpm app test` (20/20), `pnpm app check`, `pnpm app build`.
+
 ## Final Quality Gate
 
 100% requires all of the following:
