@@ -77,31 +77,64 @@ async fn module_form_layout_names_translate_to_ids() {
     let bad = json!({"entities": [{"name": "a", "label": "A",
         "fields": [{"name": "x", "type": "text"}],
         "form_layout": {"config": {"sections": [{"id": "s", "label": "S", "fields": ["missing"]}]}}} ]});
-    assert!(
-        repository::create_module(&pool, "badlayout", "BadLayout", None, None, None, "alice", &bad, None)
-            .await
-            .is_err()
-    );
+    assert!(repository::create_module(
+        &pool,
+        "badlayout",
+        "BadLayout",
+        None,
+        None,
+        None,
+        "alice",
+        &bad,
+        None
+    )
+    .await
+    .is_err());
 
     let module = repository::create_module(
-        &pool, "layout", "Layout", None, None, None, "alice",
-        &vehicle_definition(), Some("alice"),
+        &pool,
+        "layout",
+        "Layout",
+        None,
+        None,
+        None,
+        "alice",
+        &vehicle_definition(),
+        Some("alice"),
     )
     .await
     .unwrap();
-    repository::submit_module_for_review(&pool, &module.id, "alice", "user").await.unwrap();
-    repository::publish_module(&pool, &module.id, "alice", "user", Some("alice")).await.unwrap();
+    repository::submit_module_for_review(&pool, &module.id, "alice", "user")
+        .await
+        .unwrap();
+    repository::publish_module(&pool, &module.id, "alice", "user", Some("alice"))
+        .await
+        .unwrap();
     let vehicle_entity = format!("{}_vehicle", module.id);
-    let layout = repository::get_entity_form_layout(&pool, &vehicle_entity).await.unwrap();
-    let sections = layout.config.get("sections").and_then(|s| s.as_array()).unwrap();
+    let layout = repository::get_entity_form_layout(&pool, &vehicle_entity)
+        .await
+        .unwrap();
+    let sections = layout
+        .config
+        .get("sections")
+        .and_then(|s| s.as_array())
+        .unwrap();
     assert_eq!(sections.len(), 1);
-    let refs: Vec<&str> = sections[0].get("fields").and_then(|f| f.as_array()).unwrap()
-        .iter().filter_map(|f| f.as_str()).collect();
+    let refs: Vec<&str> = sections[0]
+        .get("fields")
+        .and_then(|f| f.as_array())
+        .unwrap()
+        .iter()
+        .filter_map(|f| f.as_str())
+        .collect();
     // Builder-authored names translate to materialized field IDs.
-    assert_eq!(refs, vec![
-        format!("{vehicle_entity}_code").as_str(),
-        format!("{vehicle_entity}_plate_number").as_str(),
-    ]);
+    assert_eq!(
+        refs,
+        vec![
+            format!("{vehicle_entity}_code").as_str(),
+            format!("{vehicle_entity}_plate_number").as_str(),
+        ]
+    );
 }
 
 #[tokio::test]

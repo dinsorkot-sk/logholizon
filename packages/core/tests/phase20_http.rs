@@ -44,7 +44,13 @@ async fn setup_app() -> (axum::Router, String) {
     (app, session.token)
 }
 
-async fn call(app: &axum::Router, token: &str, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+async fn call(
+    app: &axum::Router,
+    token: &str,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
     let mut builder = Request::builder()
         .method(method)
         .uri(uri)
@@ -53,7 +59,10 @@ async fn call(app: &axum::Router, token: &str, method: &str, uri: &str, body: Op
         builder = builder.header("content-type", "application/json");
     }
     let request = builder
-        .body(body.map(|b| Body::from(b.to_string())).unwrap_or_else(Body::empty))
+        .body(
+            body.map(|b| Body::from(b.to_string()))
+                .unwrap_or_else(Body::empty),
+        )
         .unwrap();
     let response = app.clone().oneshot(request).await.unwrap();
     let status = response.status();
@@ -110,7 +119,14 @@ async fn phase20_vehicle_lifecycle_over_http() {
     let module_id = empty["id"].as_str().unwrap().to_string();
 
     // 2. Empty drafts cannot go to review; completeness is enforced there.
-    let (status, _) = call(&app, &token, "POST", &format!("/v1/modules/{module_id}/review"), None).await;
+    let (status, _) = call(
+        &app,
+        &token,
+        "POST",
+        &format!("/v1/modules/{module_id}/review"),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
     // 3. Fill in the definition through the draft update path.
@@ -126,7 +142,14 @@ async fn phase20_vehicle_lifecycle_over_http() {
 
     // 4. Review -> publish -> enable through the public lifecycle.
     for action in ["review", "publish", "enable"] {
-        let (status, body) = call(&app, &token, "POST", &format!("/v1/modules/{module_id}/{action}"), None).await;
+        let (status, body) = call(
+            &app,
+            &token,
+            "POST",
+            &format!("/v1/modules/{module_id}/{action}"),
+            None,
+        )
+        .await;
         assert_eq!(status, StatusCode::OK, "{action}: {body:?}");
     }
 
@@ -203,7 +226,14 @@ async fn phase20_vehicle_lifecycle_over_http() {
     assert_eq!(status, StatusCode::CREATED, "{accounting:?}");
     let accounting_id = accounting["id"].as_str().unwrap().to_string();
     for action in ["review", "publish", "enable"] {
-        let (status, body) = call(&app, &token, "POST", &format!("/v1/modules/{accounting_id}/{action}"), None).await;
+        let (status, body) = call(
+            &app,
+            &token,
+            "POST",
+            &format!("/v1/modules/{accounting_id}/{action}"),
+            None,
+        )
+        .await;
         assert_eq!(status, StatusCode::OK, "{action}: {body:?}");
     }
     let (status, _) = call(
