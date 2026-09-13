@@ -62,8 +62,19 @@ async fn main() -> Result<()> {
         Command::Restore { path, force } => {
             anyhow::ensure!(force, "restore requires --force");
             let destination = db::database_path(&config.database_url)?;
-            backup::restore(&path, destination).await?;
-            println!("restored {} to {}", path.display(), destination.display());
+            match backup::restore(&path, destination).await? {
+                Some(rollback) => println!(
+                    "restored {} to {}; rollback preserved at {}",
+                    path.display(),
+                    destination.display(),
+                    rollback.display()
+                ),
+                None => println!(
+                    "restored {} to {} (fresh database, no rollback needed)",
+                    path.display(),
+                    destination.display()
+                ),
+            }
         }
         Command::Check => {
             db::migrate(&pool).await?;

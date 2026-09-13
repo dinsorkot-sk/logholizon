@@ -82,3 +82,59 @@ async fn migrate_and_check_in_memory() {
         );
     }
 }
+
+// --- Phase C: SQLite single-host concurrency policy ---
+
+#[tokio::test]
+async fn connect_applies_wal_concurrency_policy() {
+    let pool = db::connect("sqlite::memory:").await.unwrap();
+    let snapshot = db::pragma_snapshot(&pool).await.unwrap();
+    assert_eq!(snapshot.journal_mode, "WAL");
+    assert_eq!(snapshot.busy_timeout_ms, db::BUSY_TIMEOUT_MS);
+    assert_eq!(snapshot.synchronous, "NORMAL");
+    assert!(snapshot.foreign_keys);
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn concurrent_writes_serialize_without_busy_errors() {
+    // File-backed DB: 10 parallel writers must all succeed (single-writer
+    // serialization + busy_timeout), proving the pool absorbs bursts.
+    let dir = std::env::temp_dir().join(format!(
+        "logholizon-test-concurrency-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+    let path = dir.join("core.db");
+    let url = format!("sqlite://{}", path.to_str().unwrap().replace('\\', "/"));
+    let pool = db::connect(&url).await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    logholizon_core::seed::seed(&pool).await.unwrap();
+    let mut handles = Vec::new();
+    for i in 0..10 {
+        let pool = pool.clone();
+        handles.push(tokio::spawn(async move {
+            logholizon_core::repository::create_document(
+                &pool,
+                &format!("concurrent-{i}"),
+                "work_order",
+                &serde_json::json!({"title": format!("job {i}"), "status": "draft"}),
+                None,
+            )
+            .await
+        }));
+    }
+    for handle in handles {
+        handle.await.unwrap().unwrap();
+    }
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _doc WHERE id LIKE 'concurrent-%'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 10);
+    pool.close().await;
+    tokio::fs::remove_dir_all(&dir).await.ok();
+}

@@ -28,6 +28,8 @@ pub enum AppError {
     Unauthorized(String),
     Forbidden(String),
     TooManyRequests(String),
+    /// Service temporarily unable to serve (e.g. `/ready` failing checks).
+    ServiceUnavailable(String),
     Internal(anyhow::Error),
 }
 
@@ -39,7 +41,8 @@ impl std::fmt::Display for AppError {
             | Self::Conflict(message)
             | Self::Unauthorized(message)
             | Self::Forbidden(message)
-            | Self::TooManyRequests(message) => formatter.write_str(message),
+            | Self::TooManyRequests(message)
+            | Self::ServiceUnavailable(message) => formatter.write_str(message),
             Self::Internal(error) => error.fmt(formatter),
         }
     }
@@ -56,6 +59,9 @@ impl IntoResponse for AppError {
             Self::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, "unauthorized", msg),
             Self::Forbidden(msg) => (StatusCode::FORBIDDEN, "forbidden", msg),
             Self::TooManyRequests(msg) => (StatusCode::TOO_MANY_REQUESTS, "too_many_requests", msg),
+            Self::ServiceUnavailable(msg) => {
+                (StatusCode::SERVICE_UNAVAILABLE, "service_unavailable", msg)
+            }
             Self::Internal(err) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal_error",
@@ -76,6 +82,7 @@ impl From<anyhow::Error> for AppError {
                 AppError::Unauthorized(msg) => AppError::Unauthorized(msg.clone()),
                 AppError::Forbidden(msg) => AppError::Forbidden(msg.clone()),
                 AppError::TooManyRequests(msg) => AppError::TooManyRequests(msg.clone()),
+                AppError::ServiceUnavailable(msg) => AppError::ServiceUnavailable(msg.clone()),
                 AppError::Internal(_) => AppError::Internal(anyhow::anyhow!("internal error")),
             };
         }

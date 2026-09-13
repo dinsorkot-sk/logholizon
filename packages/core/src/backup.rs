@@ -39,7 +39,15 @@ pub async fn validate(source: &Path) -> Result<()> {
     Ok(())
 }
 
-pub async fn restore(source: &Path, destination: &Path) -> Result<()> {
+/// Restore `source` over `destination`, preserving a rollback copy.
+///
+/// Returns the rollback path (`Some`) when a live database existed at the
+/// destination, or `None` for a fresh restore. The rollback file lives in
+/// `<destination dir>/backups/pre-restore-<timestamp>.db` so a bad restore
+/// can be undone with a second restore call. The source is integrity-checked
+/// before anything is touched; the destination is replaced atomically via
+/// copy-to-temp + rename.
+pub async fn restore(source: &Path, destination: &Path) -> Result<Option<std::path::PathBuf>> {
     if !source.is_file() {
         bail!("backup source does not exist: {}", source.display());
     }
@@ -50,10 +58,33 @@ pub async fn restore(source: &Path, destination: &Path) -> Result<()> {
     if let Some(parent) = destination.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
+    // Preserve the live database before replacing it.
+    let rollback = if destination.is_file() {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let dir = destination
+            .parent()
+            .map(|p| p.join("backups"))
+            .unwrap_or_else(|| Path::new("backups").to_path_buf());
+        tokio::fs::create_dir_all(&dir).await?;
+        let rollback = dir.join(format!("pre-restore-{timestamp}.db"));
+        if rollback.exists() {
+            bail!(
+                "rollback destination already exists: {}",
+                rollback.display()
+            );
+        }
+        tokio::fs::copy(destination, &rollback).await?;
+        Some(rollback)
+    } else {
+        None
+    };
     let temporary = destination.with_extension("restore.tmp");
     tokio::fs::copy(source, &temporary).await?;
     tokio::fs::rename(&temporary, destination).await?;
-    Ok(())
+    Ok(rollback)
 }
 
 /// Apply a staged restore file (if present) before the pool connects.
@@ -67,8 +98,11 @@ pub async fn apply_staged_restore(database_url: &str) -> Result<bool> {
     if !staging.is_file() {
         return Ok(false);
     }
-    restore(&staging, destination).await?;
+    let rollback = restore(&staging, destination).await?;
     tokio::fs::remove_file(&staging).await?;
+    if let Some(path) = rollback {
+        tracing::info!("staged restore applied; rollback at {}", path.display());
+    }
     Ok(true)
 }
 

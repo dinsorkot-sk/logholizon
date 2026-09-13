@@ -358,3 +358,55 @@ async fn version_returns_package_version() {
     assert_eq!(json["name"], "logholizon-core");
     assert_eq!(json["version"], env!("CARGO_PKG_VERSION"));
 }
+
+// --- Phase C: readiness probe ---
+
+#[tokio::test]
+async fn ready_reports_migrated_integrity_wal_and_queues() {
+    let pool = db::connect("sqlite::memory:").await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    let app = http::router(&test_config(), pool);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/ready")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["ready"], true);
+    assert_eq!(json["checks"]["migrated"], true);
+    assert_eq!(json["checks"]["integrity"], true);
+    assert_eq!(json["checks"]["wal"], true);
+    assert_eq!(json["checks"]["pragmas"]["journal_mode"], "WAL");
+    assert_eq!(json["checks"]["pragmas"]["synchronous"], "NORMAL");
+    assert_eq!(json["checks"]["pragmas"]["foreign_keys"], true);
+    assert!(json["checks"]["pending_automation"].is_number());
+    assert!(json["checks"]["pending_webhooks"].is_number());
+}
+
+#[tokio::test]
+async fn ready_is_public_but_reports_unmigrated_as_503() {
+    // No auth header and no migrations: probe is reachable (no 401) and
+    // reports unready with 503 + service_unavailable code.
+    let pool = db::connect("sqlite::memory:").await.unwrap();
+    let app = http::router(&test_config(), pool);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/ready")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["code"], "service_unavailable");
+    assert!(json["message"].as_str().unwrap_or("").contains("migrated"));
+}

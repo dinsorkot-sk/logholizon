@@ -93,6 +93,7 @@ async fn auth_middleware(
 ) -> Result<Response, AppError> {
     let path = request.uri().path().to_string();
     let is_public = path == "/health"
+        || path == "/ready"
         || path == "/v1/version"
         || path == "/v1/auth/register"
         || path == "/v1/auth/login"
@@ -189,6 +190,7 @@ async fn auth_middleware(
 pub fn router(config: &Config, pool: SqlitePool) -> Router {
     Router::new()
         .route("/health", get(health))
+        .route("/ready", get(ready))
         .route("/v1/version", get(version))
         .route("/v1/auth/register", axum::routing::post(auth_register))
         .route("/v1/auth/login", axum::routing::post(auth_login))
@@ -3169,6 +3171,7 @@ fn map_db_error(error: anyhow::Error) -> AppError {
             AppError::Unauthorized(msg) => AppError::Unauthorized(msg.clone()),
             AppError::Forbidden(msg) => AppError::Forbidden(msg.clone()),
             AppError::TooManyRequests(msg) => AppError::TooManyRequests(msg.clone()),
+            AppError::ServiceUnavailable(msg) => AppError::ServiceUnavailable(msg.clone()),
             AppError::Internal(_) => AppError::Internal(anyhow::anyhow!("internal error")),
         };
     }
@@ -3184,6 +3187,72 @@ fn map_db_error(error: anyhow::Error) -> AppError {
 
 async fn health() -> axum::Json<serde_json::Value> {
     axum::Json(json!({ "status": "ok" }))
+}
+
+/// Readiness probe for Docker/compose and orchestrators (Phase C).
+/// Unlike `/health` (process liveness), `/ready` verifies the runtime can
+/// serve traffic: migrations applied, integrity clean, WAL policy active,
+/// and pending automation/webhook queues visible. Returns 200 when ready,
+/// 503 with the failing check otherwise. Public (no auth) so the
+/// orchestrator can probe before any user exists.
+async fn ready(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
+    let mut checks = serde_json::Map::new();
+    let mut ready = true;
+    // Migrations applied: the schema anchor table must exist.
+    let migrated: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='_meta_entity')",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|e| AppError::from(anyhow::Error::from(e)))?;
+    checks.insert("migrated".into(), Value::Bool(migrated));
+    if !migrated {
+        // Fail fast: queue tables do not exist yet, so deeper checks would
+        // 500 instead of reporting clean 503 unready.
+        let body = json!({ "ready": false, "checks": checks });
+        return Err(AppError::ServiceUnavailable(
+            serde_json::to_string(&body).unwrap_or_else(|_| "not ready".into()),
+        ));
+    }
+    // Integrity clean.
+    let integrity = crate::db::integrity_check(&state.pool)
+        .await
+        .map_err(AppError::from)?;
+    checks.insert("integrity".into(), Value::Bool(integrity));
+    ready &= integrity;
+    // WAL policy active (single-writer concurrency contract).
+    let pragmas = crate::db::pragma_snapshot(&state.pool)
+        .await
+        .map_err(AppError::from)?;
+    let wal = pragmas.journal_mode == "WAL";
+    checks.insert("wal".into(), Value::Bool(wal));
+    checks.insert(
+        "pragmas".into(),
+        serde_json::to_value(&pragmas).unwrap_or(Value::Null),
+    );
+    ready &= wal;
+    // Pending queue depth (observability, not a gate: backlogs are visible
+    // but do not fail readiness).
+    let pending_automation: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM _automation_execution WHERE status='pending'")
+            .fetch_one(&state.pool)
+            .await
+            .map_err(|e| AppError::from(anyhow::Error::from(e)))?;
+    let pending_webhooks: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM _webhook_delivery WHERE status='pending'")
+            .fetch_one(&state.pool)
+            .await
+            .map_err(|e| AppError::from(anyhow::Error::from(e)))?;
+    checks.insert("pending_automation".into(), json!(pending_automation));
+    checks.insert("pending_webhooks".into(), json!(pending_webhooks));
+    let body = json!({ "ready": ready, "checks": checks });
+    if ready {
+        Ok(Json(body))
+    } else {
+        Err(AppError::ServiceUnavailable(
+            serde_json::to_string(&body).unwrap_or_else(|_| "not ready".into()),
+        ))
+    }
 }
 
 async fn version() -> axum::Json<serde_json::Value> {

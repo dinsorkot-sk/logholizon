@@ -185,3 +185,108 @@ async fn staged_restore_applies_on_startup() {
     remove_retry(&src_path).await;
     tokio::fs::remove_dir(&src_dir).await.ok();
 }
+
+// --- Phase C: backup/restore DR drill with rollback ---
+
+#[tokio::test]
+async fn restore_preserves_rollback_and_rollback_restores() {
+    // Full DR drill on a scratch copy: backup -> corrupt live -> restore
+    // --force (rollback preserved) -> undo via rollback file.
+    let dir = temp_path("drilldir");
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+    let live_path = dir.join("core.db");
+    let live_url = format!(
+        "sqlite://{}",
+        live_path.to_str().unwrap().replace('\\', "/")
+    );
+    let pool = db::connect(&live_url).await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    seed::seed(&pool).await.unwrap();
+    repository::create_document(
+        &pool,
+        "live-1",
+        "work_order",
+        &json!({"title": "Live job", "status": "draft"}),
+        None,
+    )
+    .await
+    .unwrap();
+    let backup_path = dir.join("snapshot.db");
+    backup::backup(&pool, &backup_path).await.unwrap();
+    pool.close().await;
+
+    // Simulate divergence: add a second document after the backup.
+    let pool = db::connect(&live_url).await.unwrap();
+    repository::create_document(
+        &pool,
+        "live-2",
+        "work_order",
+        &json!({"title": "After backup", "status": "draft"}),
+        None,
+    )
+    .await
+    .unwrap();
+    pool.close().await;
+
+    // Restore --force: live DB (2 docs) is replaced by the snapshot (1 doc),
+    // and the pre-restore state is preserved as rollback.
+    let rollback = backup::restore(&backup_path, &live_path)
+        .await
+        .unwrap()
+        .expect("live database existed, rollback must be preserved");
+    assert!(rollback.is_file());
+    assert!(backup::validate(&rollback).await.is_ok());
+
+    let pool = db::connect(&live_url).await.unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _doc")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 1,
+        "restored snapshot must hold exactly the backup state"
+    );
+    assert!(db::integrity_check(&pool).await.unwrap());
+    pool.close().await;
+
+    // Undo: restore the rollback file; both documents return.
+    backup::restore(&rollback, &live_path).await.unwrap();
+    let pool = db::connect(&live_url).await.unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _doc")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 2, "rollback restore must bring back the live state");
+    assert!(db::integrity_check(&pool).await.unwrap());
+    pool.close().await;
+
+    tokio::fs::remove_dir_all(&dir).await.ok();
+}
+
+#[tokio::test]
+async fn restore_rejects_corrupt_source_without_touching_live() {
+    let dir = temp_path("corruptdir");
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+    let live_path = dir.join("core.db");
+    let live_url = format!(
+        "sqlite://{}",
+        live_path.to_str().unwrap().replace('\\', "/")
+    );
+    let pool = db::connect(&live_url).await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    seed::seed(&pool).await.unwrap();
+    pool.close().await;
+    let before = tokio::fs::read(&live_path).await.unwrap();
+
+    let garbage = dir.join("garbage.db");
+    tokio::fs::write(&garbage, b"this is not a sqlite database")
+        .await
+        .unwrap();
+    assert!(backup::restore(&garbage, &live_path).await.is_err());
+    // Live database untouched: byte-identical, no rollback file created.
+    assert_eq!(tokio::fs::read(&live_path).await.unwrap(), before);
+    let backups = dir.join("backups");
+    assert!(!backups.is_dir());
+
+    tokio::fs::remove_dir_all(&dir).await.ok();
+}
