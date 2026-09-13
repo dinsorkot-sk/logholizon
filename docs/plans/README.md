@@ -256,15 +256,25 @@ Required capabilities:
 
 Then prove the same runtime can define an Accounting-like module without adding Accounting tables/routes/types to Core.
 
-## ERP Hardcode Removal
+## ERP Hardcode Removal — VERIFIED (v0.0.26)
 
-After the universal runtime passes acceptance, migrate legacy hardcoded domains out of Core. Candidates include `GlAccount`, `JournalEntry`, `JournalLine`, `Invoice`, `InvoiceLine`, `Payment`, `StockLedger`, `Employee`, `PayrollRun`, BOM/manufacturing, POS, Customer and Sales domain routes/types.
+Legacy hardcoded ERP domains are out of Core:
 
-The target is:
+- `migrations/0026_drop_legacy_erp.sql` drops all `_company/_currency/_fx/_tax`
+  `_ledger/_invoice/_payment/_stock/_trade/_hr/_mfg/_pos` tables (forward-only).
+- No Rust references to `gl_account/journal/invoice/stock_ledger/employee/
+  payroll/bom/pos_order/trade_doc` remain in `packages/core/src/**`,
+  `packages/app/**`, or `packages/cli/**`.
+- All `/v1` routes are generic (entity IDs, module IDs, metadata IDs).
+  `dashboard_pm`/`pm_summary` operate on any entity's status field.
+- `seed()`/`seed_demo()` remain CLI-only demo data (work orders, PM
+  schedules, inventory sample); never auto-run by the server.
 
-`hardcoded ERP domain -> optional engine or user-defined module`
-
-Never replace one hardcoded ERP folder with another.
+Candidates originally listed (`GlAccount`, `JournalEntry`, `JournalLine`,
+`Invoice`, `InvoiceLine`, `Payment`, `StockLedger`, `Employee`, `PayrollRun`,
+BOM/manufacturing, POS, Customer, Sales) are now user-defined-module
+territory, proven by `packages/core/tests/phase20_http.rs` (accounting-like
+module with no Core changes).
 
 ## Final Quality Gate
 
