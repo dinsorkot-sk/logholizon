@@ -17,6 +17,9 @@ fn test_config(url: &str) -> Config {
         notify_interval_secs: 0,
         notify_timeout_secs: 10,
         notify_max_attempts: 3,
+        allowed_origins: Vec::new(),
+        auth_rate_limit_max_attempts: 10,
+        auth_rate_limit_window_secs: 60,
     }
 }
 

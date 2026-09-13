@@ -26,6 +26,12 @@ enum Command {
         force: bool,
     },
     Check,
+    /// Recovery: reset a user's password by username (admin console access
+    /// required). Invalidates all sessions for that user.
+    ResetPassword {
+        username: String,
+        password: String,
+    },
 }
 
 #[tokio::main]
@@ -66,6 +72,12 @@ async fn main() -> Result<()> {
                 "database integrity check failed"
             );
             println!("database ok");
+        }
+        Command::ResetPassword { username, password } => {
+            db::migrate(&pool).await?;
+            let id = logholizon_core::auth::reset_password_by_username(&pool, &username, &password)
+                .await?;
+            println!("password reset for {username} ({id}); sessions invalidated");
         }
     }
     Ok(())

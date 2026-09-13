@@ -1,5 +1,7 @@
 use crate::error::AppError;
+use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
+use std::time::{Duration, Instant};
 
 pub const MAX_WEBHOOK_BODY_BYTES: usize = 1_000_000;
 pub const MAX_HEADER_COUNT: usize = 32;
@@ -92,4 +94,102 @@ pub fn validate_filename(filename: &str) -> anyhow::Result<()> {
         return Err(AppError::BadRequest("invalid filename".into()).into());
     }
     Ok(())
+}
+
+/// Sliding-window rate limiter for auth endpoints (brute-force protection).
+/// Keyed by client IP; only failed attempts count toward the limit so normal
+/// logins are never throttled. Single-process in-memory state: sufficient for
+/// the SQLite single-host deployment model; a multi-instance follow-up would
+/// move this to shared storage (see Phase C Postgres readiness).
+#[derive(Debug, Default)]
+pub struct AuthRateLimiter {
+    failures: HashMap<String, VecDeque<Instant>>,
+}
+
+impl AuthRateLimiter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record a failed auth attempt for `key` (client IP). Returns `true`
+    /// when the key is now over `max_attempts` inside `window`.
+    pub fn record_failure(&mut self, key: &str, max_attempts: u32, window: Duration) -> bool {
+        let now = Instant::now();
+        let entries = self.failures.entry(key.to_string()).or_default();
+        while entries
+            .front()
+            .is_some_and(|t| now.duration_since(*t) > window)
+        {
+            entries.pop_front();
+        }
+        entries.push_back(now);
+        entries.len() as u32 > max_attempts.max(1)
+    }
+
+    /// Check whether `key` is currently rate-limited (without recording).
+    pub fn is_limited(&mut self, key: &str, max_attempts: u32, window: Duration) -> bool {
+        let now = Instant::now();
+        match self.failures.get_mut(key) {
+            Some(entries) => {
+                while entries
+                    .front()
+                    .is_some_and(|t| now.duration_since(*t) > window)
+                {
+                    entries.pop_front();
+                }
+                entries.len() as u32 > max_attempts.max(1)
+            }
+            None => false,
+        }
+    }
+
+    /// Clear all recorded failures for `key` (called after a successful login).
+    pub fn clear(&mut self, key: &str) {
+        self.failures.remove(key);
+    }
+}
+
+/// Extract the client IP for rate-limit keying. Prefers `X-Forwarded-For`
+/// (first entry) when the server sits behind a proxy, else the socket peer.
+/// Takes the raw header value so this module stays free of HTTP types.
+pub fn client_ip_key(forwarded_for: Option<&str>, fallback: &str) -> String {
+    if let Some(first) = forwarded_for
+        .and_then(|v| v.split(',').next())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return first.to_string();
+    }
+    fallback.to_string()
+}
+
+/// Verify an inbound webhook signature produced by [`crate::notification`]'s
+/// HMAC-SHA256 signer (`sha256=<hex>` over the raw payload bytes).
+/// Uses constant-time comparison so the secret cannot be probed byte-by-byte.
+pub fn verify_webhook_signature(secret: &str, payload: &[u8], signature: &str) -> bool {
+    use hmac::Mac;
+    let expected = {
+        let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(secret.as_bytes())
+            .expect("HMAC accepts any key length");
+        mac.update(payload);
+        mac.finalize().into_bytes()
+    };
+    let Some(hex) = signature.strip_prefix("sha256=") else {
+        return false;
+    };
+    let Ok(bytes) = hex_to_bytes(hex) else {
+        return false;
+    };
+    use subtle::ConstantTimeEq;
+    expected.as_slice().ct_eq(bytes.as_slice()).into()
+}
+
+fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, ()> {
+    if !hex.len().is_multiple_of(2) || hex.is_empty() {
+        return Err(());
+    }
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).map_err(|_| ()))
+        .collect()
 }

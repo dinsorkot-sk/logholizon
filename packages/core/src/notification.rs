@@ -304,6 +304,19 @@ pub async fn enqueue_webhook(
     Ok(id)
 }
 
+/// Sign an outbound webhook payload (`sha256=<hex>` HMAC-SHA256).
+/// Public so receivers — including our own inbound verify path — can
+/// round-trip against the exact bytes the sender produced.
+pub fn sign_webhook(secret: &str, payload: &str) -> String {
+    signature(secret, payload)
+}
+
+/// Verify an inbound webhook payload against its `x-logholizon-signature`
+/// header using constant-time comparison.
+pub fn verify_webhook(secret: &str, payload: &[u8], signature_header: &str) -> bool {
+    crate::security::verify_webhook_signature(secret, payload, signature_header)
+}
+
 fn signature(secret: &str, payload: &str) -> String {
     let mut mac =
         HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");

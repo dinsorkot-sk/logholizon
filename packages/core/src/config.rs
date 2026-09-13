@@ -10,6 +10,14 @@ pub struct Config {
     pub notify_interval_secs: u64,
     pub notify_timeout_secs: u64,
     pub notify_max_attempts: i64,
+    /// Comma-separated CORS allowlist. Empty = same-origin only (no CORS
+    /// headers). `"*"` restores the old permissive behavior (dev only).
+    pub allowed_origins: Vec<String>,
+    /// Max failed login/register attempts per IP inside the window before
+    /// the auth endpoints return 429.
+    pub auth_rate_limit_max_attempts: u32,
+    /// Sliding window (seconds) for the auth rate limiter.
+    pub auth_rate_limit_window_secs: u64,
 }
 
 impl Config {
@@ -41,8 +49,29 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(3),
+            allowed_origins: parse_allowed_origins(
+                &env::var("CORE_ALLOWED_ORIGINS").unwrap_or_default(),
+            ),
+            auth_rate_limit_max_attempts: env::var("CORE_AUTH_RATE_LIMIT_MAX")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(10),
+            auth_rate_limit_window_secs: env::var("CORE_AUTH_RATE_LIMIT_WINDOW_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(60),
         }
     }
+}
+
+/// Parse `CORE_ALLOWED_ORIGINS`: comma-separated origins, trimmed, empties
+/// dropped. `"*"` is preserved verbatim as the permissive sentinel.
+fn parse_allowed_origins(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 /// Single shared dev DB at the workspace root (`<root>/.data/core.db`).

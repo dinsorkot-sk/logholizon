@@ -261,7 +261,47 @@ pub async fn reset_password(pool: &SqlitePool, id: &str, password: &str) -> Resu
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("user not found: {id}")).into());
     }
+    // Invalidate every session so a rotated password cannot be replayed
+    // with a token issued before the reset (logout invalidation parity).
+    sqlx::query("DELETE FROM _session WHERE user_id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    let _ = crate::observability::record(
+        pool,
+        "warn",
+        "security",
+        "password_reset",
+        None,
+        None,
+        None,
+        Some("user"),
+        Some(id),
+        Some(200),
+        None,
+        "password reset; sessions invalidated",
+        &serde_json::json!({}),
+    )
+    .await;
     Ok(())
+}
+
+/// CLI/HTTP recovery helper: resolve a username to its user id, then reset.
+/// Keeps lookup + reset at the boundary so callers never handle hashes.
+pub async fn reset_password_by_username(
+    pool: &SqlitePool,
+    username: &str,
+    password: &str,
+) -> Result<String> {
+    let row: Option<(String,)> = sqlx::query_as("SELECT id FROM _user WHERE username = ?")
+        .bind(username.trim())
+        .fetch_optional(pool)
+        .await?;
+    let Some((id,)) = row else {
+        return Err(AppError::NotFound(format!("user not found: {}", username.trim())).into());
+    };
+    reset_password(pool, &id, password).await?;
+    Ok(id)
 }
 
 pub async fn has_users(pool: &SqlitePool) -> Result<bool> {

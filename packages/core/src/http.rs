@@ -18,10 +18,53 @@ use crate::{
     Config,
 };
 
+/// Build the CORS layer from `CORE_ALLOWED_ORIGINS`:
+/// - empty allowlist = same-origin only (no CORS headers emitted);
+/// - `"*"` = permissive (dev only, logs a warning);
+/// - otherwise = exact-match allowlist for the listed origins.
+pub fn cors_layer(config: &Config) -> tower_http::cors::CorsLayer {
+    use axum::http::{HeaderValue, Method};
+    if config.allowed_origins.iter().any(|o| o == "*") {
+        tracing::warn!("CORS is permissive (CORE_ALLOWED_ORIGINS=*) — dev only");
+        return tower_http::cors::CorsLayer::permissive();
+    }
+    if config.allowed_origins.is_empty() {
+        return tower_http::cors::CorsLayer::new();
+    }
+    let origins: Vec<HeaderValue> = config
+        .allowed_origins
+        .iter()
+        .filter_map(|o| o.parse().ok())
+        .collect();
+    tracing::info!("CORS allowlist: {:?}", config.allowed_origins);
+    tower_http::cors::CorsLayer::new()
+        .allow_origin(origins)
+        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
+        .allow_headers([
+            axum::http::header::AUTHORIZATION,
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::HeaderName::from_static("x-request-id"),
+            axum::http::header::HeaderName::from_static("x-correlation-id"),
+        ])
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
     pub config: Config,
+    pub auth_limiter: std::sync::Arc<tokio::sync::Mutex<crate::security::AuthRateLimiter>>,
+}
+
+impl AppState {
+    pub fn new(pool: SqlitePool, config: Config) -> Self {
+        Self {
+            pool,
+            config,
+            auth_limiter: std::sync::Arc::new(tokio::sync::Mutex::new(
+                crate::security::AuthRateLimiter::new(),
+            )),
+        }
+    }
 }
 
 fn bearer_token(headers: &HeaderMap) -> Result<String, AppError> {
@@ -485,16 +528,11 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
             axum::routing::post(execute_module_action),
         )
         .layer(middleware::from_fn_with_state(
-            AppState {
-                pool: pool.clone(),
-                config: config.clone(),
-            },
+            AppState::new(pool.clone(), config.clone()),
             auth_middleware,
         ))
-        .with_state(AppState {
-            pool,
-            config: config.clone(),
-        })
+        .layer(cors_layer(config))
+        .with_state(AppState::new(pool, config.clone()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -3130,6 +3168,7 @@ fn map_db_error(error: anyhow::Error) -> AppError {
             AppError::Conflict(msg) => AppError::Conflict(msg.clone()),
             AppError::Unauthorized(msg) => AppError::Unauthorized(msg.clone()),
             AppError::Forbidden(msg) => AppError::Forbidden(msg.clone()),
+            AppError::TooManyRequests(msg) => AppError::TooManyRequests(msg.clone()),
             AppError::Internal(_) => AppError::Internal(anyhow::anyhow!("internal error")),
         };
     }
@@ -3161,12 +3200,17 @@ pub struct RegisterRequest {
 
 async fn auth_register(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(input): Json<RegisterRequest>,
 ) -> Result<(StatusCode, Json<auth::User>), AppError> {
-    auth::register(&state.pool, &input.username, &input.password)
-        .await
-        .map(|user| (StatusCode::CREATED, Json(user)))
-        .map_err(map_db_error)
+    check_auth_rate_limit(&state, &headers).await?;
+    match auth::register(&state.pool, &input.username, &input.password).await {
+        Ok(user) => Ok((StatusCode::CREATED, Json(user))),
+        Err(error) => {
+            record_auth_failure(&state, &headers).await;
+            Err(map_db_error(error))
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -3177,12 +3221,71 @@ pub struct LoginRequest {
 
 async fn auth_login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(input): Json<LoginRequest>,
 ) -> Result<Json<auth::Session>, AppError> {
-    auth::login(&state.pool, &input.username, &input.password)
-        .await
-        .map(Json)
-        .map_err(map_db_error)
+    check_auth_rate_limit(&state, &headers).await?;
+    match auth::login(&state.pool, &input.username, &input.password).await {
+        Ok(session) => {
+            // Success resets the failure counter so normal logins are never
+            // throttled by earlier mistakes from the same IP.
+            let key = auth_client_key(&headers);
+            state.auth_limiter.lock().await.clear(&key);
+            Ok(Json(session))
+        }
+        Err(error) => {
+            record_auth_failure(&state, &headers).await;
+            Err(map_db_error(error))
+        }
+    }
+}
+
+/// Reject with 429 when the client IP exceeded the configured failed-auth
+/// budget inside the window. Failures (not attempts) are counted, and the
+/// rejection message is generic so it cannot be used for user enumeration.
+async fn check_auth_rate_limit(state: &AppState, headers: &HeaderMap) -> Result<(), AppError> {
+    let key = auth_client_key(headers);
+    let limited = state.auth_limiter.lock().await.is_limited(
+        &key,
+        state.config.auth_rate_limit_max_attempts,
+        std::time::Duration::from_secs(state.config.auth_rate_limit_window_secs),
+    );
+    if limited {
+        let _ = observability::record(
+            &state.pool,
+            "warn",
+            "security",
+            "auth_rate_limited",
+            None,
+            None,
+            None,
+            Some("auth"),
+            Some(&key),
+            Some(429),
+            None,
+            "too many failed authentication attempts",
+            &json!({}),
+        )
+        .await;
+        return Err(AppError::TooManyRequests(
+            "too many attempts, try again later".into(),
+        ));
+    }
+    Ok(())
+}
+
+async fn record_auth_failure(state: &AppState, headers: &HeaderMap) {
+    let key = auth_client_key(headers);
+    state.auth_limiter.lock().await.record_failure(
+        &key,
+        state.config.auth_rate_limit_max_attempts,
+        std::time::Duration::from_secs(state.config.auth_rate_limit_window_secs),
+    );
+}
+
+fn auth_client_key(headers: &HeaderMap) -> String {
+    let forwarded = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok());
+    crate::security::client_ip_key(forwarded, "unknown")
 }
 
 async fn auth_logout(

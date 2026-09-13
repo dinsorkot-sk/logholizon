@@ -47,11 +47,54 @@ pub async fn record(
     metadata: &Value,
 ) -> Result<()> {
     let id = format!("obs_{}", crate::repository::chrono_nanos_public());
+    let scrubbed = redact_secrets(metadata);
     sqlx::query("INSERT INTO _observability_log (id,level,category,action,actor,request_id,correlation_id,target_type,target_id,status_code,duration_ms,message,metadata) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
         .bind(id).bind(level).bind(category).bind(action).bind(actor).bind(request_id)
         .bind(correlation_id).bind(target_type).bind(target_id).bind(status_code)
-        .bind(duration_ms).bind(message).bind(metadata.to_string()).execute(pool).await?;
+        .bind(duration_ms).bind(redact_secrets_message(message)).bind(scrubbed.to_string()).execute(pool).await?;
     Ok(())
+}
+
+/// Scrub secret-bearing keys before persisting observability metadata.
+/// Never store raw passwords, tokens, hashes, or webhook secrets in logs.
+pub fn redact_secrets(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut out = serde_json::Map::with_capacity(map.len());
+            for (key, val) in map {
+                let lower = key.to_ascii_lowercase();
+                if lower.contains("password")
+                    || lower.contains("secret")
+                    || lower.contains("token")
+                    || lower.contains("hash")
+                    || lower.contains("signature")
+                    || lower == "authorization"
+                {
+                    out.insert(key.clone(), Value::String("[redacted]".into()));
+                } else {
+                    out.insert(key.clone(), redact_secrets(val));
+                }
+            }
+            Value::Object(out)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(redact_secrets).collect()),
+        Value::String(text) => {
+            // Scrub bearer tokens that leak into free-form strings.
+            if text.to_ascii_lowercase().contains("bearer ") {
+                Value::String("[redacted]".into())
+            } else {
+                Value::String(text.clone())
+            }
+        }
+        other => other.clone(),
+    }
+}
+
+fn redact_secrets_message(message: &str) -> String {
+    if message.to_ascii_lowercase().contains("bearer ") {
+        return "[redacted]".into();
+    }
+    message.to_string()
 }
 
 pub async fn list(

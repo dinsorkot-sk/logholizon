@@ -157,8 +157,35 @@ pnpm --dir packages/app run check
 | `CORE_DATABASE_URL` | `sqlite://<root>/.data/core.db` | SQLite location |
 | `CORE_BACKUP_INTERVAL_HOURS` | `24` | Scheduled backup interval; `0` disables it |
 | `CORE_BACKUP_KEEP` | `7` | Number of backups to keep |
+| `CORE_ALLOWED_ORIGINS` | _(empty)_ | Comma-separated CORS allowlist (e.g. `https://app.example.com,http://localhost:3000`). Empty = same-origin only. `*` = permissive (dev only). |
+| `CORE_AUTH_RATE_LIMIT_MAX` | `10` | Failed login/register attempts per IP before 429 |
+| `CORE_AUTH_RATE_LIMIT_WINDOW_SECS` | `60` | Sliding window (seconds) for the auth rate limiter |
 
 App uses `CORE_URL` (default `http://127.0.0.1:8787`).
+
+### Security model (Phase B)
+
+- Passwords: Argon2id hashing, minimum 8 characters. First registered user
+  becomes `admin`; the last admin cannot be deleted.
+- Sessions: 256-bit random bearer tokens, 7-day expiry, deleted on logout.
+  Password reset (admin `POST /v1/admin/users/{id}/reset-password` or CLI
+  `reset-password <username> <password>`) invalidates all sessions for that
+  user. Admin-only routes (`/v1/meta/*`, `/v1/admin/*`, `/v1/audit`) return
+  403 for non-admins; all denials are audit-logged.
+- Observability: secrets (passwords, tokens, hashes, webhook secrets,
+  signatures, bearer strings) are redacted to `[redacted]` before log
+  persistence; never stored raw.
+- Brute-force protection: failed logins/registers are counted per client IP
+  (`X-Forwarded-For` aware); exceeding `CORE_AUTH_RATE_LIMIT_MAX` inside the
+  window returns generic `429 too_many_requests` (no user enumeration).
+- CORS: same-origin by default; cross-origin only for exact-match entries in
+  `CORE_ALLOWED_ORIGINS`.
+- Outbound webhooks: SSRF-blocked (no localhost/private/link-local targets,
+  no credentials/fragments), 1MB body cap, 32-header cap, HMAC-SHA256
+  `x-logholizon-signature` on send; `verify_webhook` checks inbound
+  signatures in constant time.
+- Uploads: filename traversal blocked, 5MB cap, image/PDF/text/CSV/XLSX
+  allowlist only.
 
 ## Design
 

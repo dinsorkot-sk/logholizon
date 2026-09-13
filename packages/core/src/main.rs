@@ -1,6 +1,5 @@
 use logholizon_core::{backup, http, notification, notify, Config};
 use tokio::net::TcpListener;
-use tower_http::cors::CorsLayer;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -77,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
             }
         });
     }
-    let app = http::router(&config, pool).layer(CorsLayer::permissive());
+    let app = http::router(&config, pool);
     let addr = format!("{}:{}", config.host, config.port);
     let listener = TcpListener::bind(&addr).await?;
     tracing::info!("logholizon-core listening on {addr}");

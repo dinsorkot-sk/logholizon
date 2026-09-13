@@ -308,6 +308,38 @@ with type annotations only, no behavior change. All gates green on `v0.0.28`:
 `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace`,
 `pnpm app test` (20/20), `pnpm app check`, `pnpm app build`.
 
+## Production Auth and Security — v0.0.29 (Phase B — COMPLETE)
+
+Branch `v0.0.29`, from `v0.0.28` tip `2a8d265`. HTTP + CLI boundary only;
+no SQL or domain logic outside Rust Core.
+
+- Session lifecycle: 7-day expiry enforced in `user_for_token`, logout
+  deletes the token, password reset (admin HTTP `reset-password` or CLI
+  `reset-password <username> <password>`) invalidates all user sessions
+  and audit-logs `password_reset`.
+- Brute-force protection: per-IP sliding-window limiter on
+  login/register (`CORE_AUTH_RATE_LIMIT_MAX`/`CORE_AUTH_RATE_LIMIT_WINDOW_SECS`,
+  `X-Forwarded-For` aware); failures only, success clears; over-budget
+  returns generic `429 too_many_requests` (`AppError::TooManyRequests`).
+- CORS lockdown: `cors_layer` moved into `http.rs` so every router
+  (binary + tests) enforces it; `CORE_ALLOWED_ORIGINS` allowlist, empty =
+  same-origin only, `"*"` = permissive dev-only with warning.
+- Secrets/SSRF: inbound HMAC-SHA256 `verify_webhook` (constant-time),
+  outbound SSRF block + 1MB/32-header caps kept, filename traversal block
+  + 5MB attachment cap + MIME allowlist kept, observability `record`
+  redacts passwords/tokens/secrets/hashes/signatures/bearer strings to
+  `[redacted]` before persistence.
+- Tests (`security.rs`, 20 total): rate-limiter unit, window expiry,
+  client-IP keying, HMAC round-trip/tamper, HTTP 401 bypass, HTTP 429
+  rate-limit, reset-invalidates-sessions, logout-invalidates, expiry
+  rejection, CORS allowlist/deny, redaction unit + persistence, caps,
+  tenant isolation. Escalation (403) covered in `health.rs`.
+
+All gates green on `v0.0.29`: `cargo fmt --check`,
+`cargo clippy --workspace --all-targets -D warnings`,
+`cargo test --workspace -- --test-threads=1`, `pnpm app test` (20/20),
+`pnpm app check`, `pnpm app build`.
+
 ## Final Quality Gate
 
 100% requires all of the following:

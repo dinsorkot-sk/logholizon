@@ -16,6 +16,9 @@ fn test_config() -> Config {
         notify_interval_secs: 30,
         notify_timeout_secs: 10,
         notify_max_attempts: 3,
+        allowed_origins: Vec::new(),
+        auth_rate_limit_max_attempts: 10,
+        auth_rate_limit_window_secs: 60,
     }
 }
 
@@ -47,6 +50,9 @@ async fn authed_app() -> (axum::Router, String, sqlx::SqlitePool, std::path::Pat
         notify_interval_secs: 30,
         notify_timeout_secs: 10,
         notify_max_attempts: 3,
+        allowed_origins: Vec::new(),
+        auth_rate_limit_max_attempts: 10,
+        auth_rate_limit_window_secs: 60,
     };
     let app = http::router(&config, pool.clone());
     (app, session.token, pool, dir)
