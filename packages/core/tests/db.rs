@@ -87,13 +87,26 @@ async fn migrate_and_check_in_memory() {
 
 #[tokio::test]
 async fn connect_applies_wal_concurrency_policy() {
-    let pool = db::connect("sqlite::memory:").await.unwrap();
+    // WAL requires a file-backed database; in-memory SQLite stays in
+    // `memory` journal mode, so use a temp file to assert the policy.
+    let dir = std::env::temp_dir().join(format!(
+        "logholizon-test-wal-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+    let path = dir.join("core.db");
+    let url = format!("sqlite://{}", path.to_str().unwrap().replace('\\', "/"));
+    let pool = db::connect(&url).await.unwrap();
     let snapshot = db::pragma_snapshot(&pool).await.unwrap();
     assert_eq!(snapshot.journal_mode, "WAL");
     assert_eq!(snapshot.busy_timeout_ms, db::BUSY_TIMEOUT_MS);
     assert_eq!(snapshot.synchronous, "NORMAL");
     assert!(snapshot.foreign_keys);
     pool.close().await;
+    tokio::fs::remove_dir_all(&dir).await.ok();
 }
 
 #[tokio::test]

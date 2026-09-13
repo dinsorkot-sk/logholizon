@@ -363,9 +363,23 @@ async fn version_returns_package_version() {
 
 #[tokio::test]
 async fn ready_reports_migrated_integrity_wal_and_queues() {
-    let pool = db::connect("sqlite::memory:").await.unwrap();
+    // WAL requires a file-backed database; in-memory SQLite stays in
+    // `memory` journal mode, so use a temp file to assert the policy.
+    let seq = TEST_DIR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!(
+        "logholizon-test-ready-{}-{seq}",
+        std::process::id()
+    ));
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+    let db_path = dir.join("core.db");
+    let url = format!("sqlite://{}", db_path.to_str().unwrap().replace('\\', "/"));
+    let pool = db::connect(&url).await.unwrap();
     db::migrate(&pool).await.unwrap();
-    let app = http::router(&test_config(), pool);
+    let config = Config {
+        database_url: url.clone(),
+        ..test_config()
+    };
+    let app = http::router(&config, pool);
     let response = app
         .oneshot(
             Request::builder()
@@ -387,6 +401,7 @@ async fn ready_reports_migrated_integrity_wal_and_queues() {
     assert_eq!(json["checks"]["pragmas"]["foreign_keys"], true);
     assert!(json["checks"]["pending_automation"].is_number());
     assert!(json["checks"]["pending_webhooks"].is_number());
+    tokio::fs::remove_dir_all(&dir).await.ok();
 }
 
 #[tokio::test]

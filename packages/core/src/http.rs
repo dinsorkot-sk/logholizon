@@ -3099,7 +3099,12 @@ async fn observability_metrics(State(state): State<AppState>) -> Result<Json<Val
             .fetch_one(&state.pool)
             .await
             .map_err(|e| AppError::from(anyhow::Error::from(e)))?;
-    let denied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _observability_log WHERE action IN ('permission_denied','authentication_failed','login_failed')").fetch_one(&state.pool).await.map_err(|e| AppError::from(anyhow::Error::from(e)))?;
+    let denied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _observability_log WHERE action IN ('permission_denied','authentication_failed','login_failed','register_failed')").fetch_one(&state.pool).await.map_err(|e| AppError::from(anyhow::Error::from(e)))?;
+    let logins: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM _observability_log WHERE action='login_success'")
+            .fetch_one(&state.pool)
+            .await
+            .map_err(|e| AppError::from(anyhow::Error::from(e)))?;
     let pending_automation: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM _automation_execution WHERE status='pending'")
             .fetch_one(&state.pool)
@@ -3111,7 +3116,7 @@ async fn observability_metrics(State(state): State<AppState>) -> Result<Json<Val
             .await
             .map_err(|e| AppError::from(anyhow::Error::from(e)))?;
     Ok(Json(
-        json!({"observability_events":total,"errors":errors,"security_denials":denied,"pending_automation":pending_automation,"pending_webhooks":pending_webhooks}),
+        json!({"observability_events":total,"errors":errors,"security_denials":denied,"logins":logins,"pending_automation":pending_automation,"pending_webhooks":pending_webhooks}),
     ))
 }
 async fn list_observability_logs(
@@ -3274,8 +3279,42 @@ async fn auth_register(
 ) -> Result<(StatusCode, Json<auth::User>), AppError> {
     check_auth_rate_limit(&state, &headers).await?;
     match auth::register(&state.pool, &input.username, &input.password).await {
-        Ok(user) => Ok((StatusCode::CREATED, Json(user))),
+        Ok(user) => {
+            let _ = observability::record(
+                &state.pool,
+                "info",
+                "security",
+                "register_success",
+                Some(&input.username),
+                None,
+                None,
+                Some("auth"),
+                None,
+                Some(201),
+                None,
+                "registration successful",
+                &json!({"username": input.username}),
+            )
+            .await;
+            Ok((StatusCode::CREATED, Json(user)))
+        }
         Err(error) => {
+            let _ = observability::record(
+                &state.pool,
+                "warn",
+                "security",
+                "register_failed",
+                Some(&input.username),
+                None,
+                None,
+                Some("auth"),
+                None,
+                Some(400),
+                None,
+                "registration failed",
+                &json!({"username": input.username}),
+            )
+            .await;
             record_auth_failure(&state, &headers).await;
             Err(map_db_error(error))
         }
@@ -3300,9 +3339,41 @@ async fn auth_login(
             // throttled by earlier mistakes from the same IP.
             let key = auth_client_key(&headers);
             state.auth_limiter.lock().await.clear(&key);
+            let _ = observability::record(
+                &state.pool,
+                "info",
+                "security",
+                "login_success",
+                Some(&input.username),
+                None,
+                None,
+                Some("auth"),
+                None,
+                Some(200),
+                None,
+                "login successful",
+                &json!({"username": input.username}),
+            )
+            .await;
             Ok(Json(session))
         }
         Err(error) => {
+            let _ = observability::record(
+                &state.pool,
+                "warn",
+                "security",
+                "login_failed",
+                Some(&input.username),
+                None,
+                None,
+                Some("auth"),
+                None,
+                Some(401),
+                None,
+                "login failed",
+                &json!({"username": input.username}),
+            )
+            .await;
             record_auth_failure(&state, &headers).await;
             Err(map_db_error(error))
         }
@@ -3362,9 +3433,29 @@ async fn auth_logout(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let token = bearer_token(&headers)?;
+    let username = auth::user_for_token(&state.pool, &token)
+        .await
+        .ok()
+        .map(|user| user.username);
     auth::logout(&state.pool, &token)
         .await
         .map_err(AppError::from)?;
+    let _ = observability::record(
+        &state.pool,
+        "info",
+        "security",
+        "logout",
+        username.as_deref(),
+        None,
+        None,
+        Some("auth"),
+        None,
+        Some(200),
+        None,
+        "user logged out",
+        &json!({}),
+    )
+    .await;
     Ok(Json(json!({ "message": "logged out" })))
 }
 

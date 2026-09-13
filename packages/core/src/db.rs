@@ -30,21 +30,28 @@ pub async fn connect(url: &str) -> Result<SqlitePool> {
     } else {
         MAX_CONNECTIONS_FILE
     };
+    // Pragmas are per-connection, so apply them on every connection the
+    // pool opens (not just the first one) to enforce the policy uniformly.
     let pool = SqlitePoolOptions::new()
         .max_connections(max_connections as u32)
+        .after_connect(|conn, _meta| {
+            Box::pin(async move {
+                sqlx::query("PRAGMA foreign_keys = ON")
+                    .execute(&mut *conn)
+                    .await?;
+                sqlx::query("PRAGMA journal_mode = WAL")
+                    .execute(&mut *conn)
+                    .await?;
+                sqlx::query(&format!("PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}"))
+                    .execute(&mut *conn)
+                    .await?;
+                sqlx::query("PRAGMA synchronous = NORMAL")
+                    .execute(&mut *conn)
+                    .await?;
+                Ok(())
+            })
+        })
         .connect(&normalized)
-        .await?;
-    sqlx::query("PRAGMA foreign_keys = ON")
-        .execute(&pool)
-        .await?;
-    sqlx::query("PRAGMA journal_mode = WAL")
-        .execute(&pool)
-        .await?;
-    sqlx::query(&format!("PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}"))
-        .execute(&pool)
-        .await?;
-    sqlx::query("PRAGMA synchronous = NORMAL")
-        .execute(&pool)
         .await?;
     Ok(pool)
 }

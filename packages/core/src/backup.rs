@@ -60,10 +60,12 @@ pub async fn restore(source: &Path, destination: &Path) -> Result<Option<std::pa
     }
     // Preserve the live database before replacing it.
     let rollback = if destination.is_file() {
+        // Nanosecond resolution so two restores within the same second
+        // (e.g. a DR drill that restores then undoes) never collide.
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs();
+            .as_nanos();
         let dir = destination
             .parent()
             .map(|p| p.join("backups"))

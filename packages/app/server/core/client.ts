@@ -333,6 +333,7 @@ export type CoreObservabilityMetrics = {
   observability_events: number
   errors: number
   security_denials: number
+  logins: number
   pending_automation: number
   pending_webhooks: number
 }
