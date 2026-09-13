@@ -148,6 +148,14 @@ pub async fn process_pending(pool: &SqlitePool) -> Result<usize> {
         } else {
             error = Some(format!("unsupported automation action: {action}"));
         }
+        // Observability: derive the outcome before `error` is consumed below.
+        let (level, action, outcome): (&str, &str, String) = match &error {
+            None => ("info", "automation_succeeded", "succeeded".to_string()),
+            Some(_) if attempt + 1 >= max_attempts.max(1) => {
+                ("warn", "automation_failed", "failed".to_string())
+            }
+            Some(_) => ("warn", "automation_failed", "pending".to_string()),
+        };
         if let Some(e) = error {
             let next = attempt + 1;
             let status = if next >= max_attempts.max(1) {
@@ -159,6 +167,25 @@ pub async fn process_pending(pool: &SqlitePool) -> Result<usize> {
         } else {
             sqlx::query("UPDATE _automation_execution SET status='succeeded',result=?,error=NULL,finished_at=CURRENT_TIMESTAMP WHERE id=?").bind(result.to_string()).bind(id).execute(pool).await?;
         }
+        // Observability: automation executions are first-class audit events.
+        // (The execution id was moved into the UPDATE binds above, so the
+        // event reports the outcome derived from the computed status.)
+        let _ = crate::observability::record(
+            pool,
+            level,
+            "automation",
+            action,
+            None,
+            None,
+            None,
+            Some("automation"),
+            Some(automation_id.as_str()),
+            None,
+            None,
+            &format!("automation {automation_id} execution: {outcome}"),
+            &serde_json::json!({"automation_id": automation_id, "document_id": document_id, "status": outcome}),
+        )
+        .await;
         n += 1;
     }
     Ok(n)

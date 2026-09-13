@@ -4632,6 +4632,23 @@ pub async fn transition_document_as_role(
     )
     .await?;
     tx.commit().await?;
+    // Observability: workflow transitions are first-class audit events.
+    let _ = crate::observability::record(
+        pool,
+        "info",
+        "workflow",
+        "transition",
+        actor,
+        None,
+        None,
+        Some("document"),
+        Some(id),
+        None,
+        None,
+        &format!("{action}: {current} -> {target}"),
+        &serde_json::json!({"entity_id": existing.entity_id, "action": action, "from_state": current, "to_state": target}),
+    )
+    .await;
     get_document(pool, id).await
 }
 

@@ -210,7 +210,7 @@ Rust Axum Runtime
 - SSRF protection.
 - Secure file upload handling.
 
-### Phase 18 — Audit & Observability — 97%
+### Phase 18 — Audit & Observability — COMPLETE (100%)
 - Audit log: who/what/when/target/before/after.
 - Login and security events.
 - Permission denial logs.
@@ -220,6 +220,22 @@ Rust Axum Runtime
 - Runtime error logs.
 - Request ID and correlation ID.
 - Operational metrics sufficient to diagnose runtime failures.
+
+Verified on `v0.0.32` (Phase D): every bullet maps to a storage table +
+endpoint + UI surface. `_observability_log` records `security` events
+(`register_success/failed`, `login_success/failed`, `logout`,
+`permission_denied`), per-request entries with request/correlation IDs and
+`runtime_error` on 5xx, plus `workflow` (`transition`), `automation`
+(`automation_succeeded/failed`), `webhook` (`webhook_delivered/failed`), and
+`report` (`report_run`) events. `/v1/admin/observability/logs` (filtered,
+paginated) and `/v1/admin/observability/metrics` serve the admin
+Observability page (`admin/observability.vue`); the audit log
+(`/v1/audit`, `admin/audit.vue`), workflow history
+(`/v1/documents/{id}/workflow-history`), automation executions
+(`/v1/meta/automations/{id}/executions`), and notification deliveries
+(`/v1/admin/notification-deliveries`) cover the remaining bullets.
+`packages/core/tests/observability.rs` (7 tests) proves each event source;
+`phase20_acceptance.rs` + `phase20_http.rs` prove the end-to-end flow.
 
 ### Phase 19 - Testing & Production Readiness - COMPLETE (100%)
 - Unit tests for metadata, entity, field and relation engines.

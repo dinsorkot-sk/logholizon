@@ -22,6 +22,8 @@ type EntityView = { id: string; entity_id: string; name: string; config: Record<
 type FormLayoutSection = { id: string; label: string; fields: string[] }
 type FormLayout = { entity_id: string; config: { sections?: FormLayoutSection[] } }
 type NotificationRule = { id: string; entity_id: string; trigger: string; target_url: string; active: boolean; created_at: string }
+type ModuleAction = { id: string; entity_id: string; name: string; label: string; kind: string; config: Record<string, unknown>; active: boolean }
+type Automation = { id: string; entity_id: string; trigger: string; action: string; target_url: string; active: boolean; created_at: string }
 
 const toast = useToast()
 const { data: entities, status, refresh } = await useFetch<Entity[]>('/api/meta/entities')
@@ -42,6 +44,10 @@ const formLayoutUrl = computed(() => selectedId.value ? `/api/meta/entities/${en
 const { data: formLayout, status: formLayoutStatus, error: formLayoutError, refresh: refreshFormLayout } = await useFetch<FormLayout>(formLayoutUrl, { immediate: false })
 const notifyRulesUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/notification-rules` : '')
 const { data: notifyRules, status: notifyRulesStatus, error: notifyRulesError, refresh: refreshNotifyRules } = await useFetch<NotificationRule[]>(notifyRulesUrl, { immediate: false })
+const actionsUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/actions` : '')
+const { data: moduleActions, status: moduleActionsStatus, error: moduleActionsError, refresh: refreshModuleActions } = await useFetch<ModuleAction[]>(actionsUrl, { immediate: false })
+const automationsUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/automations` : '')
+const { data: automations, status: automationsStatus, error: automationsError, refresh: refreshAutomations } = await useFetch<Automation[]>(automationsUrl, { immediate: false })
 
 const filteredEntities = computed(() => {
   const q = search.value.trim().toLowerCase()
@@ -57,7 +63,9 @@ const tabItems = [
   { label: 'Permissions', icon: 'i-lucide-shield', slot: 'permissions' },
   { label: 'Views', icon: 'i-lucide-eye', slot: 'views' },
   { label: 'Form Layout', icon: 'i-lucide-layout-dashboard', slot: 'form-layout' },
-  { label: 'Notifications', icon: 'i-lucide-bell', slot: 'notifications' }
+  { label: 'Notifications', icon: 'i-lucide-bell', slot: 'notifications' },
+  { label: 'Actions', icon: 'i-lucide-zap', slot: 'actions' },
+  { label: 'Automations', icon: 'i-lucide-workflow', slot: 'automations' }
 ]
 
 const typeItems = [
@@ -97,6 +105,8 @@ async function selectEntity(id: string) {
   refreshFormLayout()
   resetLayoutEditor()
   refreshNotifyRules()
+  refreshModuleActions()
+  refreshAutomations()
 }
 
 // --- Permissions ---
@@ -399,6 +409,192 @@ async function toggleRule(rule: NotificationRule) {
 function confirmDeleteRule(rule: NotificationRule) {
   ruleToDelete.value = rule
   deleteRuleOpen.value = true
+}
+
+// --- Module actions ---
+const actionOpen = ref(false)
+const actionForm = reactive({ name: '', label: '', kind: 'webhook', config: '{}' })
+const actionError = ref('')
+const savingAction = ref(false)
+const deleteActionOpen = ref(false)
+const actionToDelete = ref<ModuleAction | null>(null)
+const deletingAction = ref(false)
+
+const actionKindItems = [
+  { label: 'Create record', value: 'create' },
+  { label: 'Update record', value: 'update' },
+  { label: 'Delete record', value: 'delete' },
+  { label: 'Change status', value: 'change_status' },
+  { label: 'Notify', value: 'notify' },
+  { label: 'Webhook', value: 'webhook' },
+  { label: 'Formula', value: 'formula' },
+  { label: 'Generate', value: 'generate' }
+]
+
+function openAddAction() {
+  actionForm.name = ''
+  actionForm.label = ''
+  actionForm.kind = 'webhook'
+  actionForm.config = '{}'
+  actionError.value = ''
+  actionOpen.value = true
+}
+
+async function saveAction() {
+  if (!selectedId.value) return
+  actionError.value = ''
+  if (!actionForm.name.trim() || !actionForm.label.trim()) {
+    actionError.value = 'name and label are required'
+    return
+  }
+  let config: Record<string, unknown> = {}
+  try {
+    config = actionForm.config.trim() ? JSON.parse(actionForm.config) : {}
+  } catch {
+    actionError.value = 'config must be valid JSON'
+    return
+  }
+  savingAction.value = true
+  try {
+    await $fetch(`/api/meta/entities/${encodeURIComponent(selectedId.value)}/actions`, {
+      method: 'POST',
+      body: { name: actionForm.name.trim(), label: actionForm.label.trim(), kind: actionForm.kind, config }
+    })
+    actionOpen.value = false
+    await refreshModuleActions()
+    toast.add({ title: 'Action created', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    actionError.value = e?.data?.message || e?.statusMessage || 'Failed to create action'
+  } finally {
+    savingAction.value = false
+  }
+}
+
+function confirmDeleteAction(action: ModuleAction) {
+  actionToDelete.value = action
+  deleteActionOpen.value = true
+}
+
+async function removeAction() {
+  if (!actionToDelete.value) return
+  deletingAction.value = true
+  try {
+    await $fetch(`/api/meta/actions/${encodeURIComponent(actionToDelete.value.id)}`, { method: 'DELETE' })
+    deleteActionOpen.value = false
+    actionToDelete.value = null
+    await refreshModuleActions()
+    toast.add({ title: 'Action deleted', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    toast.add({
+      title: 'Unable to delete action',
+      description: e?.data?.message || e?.statusMessage || 'Delete failed',
+      color: 'error',
+      icon: 'i-lucide-alert-circle'
+    })
+  } finally {
+    deletingAction.value = false
+  }
+}
+
+// --- Automations ---
+const automationOpen = ref(false)
+const automationForm = reactive({ trigger: 'create', action: 'webhook', target_url: '', active: true })
+const automationError = ref('')
+const savingAutomation = ref(false)
+const deleteAutomationOpen = ref(false)
+const automationToDelete = ref<Automation | null>(null)
+const deletingAutomation = ref(false)
+const togglingAutomationId = ref('')
+
+const automationTriggerItems = [
+  { label: 'On create', value: 'create' },
+  { label: 'On update', value: 'update' },
+  { label: 'On delete', value: 'delete' },
+  { label: 'On transition', value: 'transition' }
+]
+
+const automationActionItems = [
+  { label: 'Webhook', value: 'webhook' },
+  { label: 'Notify', value: 'notify' }
+]
+
+function openAddAutomation() {
+  automationForm.trigger = 'create'
+  automationForm.action = 'webhook'
+  automationForm.target_url = ''
+  automationForm.active = true
+  automationError.value = ''
+  automationOpen.value = true
+}
+
+async function saveAutomation() {
+  if (!selectedId.value) return
+  automationError.value = ''
+  if (!automationForm.target_url.trim()) {
+    automationError.value = 'target_url is required'
+    return
+  }
+  savingAutomation.value = true
+  try {
+    await $fetch(`/api/meta/entities/${encodeURIComponent(selectedId.value)}/automations`, {
+      method: 'POST',
+      body: { trigger: automationForm.trigger, action: automationForm.action, target_url: automationForm.target_url.trim(), active: automationForm.active }
+    })
+    automationOpen.value = false
+    await refreshAutomations()
+    toast.add({ title: 'Automation created', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    automationError.value = e?.data?.message || e?.statusMessage || 'Failed to create automation'
+  } finally {
+    savingAutomation.value = false
+  }
+}
+
+async function toggleAutomation(automation: Automation) {
+  togglingAutomationId.value = automation.id
+  try {
+    await $fetch(`/api/meta/automations/${encodeURIComponent(automation.id)}`, {
+      method: 'PUT',
+      body: { active: !automation.active }
+    })
+    await refreshAutomations()
+    toast.add({ title: automation.active ? 'Automation disabled' : 'Automation enabled', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    toast.add({
+      title: 'Unable to update automation',
+      description: e?.data?.message || e?.statusMessage || 'Update failed',
+      color: 'error',
+      icon: 'i-lucide-alert-circle'
+    })
+  } finally {
+    togglingAutomationId.value = ''
+  }
+}
+
+function confirmDeleteAutomation(automation: Automation) {
+  automationToDelete.value = automation
+  deleteAutomationOpen.value = true
+}
+
+async function removeAutomation() {
+  if (!automationToDelete.value) return
+  deletingAutomation.value = true
+  try {
+    await $fetch(`/api/meta/automations/${encodeURIComponent(automationToDelete.value.id)}`, { method: 'DELETE' })
+    deleteAutomationOpen.value = false
+    automationToDelete.value = null
+    await refreshAutomations()
+    toast.add({ title: 'Automation deleted', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    toast.add({
+      title: 'Unable to delete automation',
+      description: e?.data?.message || e?.statusMessage || 'Delete failed',
+      color: 'error',
+      icon: 'i-lucide-alert-circle'
+    })
+  } finally {
+    deletingAutomation.value = false
+  }
 }
 
 async function removeRule() {
@@ -1333,6 +1529,83 @@ const fieldColumns: TableColumn<Field>[] = [
                 </div>
               </div>
             </template>
+            <template #actions>
+              <div v-if="moduleActionsStatus === 'pending'" class="py-6">
+                <USkeleton v-for="index in 2" :key="index" class="mb-3 h-8 w-full" />
+              </div>
+              <UAlert
+                v-else-if="moduleActionsStatus === 'error'"
+                color="error"
+                title="Cannot load actions"
+                :description="moduleActionsError?.message || 'Check the Rust core connection.'"
+              >
+                <template #actions>
+                  <UButton size="sm" variant="outline" @click="refreshModuleActions()">Retry</UButton>
+                </template>
+              </UAlert>
+              <div v-else class="py-3">
+                <div class="flex items-center justify-between pb-2">
+                  <p class="text-sm text-muted">{{ (moduleActions || []).length }} actions · reusable operations on records</p>
+                  <UButton size="sm" icon="i-lucide-plus" @click="openAddAction">Add action</UButton>
+                </div>
+                <div v-if="!(moduleActions || []).length" class="py-8 text-center text-sm text-muted">
+                  No actions yet. Actions run on records from the runtime page.
+                </div>
+                <div v-else class="space-y-2">
+                  <div v-for="action in moduleActions || []" :key="action.id" class="flex items-center justify-between gap-4 rounded-lg border border-default px-4 py-3">
+                    <div class="min-w-0">
+                      <p class="truncate text-sm font-medium">{{ action.label }} <span class="font-mono text-xs text-muted">{{ action.name }}</span></p>
+                      <p class="text-xs text-muted">{{ action.kind }} · {{ action.active ? 'active' : 'disabled' }}</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <UBadge :color="action.active ? 'success' : 'neutral'" variant="subtle">{{ action.kind }}</UBadge>
+                      <UButton size="xs" variant="ghost" color="error" @click="confirmDeleteAction(action)">Delete</UButton>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+            <template #automations>
+              <div v-if="automationsStatus === 'pending'" class="py-6">
+                <USkeleton v-for="index in 2" :key="index" class="mb-3 h-8 w-full" />
+              </div>
+              <UAlert
+                v-else-if="automationsStatus === 'error'"
+                color="error"
+                title="Cannot load automations"
+                :description="automationsError?.message || 'Check the Rust core connection.'"
+              >
+                <template #actions>
+                  <UButton size="sm" variant="outline" @click="refreshAutomations()">Retry</UButton>
+                </template>
+              </UAlert>
+              <div v-else class="py-3">
+                <div class="flex items-center justify-between pb-2">
+                  <p class="text-sm text-muted">{{ (automations || []).length }} automations · fire on record events</p>
+                  <UButton size="sm" icon="i-lucide-plus" @click="openAddAutomation">Add automation</UButton>
+                </div>
+                <div v-if="!(automations || []).length" class="py-8 text-center text-sm text-muted">
+                  No automations yet. Automations react to create, update, delete, or transition events.
+                </div>
+                <div v-else class="space-y-2">
+                  <div v-for="automation in automations || []" :key="automation.id" class="flex items-center justify-between gap-4 rounded-lg border border-default px-4 py-3">
+                    <div class="min-w-0">
+                      <p class="truncate font-mono text-sm font-medium">{{ automation.target_url }}</p>
+                      <p class="text-xs text-muted">{{ automation.trigger }} → {{ automation.action }} · {{ automation.active ? 'active' : 'disabled' }}</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <USwitch
+                        :model-value="automation.active"
+                        :disabled="togglingAutomationId === automation.id"
+                        aria-label="Toggle automation active"
+                        @update:model-value="toggleAutomation(automation)"
+                      />
+                      <UButton size="xs" variant="ghost" color="error" @click="confirmDeleteAutomation(automation)">Delete</UButton>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
           </UTabs>
         </UCard>
       </div>
@@ -1673,6 +1946,92 @@ const fieldColumns: TableColumn<Field>[] = [
           <div class="flex justify-end gap-2">
             <UButton variant="ghost" @click="deleteViewOpen = false">Cancel</UButton>
             <UButton color="error" :loading="deletingView" @click="removeView">Delete</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <!-- Add action modal -->
+      <UModal v-model:open="actionOpen" title="Add action">
+        <template #body>
+          <UForm class="space-y-4" @submit="saveAction">
+            <UFormField label="Name" hint="lowercase, no spaces (e.g. approve)">
+              <UInput v-model="actionForm.name" placeholder="e.g. approve" />
+            </UFormField>
+            <UFormField label="Label">
+              <UInput v-model="actionForm.label" placeholder="e.g. Approve" />
+            </UFormField>
+            <UFormField label="Kind">
+              <USelect v-model="actionForm.kind" :items="actionKindItems" />
+            </UFormField>
+            <UFormField label="Config" hint="JSON object passed to the action">
+              <UTextarea v-model="actionForm.config" :rows="4" placeholder="{}" class="font-mono" />
+            </UFormField>
+            <UAlert v-if="actionError" color="error" :title="actionError" />
+          </UForm>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="actionOpen = false">Cancel</UButton>
+            <UButton :loading="savingAction" @click="saveAction">Create action</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <!-- Delete action modal -->
+      <UModal v-model:open="deleteActionOpen" title="Delete action">
+        <template #body>
+          <p class="text-sm text-muted">
+            This will permanently delete the action
+            <span class="font-mono">{{ actionToDelete?.name }}</span>. This action cannot be undone.
+          </p>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="deleteActionOpen = false">Cancel</UButton>
+            <UButton color="error" :loading="deletingAction" @click="removeAction">Delete</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <!-- Add automation modal -->
+      <UModal v-model:open="automationOpen" title="Add automation">
+        <template #body>
+          <UForm class="space-y-4" @submit="saveAutomation">
+            <UFormField label="Trigger">
+              <USelect v-model="automationForm.trigger" :items="automationTriggerItems" />
+            </UFormField>
+            <UFormField label="Action">
+              <USelect v-model="automationForm.action" :items="automationActionItems" />
+            </UFormField>
+            <UFormField label="Target URL" hint="https://… — called when the trigger fires">
+              <UInput v-model="automationForm.target_url" placeholder="https://example.com/hook" />
+            </UFormField>
+            <UFormField label="Active">
+              <USwitch v-model="automationForm.active" />
+            </UFormField>
+            <UAlert v-if="automationError" color="error" :title="automationError" />
+          </UForm>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="automationOpen = false">Cancel</UButton>
+            <UButton :loading="savingAutomation" @click="saveAutomation">Create automation</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <!-- Delete automation modal -->
+      <UModal v-model:open="deleteAutomationOpen" title="Delete automation">
+        <template #body>
+          <p class="text-sm text-muted">
+            This will permanently delete the automation
+            <span class="font-mono">{{ automationToDelete?.target_url }}</span>. This action cannot be undone.
+          </p>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="deleteAutomationOpen = false">Cancel</UButton>
+            <UButton color="error" :loading="deletingAutomation" @click="removeAutomation">Delete</UButton>
           </div>
         </template>
       </UModal>

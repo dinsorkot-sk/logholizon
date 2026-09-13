@@ -1786,6 +1786,24 @@ async fn run_report(
     let result = crate::report::run(&state.pool, &saved.entity_id, &config, &role)
         .await
         .map_err(map_db_error)?;
+    // Observability: report runs are first-class audit events.
+    let actor = current_actor(&user);
+    let _ = observability::record(
+        &state.pool,
+        "info",
+        "report",
+        "report_run",
+        actor.as_deref(),
+        None,
+        None,
+        Some("report"),
+        Some(&id),
+        Some(200),
+        None,
+        &format!("report {id} ran on {}", saved.entity_id),
+        &json!({"report_id": id, "entity_id": saved.entity_id, "rows": result.rows.len()}),
+    )
+    .await;
     if input
         .format
         .as_deref()

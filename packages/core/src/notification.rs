@@ -381,6 +381,28 @@ pub async fn deliver_pending(pool: &SqlitePool) -> Result<usize> {
                         .execute(pool)
                         .await?;
                 }
+                // Observability: webhook deliveries are first-class audit events.
+                let (level, action) = if ok {
+                    ("info", "webhook_delivered")
+                } else {
+                    ("warn", "webhook_failed")
+                };
+                let _ = crate::observability::record(
+                    pool,
+                    level,
+                    "webhook",
+                    action,
+                    None,
+                    None,
+                    None,
+                    Some("webhook_delivery"),
+                    Some(id.as_str()),
+                    Some(code),
+                    None,
+                    &format!("webhook delivery {id}: HTTP {code}"),
+                    &serde_json::json!({"delivery_id": id, "event_type": event_type, "status_code": code}),
+                )
+                .await;
             }
             Err(e) => {
                 let next = attempts + 1;
@@ -397,6 +419,23 @@ pub async fn deliver_pending(pool: &SqlitePool) -> Result<usize> {
                 .bind(&id)
                 .execute(pool)
                 .await?;
+                // Observability: webhook transport failures are audit events.
+                let _ = crate::observability::record(
+                    pool,
+                    "warn",
+                    "webhook",
+                    "webhook_failed",
+                    None,
+                    None,
+                    None,
+                    Some("webhook_delivery"),
+                    Some(id.as_str()),
+                    None,
+                    None,
+                    &format!("webhook delivery {id} failed: transport error"),
+                    &serde_json::json!({"delivery_id": id, "event_type": event_type}),
+                )
+                .await;
             }
         }
     }
