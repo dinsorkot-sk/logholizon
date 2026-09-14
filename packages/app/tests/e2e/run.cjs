@@ -1,7 +1,7 @@
 const { spawn } = require('node:child_process')
-const { mkdirSync } = require('node:fs')
-const { tmpdir } = require('node:os')
-const { dirname, join } = require('node:path')
+const { existsSync, mkdirSync } = require('node:fs')
+const { homedir, tmpdir } = require('node:os')
+const { delimiter, dirname, join } = require('node:path')
 
 const scriptDir = __dirname
 // tests/e2e -> app (two levels up), then repo root (three levels up).
@@ -42,31 +42,44 @@ async function waitFor(url, timeoutMs) {
 
 async function main() {
   const dbUrl = `sqlite://${e2eDb}?mode=rwc`
+  const isWindows = process.platform === 'win32'
   const nodeDir = dirname(process.execPath)
-  const pnpmJs = join(nodeDir, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
-  const cargoBin = join(process.env.USERPROFILE || '', '.cargo', 'bin', 'cargo.exe')
+  const home = process.env.USERPROFILE || homedir() || ''
+  const windowsCargo = home ? join(home, '.cargo', 'bin', 'cargo.exe') : ''
+  const cargoBin = isWindows && windowsCargo && existsSync(windowsCargo) ? windowsCargo : 'cargo'
   const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === 'path') || 'Path'
+  const pathSep = isWindows ? ';' : delimiter
   const spawnEnv = {
     ...process.env,
-    [pathKey]: `${nodeDir};${dirname(cargoBin)};${process.env[pathKey] || ''}`
+    [pathKey]: `${nodeDir}${pathSep}${process.env[pathKey] || ''}`
   }
   const coreEnv = { ...process.env, ...spawnEnv, CORE_PORT: String(corePort), CORE_DATABASE_URL: dbUrl, CORE_BACKUP_INTERVAL_HOURS: '0' }
   const appEnv = { ...process.env, ...spawnEnv, CORE_URL: `http://127.0.0.1:${corePort}`, PORT: String(appPort) }
 
   const core = spawn(cargoBin, ['run', '-q', '-p', 'logholizon-core'], { cwd: repoRoot, env: coreEnv, stdio: 'inherit', shell: false })
   core.on('error', (error) => console.error('core spawn error', error))
-  // Spawn the Nuxt dev server through the pnpm-installed nuxt.CMD shim via
-  // cmd.exe. The shim sets NODE_PATH for pnpm's isolated layout (tailwindcss
-  // resolution depends on it). Pass the whole command as one verbatim string
-  // so cmd.exe parses the quoted shim path correctly.
-  const nuxtCmd = join(appDir, 'node_modules', '.bin', 'nuxt.CMD')
-  const app = spawn('cmd.exe', [`/d /s /c ""${nuxtCmd}" dev --port ${appPort}"`], {
-    cwd: appDir,
-    env: appEnv,
-    stdio: 'inherit',
-    shell: false,
-    windowsVerbatimArguments: true
-  })
+  // Windows: spawn the Nuxt dev server through the pnpm-installed nuxt.CMD
+  // shim via cmd.exe. The shim sets NODE_PATH for pnpm's isolated layout
+  // (tailwindcss resolution depends on it). Pass the whole command as one
+  // verbatim string so cmd.exe parses the quoted shim path correctly.
+  // POSIX (Linux/macOS CI): spawn the nuxt binary directly.
+  const nuxtBin = isWindows
+    ? join(appDir, 'node_modules', '.bin', 'nuxt.CMD')
+    : join(appDir, 'node_modules', '.bin', 'nuxt')
+  const app = isWindows
+    ? spawn('cmd.exe', [`/d /s /c ""${nuxtBin}" dev --port ${appPort}"`], {
+      cwd: appDir,
+      env: appEnv,
+      stdio: 'inherit',
+      shell: false,
+      windowsVerbatimArguments: true
+    })
+    : spawn(nuxtBin, ['dev', '--port', String(appPort)], {
+      cwd: appDir,
+      env: appEnv,
+      stdio: 'inherit',
+      shell: false
+    })
   app.on('error', (error) => console.error('app spawn error', error))
 
   let failed = false
