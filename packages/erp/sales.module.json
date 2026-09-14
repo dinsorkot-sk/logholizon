@@ -1,0 +1,187 @@
+{
+  "schema_version": 2,
+  "kind": "logholizon.module",
+  "manifest": {
+    "name": "sales",
+    "version": "1.0.0",
+    "dependencies": []
+  },
+  "module": {
+    "name": "sales",
+    "label": "Sales & CRM",
+    "description": "Ready-made sales package: customers, orders with lines, and quote-to-cash workflow.",
+    "icon": "i-lucide-shopping-cart",
+    "color": "purple",
+    "definition": {
+      "entities": [
+        {
+          "name": "customer",
+          "label": "Customer",
+          "fields": [
+            { "name": "code", "label": "Code", "type": "text", "required": true, "is_unique": true },
+            { "name": "name", "label": "Name", "type": "text", "required": true },
+            { "name": "email", "label": "Email", "type": "email" },
+            { "name": "phone", "label": "Phone", "type": "phone" }
+          ],
+          "views": [{ "name": "All customers", "config": {} }],
+          "form_layout": {
+            "config": {
+              "sections": [{ "id": "main", "label": "Main", "fields": ["code", "name", "email", "phone"] }]
+            }
+          },
+          "reports": [
+            {
+              "name": "Customer count",
+              "config": {
+                "fields": ["code"],
+                "aggregates": [{ "field": "code", "op": "count", "alias": "customer_count" }]
+              }
+            }
+          ]
+        },
+        {
+          "name": "sales_order",
+          "label": "Sales Order",
+          "fields": [
+            { "name": "number", "label": "Number", "type": "text", "required": true, "is_unique": true },
+            { "name": "customer", "label": "Customer", "type": "reference", "ref_entity": "customer", "required": true },
+            { "name": "order_date", "label": "Order Date", "type": "date", "required": true },
+            { "name": "total", "label": "Total", "type": "currency" },
+            {
+              "name": "status",
+              "label": "Status",
+              "type": "select",
+              "required": true,
+              "is_status": true,
+              "options": [
+                { "value": "quote", "label": "Quote" },
+                { "value": "confirmed", "label": "Confirmed" },
+                { "value": "fulfilled", "label": "Fulfilled" },
+                { "value": "cancelled", "label": "Cancelled" }
+              ]
+            }
+          ],
+          "workflow": {
+            "states": [
+              { "name": "quote", "label": "Quote" },
+              { "name": "confirmed", "label": "Confirmed" },
+              { "name": "fulfilled", "label": "Fulfilled" },
+              { "name": "cancelled", "label": "Cancelled" }
+            ],
+            "transitions": [
+              { "from_state": "quote", "to_state": "confirmed", "action": "confirm" },
+              { "from_state": "confirmed", "to_state": "fulfilled", "action": "fulfill" },
+              { "from_state": "quote", "to_state": "cancelled", "action": "cancel" }
+            ]
+          },
+          "views": [{ "name": "Open orders", "config": {} }],
+          "reports": [
+            {
+              "name": "Revenue by status",
+              "config": {
+                "fields": ["status"],
+                "group_by": ["status"],
+                "aggregates": [{ "field": "total", "op": "sum", "alias": "revenue_total" }]
+              }
+            }
+          ],
+          "notifications": [
+            { "trigger": "transition", "target_url": "https://example.test/sales-order", "active": true }
+          ]
+        },
+        {
+          "name": "order_line",
+          "label": "Order Line",
+          "fields": [
+            { "name": "order", "label": "Order", "type": "reference", "ref_entity": "sales_order", "required": true },
+            { "name": "item", "label": "Item", "type": "text", "required": true },
+            { "name": "quantity", "label": "Quantity", "type": "number", "required": true },
+            { "name": "unit_price", "label": "Unit Price", "type": "currency", "required": true },
+            { "name": "line_total", "label": "Line Total", "type": "formula", "computed_expr": "{quantity} * {unit_price}" }
+          ],
+          "reports": [
+            {
+              "name": "Line totals",
+              "config": {
+                "fields": ["quantity"],
+                "aggregates": [{ "field": "quantity", "op": "sum", "alias": "total_quantity" }]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "relations": [
+      {
+        "source": "sales_order",
+        "target": "customer",
+        "source_field": "customer",
+        "name": "order_customer",
+        "relation_type": "many_to_one",
+        "on_delete": "restrict"
+      },
+      {
+        "source": "order_line",
+        "target": "sales_order",
+        "source_field": "order",
+        "name": "line_order",
+        "relation_type": "many_to_one",
+        "on_delete": "restrict"
+      }
+    ],
+    "actions": [
+      {
+        "entity": "sales_order",
+        "name": "send_confirmation",
+        "label": "Send Confirmation",
+        "kind": "notify",
+        "config": {}
+      }
+    ],
+    "automations": [
+      {
+        "entity": "sales_order",
+        "trigger": "transition",
+        "action": "webhook",
+        "target_url": "https://example.test/sales-confirmed",
+        "active": true,
+        "condition": "{status} == \"confirmed\"",
+        "schedule": "",
+        "max_attempts": 3
+      }
+    ],
+    "dashboards": [
+      {
+        "name": "Sales Overview",
+        "description": "Customers, orders, and revenue.",
+        "layout": [
+          {
+            "id": "customers",
+            "kind": "kpi",
+            "title": "Customers",
+            "entity_id": "customer",
+            "config": { "aggregates": [{ "field": "code", "op": "count", "alias": "total" }] },
+            "x": 0,
+            "y": 0,
+            "w": 3,
+            "h": 2
+          },
+          {
+            "id": "revenue",
+            "kind": "kpi",
+            "title": "Order revenue",
+            "entity_id": "sales_order",
+            "config": { "aggregates": [{ "field": "total", "op": "sum", "alias": "revenue" }] },
+            "x": 3,
+            "y": 0,
+            "w": 3,
+            "h": 2
+          }
+        ],
+        "filters": {},
+        "roles": [],
+        "users": []
+      }
+    ]
+  }
+}

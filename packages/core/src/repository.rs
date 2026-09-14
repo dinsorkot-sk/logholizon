@@ -6756,13 +6756,31 @@ pub async fn viewable_field_names(
 }
 
 fn validate_field_value(field: &Field, value: &Value) -> Result<()> {
+    // Every canonical field type accepts document writes; server-computed
+    // types (computed/formula) reject them. Format-level checks (email
+    // shape, option membership) stay permissive at the value layer —
+    // stricter rules belong in field rules (regex/min/max), not here.
     let valid = match field.r#type.as_str() {
-        "text" | "textarea" => value.is_string(),
-        "number" | "currency" => value.is_number(),
+        "text" | "textarea" | "long_text" | "date" | "datetime" | "time" | "email" | "phone"
+        | "url" | "file" | "image" | "auto_number" => value.is_string(),
+        "number" | "decimal" | "currency" | "percentage" | "integer" => value.is_number(),
         "checkbox" | "boolean" => value.is_boolean(),
-        "date" => value.is_string(),
         "reference" => value.is_string(),
-        "computed" => false,
+        "json" => true,
+        "multi_select" => {
+            value.is_array()
+                && value.as_array().is_some_and(|items| {
+                    items.iter().all(|item| {
+                        item.is_string()
+                            && (field.options.is_empty()
+                                || field
+                                    .options
+                                    .iter()
+                                    .any(|o| Some(o.value.as_str()) == item.as_str()))
+                    })
+                })
+        }
+        "computed" | "formula" => false,
         "select" => {
             value.is_string()
                 && field

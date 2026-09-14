@@ -1085,3 +1085,79 @@ async fn entity_metadata_persists_and_roundtrips() {
     assert_eq!(listed.description, "Work orders");
     assert_eq!(listed.settings["icon"], "car");
 }
+
+#[tokio::test]
+async fn canonical_field_types_accept_document_writes() {
+    use serde_json::json;
+    let pool = setup().await;
+    // Every canonical value type accepts a matching document write;
+    // server-computed types (computed/formula) reject writes.
+    let cases = [
+        ("long_text", json!("a longer note")),
+        ("decimal", json!(19.99)),
+        ("percentage", json!(12.5)),
+        ("integer", json!(7)),
+        ("datetime", json!("2026-09-14T10:00:00")),
+        ("time", json!("10:00")),
+        ("email", json!("ada@example.test")),
+        ("phone", json!("+661234567")),
+        ("url", json!("https://example.test")),
+        ("json", json!({"any": ["shape", 1]})),
+        ("file", json!("invoice.pdf")),
+        ("image", json!("logo.png")),
+        ("multi_select", json!(["a", "b"])),
+    ];
+    for (index, (field_type, value)) in cases.iter().enumerate() {
+        let name = format!("wfield_{index}");
+        repository::create_field(
+            &pool,
+            "work_order",
+            &name,
+            field_type,
+            false,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let doc_id = format!("wdoc_{index}");
+        let payload = serde_json::json!({ name.clone(): value.clone() });
+        let doc = repository::create_document(&pool, &doc_id, "work_order", &payload, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            &doc.payload[&name], value,
+            "type {field_type} should round-trip"
+        );
+    }
+    // Server-computed types reject writes.
+    for field_type in ["computed", "formula"] {
+        let name = format!("cfield_{field_type}");
+        repository::create_field(
+            &pool,
+            "work_order",
+            &name,
+            field_type,
+            false,
+            false,
+            None,
+            Some("{title}"),
+        )
+        .await
+        .unwrap();
+        let payload = serde_json::json!({ name.clone(): "forced" });
+        assert!(
+            repository::create_document(
+                &pool,
+                &format!("cdoc_{field_type}"),
+                "work_order",
+                &payload,
+                None
+            )
+            .await
+            .is_err(),
+            "type {field_type} should reject writes"
+        );
+    }
+}

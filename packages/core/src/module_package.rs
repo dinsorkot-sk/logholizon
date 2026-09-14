@@ -261,23 +261,30 @@ fn validate_package_sections(package: &ModulePackage) -> Result<()> {
         ) {
             bail!("invalid package relation type: {}", rel.relation_type);
         }
-        if !matches!(
-            rel.on_delete.as_str(),
-            "restrict" | "cascade" | "set_null"
-        ) {
+        if !matches!(rel.on_delete.as_str(), "restrict" | "cascade" | "set_null") {
             bail!("invalid package relation on_delete: {}", rel.on_delete);
         }
     }
     for action in &package.module.actions {
         if !entities.contains(&action.entity) {
-            bail!("package action references unknown entity: {}", action.entity);
+            bail!(
+                "package action references unknown entity: {}",
+                action.entity
+            );
         }
         if action.name.trim().is_empty() || action.label.trim().is_empty() {
             bail!("package action requires name and label");
         }
         if !matches!(
             action.kind.as_str(),
-            "create" | "update" | "delete" | "change_status" | "notify" | "webhook" | "formula" | "generate"
+            "create"
+                | "update"
+                | "delete"
+                | "change_status"
+                | "notify"
+                | "webhook"
+                | "formula"
+                | "generate"
         ) {
             bail!("invalid package action kind: {}", action.kind);
         }
@@ -448,7 +455,8 @@ pub async fn install_package(
     let reviewed =
         crate::module_lifecycle::submit_module_for_review(pool, &module.id, owner, "admin").await?;
     let published = repository::publish_module(pool, &reviewed.id, owner, "admin", actor).await?;
-    let enabled = crate::module_lifecycle::enable_module(pool, &published.id, owner, "admin").await?;
+    let enabled =
+        crate::module_lifecycle::enable_module(pool, &published.id, owner, "admin").await?;
     // Self-contained (v2) sections materialize after publish, when entity
     // and field IDs exist. Names in the package are definition-level and
     // resolve to `<module>_<entity>` / `<entity>_<field>` IDs here.
@@ -468,7 +476,9 @@ async fn materialize_package_sections(
         let source_id = entity_id(&rel.source);
         let target_id = entity_id(&rel.target);
         let source_field_id = match rel.source_field.as_deref().map(str::trim) {
-            Some(field) if !field.is_empty() => Some(resolve_field_id(pool, &source_id, field).await?),
+            Some(field) if !field.is_empty() => {
+                Some(resolve_field_id(pool, &source_id, field).await?)
+            }
             _ => {
                 if rel.relation_type != "many_to_many" {
                     bail!(
@@ -481,7 +491,9 @@ async fn materialize_package_sections(
             }
         };
         let target_field_id = match rel.target_field.as_deref().map(str::trim) {
-            Some(field) if !field.is_empty() => Some(resolve_field_id(pool, &target_id, field).await?),
+            Some(field) if !field.is_empty() => {
+                Some(resolve_field_id(pool, &target_id, field).await?)
+            }
             _ => None,
         };
         relation::create_relation(
@@ -537,10 +549,7 @@ async fn materialize_package_sections(
                 if let Some(entity) = widget.get("entity_id").and_then(Value::as_str) {
                     let resolved = entity_id(entity);
                     if let Some(object) = widget.as_object_mut() {
-                        object.insert(
-                            "entity_id".to_string(),
-                            Value::String(resolved),
-                        );
+                        object.insert("entity_id".to_string(), Value::String(resolved));
                     }
                 }
             }
@@ -561,18 +570,17 @@ async fn materialize_package_sections(
 }
 
 /// Resolve a definition-level field name to its materialized field ID.
-async fn resolve_field_id(
-    pool: &SqlitePool,
-    entity_id: &str,
-    field_name: &str,
-) -> Result<String> {
+async fn resolve_field_id(pool: &SqlitePool, entity_id: &str, field_name: &str) -> Result<String> {
     let fields = repository::list_fields(pool, entity_id).await?;
     fields
         .iter()
         .find(|f| f.name == field_name)
         .map(|f| f.id.clone())
         .ok_or_else(|| {
-            AppError::BadRequest(format!("package references unknown field: {entity_id}.{field_name}")).into()
+            AppError::BadRequest(format!(
+                "package references unknown field: {entity_id}.{field_name}"
+            ))
+            .into()
         })
 }
 
