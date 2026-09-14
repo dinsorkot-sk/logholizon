@@ -1,0 +1,202 @@
+{
+  "schema_version": 2,
+  "kind": "logholizon.module",
+  "manifest": {
+    "name": "pos",
+    "version": "1.0.0",
+    "dependencies": []
+  },
+  "module": {
+    "name": "pos",
+    "label": "Point of Sale",
+    "description": "Ready-made POS package: stores, terminals, sale tickets with lines, and tender workflow.",
+    "icon": "i-lucide-store",
+    "color": "amber",
+    "definition": {
+      "entities": [
+        {
+          "name": "store",
+          "label": "Store",
+          "fields": [
+            { "name": "code", "label": "Code", "type": "text", "required": true, "is_unique": true },
+            { "name": "name", "label": "Name", "type": "text", "required": true },
+            { "name": "location", "label": "Location", "type": "text" }
+          ],
+          "views": [{ "name": "All stores", "config": {} }],
+          "form_layout": {
+            "config": {
+              "sections": [{ "id": "main", "label": "Main", "fields": ["code", "name", "location"] }]
+            }
+          }
+        },
+        {
+          "name": "terminal",
+          "label": "Terminal",
+          "fields": [
+            { "name": "code", "label": "Code", "type": "text", "required": true, "is_unique": true },
+            { "name": "store", "label": "Store", "type": "reference", "ref_entity": "store", "required": true },
+            {
+              "name": "status",
+              "label": "Status",
+              "type": "select",
+              "required": true,
+              "options": [
+                { "value": "active", "label": "Active" },
+                { "value": "offline", "label": "Offline" }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "sale_ticket",
+          "label": "Sale Ticket",
+          "fields": [
+            { "name": "number", "label": "Number", "type": "text", "required": true, "is_unique": true },
+            { "name": "terminal", "label": "Terminal", "type": "reference", "ref_entity": "terminal", "required": true },
+            { "name": "sold_at", "label": "Sold At", "type": "datetime", "required": true },
+            {
+              "name": "tender",
+              "label": "Tender",
+              "type": "select",
+              "required": true,
+              "options": [
+                { "value": "cash", "label": "Cash" },
+                { "value": "card", "label": "Card" },
+                { "value": "transfer", "label": "Transfer" }
+              ]
+            },
+            { "name": "total", "label": "Total", "type": "currency" },
+            {
+              "name": "status",
+              "label": "Status",
+              "type": "select",
+              "required": true,
+              "is_status": true,
+              "options": [
+                { "value": "open", "label": "Open" },
+                { "value": "paid", "label": "Paid" },
+                { "value": "voided", "label": "Voided" }
+              ]
+            }
+          ],
+          "workflow": {
+            "states": [
+              { "name": "open", "label": "Open" },
+              { "name": "paid", "label": "Paid" },
+              { "name": "voided", "label": "Voided" }
+            ],
+            "transitions": [
+              { "from_state": "open", "to_state": "paid", "action": "pay" },
+              { "from_state": "open", "to_state": "voided", "action": "void" }
+            ]
+          },
+          "views": [{ "name": "Open tickets", "config": {} }],
+          "reports": [
+            {
+              "name": "Sales by tender",
+              "config": {
+                "fields": ["tender"],
+                "group_by": ["tender"],
+                "aggregates": [{ "field": "total", "op": "sum", "alias": "sales_total" }]
+              }
+            }
+          ],
+          "notifications": [
+            { "trigger": "transition", "target_url": "https://example.test/pos-ticket", "active": true }
+          ]
+        },
+        {
+          "name": "ticket_line",
+          "label": "Ticket Line",
+          "fields": [
+            { "name": "ticket", "label": "Ticket", "type": "reference", "ref_entity": "sale_ticket", "required": true },
+            { "name": "item", "label": "Item", "type": "text", "required": true },
+            { "name": "quantity", "label": "Quantity", "type": "number", "required": true },
+            { "name": "unit_price", "label": "Unit Price", "type": "currency", "required": true },
+            { "name": "line_total", "label": "Line Total", "type": "formula", "computed_expr": "{quantity} * {unit_price}" }
+          ]
+        }
+      ]
+    },
+    "relations": [
+      {
+        "source": "terminal",
+        "target": "store",
+        "source_field": "store",
+        "name": "terminal_store",
+        "relation_type": "many_to_one",
+        "on_delete": "restrict"
+      },
+      {
+        "source": "sale_ticket",
+        "target": "terminal",
+        "source_field": "terminal",
+        "name": "ticket_terminal",
+        "relation_type": "many_to_one",
+        "on_delete": "restrict"
+      },
+      {
+        "source": "ticket_line",
+        "target": "sale_ticket",
+        "source_field": "ticket",
+        "name": "line_ticket",
+        "relation_type": "many_to_one",
+        "on_delete": "restrict"
+      }
+    ],
+    "actions": [
+      {
+        "entity": "sale_ticket",
+        "name": "print_receipt",
+        "label": "Print Receipt",
+        "kind": "generate",
+        "config": {}
+      }
+    ],
+    "automations": [
+      {
+        "entity": "sale_ticket",
+        "trigger": "transition",
+        "action": "webhook",
+        "target_url": "https://example.test/pos-paid",
+        "active": true,
+        "condition": "{status} == \"paid\"",
+        "schedule": "",
+        "max_attempts": 3
+      }
+    ],
+    "dashboards": [
+      {
+        "name": "POS Overview",
+        "description": "Stores, tickets, and sales totals.",
+        "layout": [
+          {
+            "id": "tickets",
+            "kind": "kpi",
+            "title": "Tickets",
+            "entity_id": "sale_ticket",
+            "config": { "aggregates": [{ "field": "number", "op": "count", "alias": "total" }] },
+            "x": 0,
+            "y": 0,
+            "w": 3,
+            "h": 2
+          },
+          {
+            "id": "sales",
+            "kind": "kpi",
+            "title": "Sales total",
+            "entity_id": "sale_ticket",
+            "config": { "aggregates": [{ "field": "total", "op": "sum", "alias": "sales" }] },
+            "x": 3,
+            "y": 0,
+            "w": 3,
+            "h": 2
+          }
+        ],
+        "filters": {},
+        "roles": [],
+        "users": []
+      }
+    ]
+  }
+}

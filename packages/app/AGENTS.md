@@ -28,7 +28,7 @@ Use pnpm only. `package.json` pins `pnpm@11.9.0`.
 
 - TypeScript in app, Rust in core. No domain SQL in Nitro handlers.
 - Preserve metadata-driven design; avoid hardcoded ERP entities.
-- Use Nuxt UI components where specified by `design.md`; prefer raw `<table>` over `UTable`.
+- Use Nuxt UI components where specified by `design.md`; use `UTable` for dynamic entity tables.
 - Use `USlideover` for contextual editing; avoid unnecessary modal/page navigation.
 - Keep workflow linear and list-based; no drag-and-drop/canvas.
 - Keep MVP scope: no auth, field-level permissions, branching workflows, or multi-sheet Excel unless explicitly requested.
@@ -36,9 +36,17 @@ Use pnpm only. `package.json` pins `pnpm@11.9.0`.
 - Validate trust-boundary input. Add focused tests for non-trivial logic.
 - Run `pnpm run build` after configuration or production-impacting changes.
 
+## UI Patterns
+
+- Place dynamic form defaults, validation, and payload normalization in `app/utils/document-form.ts`; omit optional empty values before sending them to core.
+- Derive workflow/status behavior from metadata `field.is_status`; do not hardcode a `status` field name.
+- `USelectMenu` items cannot use `value: ''`; use `placeholder="Select…"` for an unselected control.
+- `UModal` default slot is its trigger; use `#content` for dialog content. Put `UCommandPalette` inside that `#content` slot.
+- Track dirty `USlideover` forms and ask before discard. Footer submit buttons must use `type="submit" form="record-form"`.
+
 ## Known Pitfalls
 
 - Do not add NuxtHub, Drizzle, or libsql dependencies. Persistence lives in `packages/core`.
-- The Rust database defaults to `.data/core.db` via `CORE_DATABASE_URL`.
+- The Rust database defaults to `.data/core.db` via `CORE_DATABASE_URL`; root and core-dev working directories resolve it differently.
 - `pnpm run test` may report no test files until tests are added.
 - Nuxt may emit non-blocking rolldown declaration or Node export warnings during builds; distinguish warnings from failures.

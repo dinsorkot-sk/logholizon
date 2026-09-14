@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Rust Core",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": { "args": ["run", "-p", "logholizon-core"] },
+      "cwd": "${workspaceFolder}",
+      "env": { "RUST_LOG": "debug" }
+    },
+    {
+      "name": "Debug Rust CLI",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": { "args": ["build", "-p", "logholizon-cli"] },
+      "args": ["check"],
+      "cwd": "${workspaceFolder}",
+      "env": { "RUST_LOG": "debug" }
+    }
+  ]
+}

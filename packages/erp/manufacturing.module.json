@@ -1,0 +1,167 @@
+{
+  "schema_version": 2,
+  "kind": "logholizon.module",
+  "manifest": {
+    "name": "manufacturing",
+    "version": "1.0.0",
+    "dependencies": []
+  },
+  "module": {
+    "name": "manufacturing",
+    "label": "Manufacturing",
+    "description": "Ready-made manufacturing package: BOMs, work orders, and production runs.",
+    "icon": "i-lucide-factory",
+    "color": "slate",
+    "definition": {
+      "entities": [
+        {
+          "name": "bom",
+          "label": "Bill of Materials",
+          "fields": [
+            { "name": "code", "label": "Code", "type": "text", "required": true, "is_unique": true },
+            { "name": "product", "label": "Product", "type": "text", "required": true },
+            { "name": "revision", "label": "Revision", "type": "text" }
+          ],
+          "views": [{ "name": "All BOMs", "config": {} }],
+          "form_layout": {
+            "config": {
+              "sections": [{ "id": "main", "label": "Main", "fields": ["code", "product", "revision"] }]
+            }
+          }
+        },
+        {
+          "name": "bom_line",
+          "label": "BOM Line",
+          "fields": [
+            { "name": "bom", "label": "BOM", "type": "reference", "ref_entity": "bom", "required": true },
+            { "name": "component", "label": "Component", "type": "text", "required": true },
+            { "name": "quantity", "label": "Quantity", "type": "number", "required": true }
+          ]
+        },
+        {
+          "name": "production_run",
+          "label": "Production Run",
+          "fields": [
+            { "name": "number", "label": "Number", "type": "text", "required": true, "is_unique": true },
+            { "name": "bom", "label": "BOM", "type": "reference", "ref_entity": "bom", "required": true },
+            { "name": "planned_quantity", "label": "Planned Quantity", "type": "number", "required": true },
+            { "name": "produced_quantity", "label": "Produced Quantity", "type": "number" },
+            { "name": "started_at", "label": "Started At", "type": "date" },
+            {
+              "name": "status",
+              "label": "Status",
+              "type": "select",
+              "required": true,
+              "is_status": true,
+              "options": [
+                { "value": "planned", "label": "Planned" },
+                { "value": "running", "label": "Running" },
+                { "value": "completed", "label": "Completed" },
+                { "value": "cancelled", "label": "Cancelled" }
+              ]
+            }
+          ],
+          "workflow": {
+            "states": [
+              { "name": "planned", "label": "Planned" },
+              { "name": "running", "label": "Running" },
+              { "name": "completed", "label": "Completed" },
+              { "name": "cancelled", "label": "Cancelled" }
+            ],
+            "transitions": [
+              { "from_state": "planned", "to_state": "running", "action": "start" },
+              { "from_state": "running", "to_state": "completed", "action": "complete" },
+              { "from_state": "planned", "to_state": "cancelled", "action": "cancel" }
+            ]
+          },
+          "views": [{ "name": "Active runs", "config": {} }],
+          "reports": [
+            {
+              "name": "Output by status",
+              "config": {
+                "fields": ["status"],
+                "group_by": ["status"],
+                "aggregates": [{ "field": "produced_quantity", "op": "sum", "alias": "total_produced" }]
+              }
+            }
+          ],
+          "notifications": [
+            { "trigger": "transition", "target_url": "https://example.test/mfg-run", "active": true }
+          ]
+        }
+      ]
+    },
+    "relations": [
+      {
+        "source": "bom_line",
+        "target": "bom",
+        "source_field": "bom",
+        "name": "line_bom",
+        "relation_type": "many_to_one",
+        "on_delete": "restrict"
+      },
+      {
+        "source": "production_run",
+        "target": "bom",
+        "source_field": "bom",
+        "name": "run_bom",
+        "relation_type": "many_to_one",
+        "on_delete": "restrict"
+      }
+    ],
+    "actions": [
+      {
+        "entity": "production_run",
+        "name": "print_job_card",
+        "label": "Print Job Card",
+        "kind": "generate",
+        "config": {}
+      }
+    ],
+    "automations": [
+      {
+        "entity": "production_run",
+        "trigger": "transition",
+        "action": "webhook",
+        "target_url": "https://example.test/mfg-completed",
+        "active": true,
+        "condition": "{status} == \"completed\"",
+        "schedule": "",
+        "max_attempts": 3
+      }
+    ],
+    "dashboards": [
+      {
+        "name": "Manufacturing Overview",
+        "description": "BOMs, runs, and output totals.",
+        "layout": [
+          {
+            "id": "runs",
+            "kind": "kpi",
+            "title": "Production runs",
+            "entity_id": "production_run",
+            "config": { "aggregates": [{ "field": "number", "op": "count", "alias": "total" }] },
+            "x": 0,
+            "y": 0,
+            "w": 3,
+            "h": 2
+          },
+          {
+            "id": "output",
+            "kind": "kpi",
+            "title": "Units produced",
+            "entity_id": "production_run",
+            "config": { "aggregates": [{ "field": "produced_quantity", "op": "sum", "alias": "output" }] },
+            "x": 3,
+            "y": 0,
+            "w": 3,
+            "h": 2
+          }
+        ],
+        "filters": {},
+        "roles": [],
+        "users": []
+      }
+    ]
+  }
+}

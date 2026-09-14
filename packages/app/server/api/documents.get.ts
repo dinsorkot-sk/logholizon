@@ -8,7 +8,13 @@ export default defineEventHandler(async (event) => {
   }
   const limit = parseBoundedInt(query.limit, 50, 1, 100)
   const offset = parseBoundedInt(query.offset, 0, 0, Number.MAX_SAFE_INTEGER)
-  return coreClient().listDocuments(entityId, limit, offset)
+  return coreClient(event).listDocuments(entityId, limit, offset, {
+    search: typeof query.search === 'string' ? query.search : undefined,
+    status: typeof query.status === 'string' ? query.status : undefined,
+    sortBy: typeof query.sort_by === 'string' ? query.sort_by : undefined,
+    sortDir: typeof query.sort_dir === 'string' ? query.sort_dir : undefined,
+    viewId: typeof query.view_id === 'string' ? query.view_id : undefined
+  })
 })
 
 function parseBoundedInt(

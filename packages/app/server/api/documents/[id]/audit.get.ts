@@ -8,7 +8,7 @@ export default defineEventHandler(async (event) => {
   const query = getQuery(event)
   const limit = parseBoundedInt(query.limit, 50, 1, 100)
   const offset = parseBoundedInt(query.offset, 0, 0, Number.MAX_SAFE_INTEGER)
-  return coreClient().listDocumentAudit(id, limit, offset)
+  return coreClient(event).listDocumentAudit(id, limit, offset)
 })
 
 function parseBoundedInt(

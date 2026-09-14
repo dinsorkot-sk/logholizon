@@ -1,0 +1,207 @@
+{
+  "schema_version": 2,
+  "kind": "logholizon.module",
+  "manifest": {
+    "name": "dormitory",
+    "version": "1.0.0",
+    "dependencies": []
+  },
+  "module": {
+    "name": "dormitory",
+    "label": "Dormitory",
+    "description": "Ready-made dormitory package: buildings, rooms, residents, and bookings.",
+    "icon": "i-lucide-building-2",
+    "color": "cyan",
+    "definition": {
+      "entities": [
+        {
+          "name": "building",
+          "label": "Building",
+          "fields": [
+            { "name": "code", "label": "Code", "type": "text", "required": true, "is_unique": true },
+            { "name": "name", "label": "Name", "type": "text", "required": true },
+            { "name": "address", "label": "Address", "type": "text" }
+          ],
+          "views": [{ "name": "All buildings", "config": {} }],
+          "form_layout": {
+            "config": {
+              "sections": [{ "id": "main", "label": "Main", "fields": ["code", "name", "address"] }]
+            }
+          }
+        },
+        {
+          "name": "room",
+          "label": "Room",
+          "fields": [
+            { "name": "building", "label": "Building", "type": "reference", "ref_entity": "building", "required": true },
+            { "name": "number", "label": "Room Number", "type": "text", "required": true },
+            { "name": "capacity", "label": "Capacity", "type": "integer", "required": true },
+            { "name": "monthly_rate", "label": "Monthly Rate", "type": "currency" },
+            {
+              "name": "status",
+              "label": "Status",
+              "type": "select",
+              "required": true,
+              "options": [
+                { "value": "vacant", "label": "Vacant" },
+                { "value": "occupied", "label": "Occupied" },
+                { "value": "maintenance", "label": "Maintenance" }
+              ]
+            }
+          ],
+          "reports": [
+            {
+              "name": "Rooms by status",
+              "config": {
+                "fields": ["status"],
+                "group_by": ["status"],
+                "aggregates": [{ "field": "number", "op": "count", "alias": "room_count" }]
+              }
+            }
+          ]
+        },
+        {
+          "name": "resident",
+          "label": "Resident",
+          "fields": [
+            { "name": "code", "label": "Code", "type": "text", "required": true, "is_unique": true },
+            { "name": "name", "label": "Name", "type": "text", "required": true },
+            { "name": "phone", "label": "Phone", "type": "phone" },
+            { "name": "email", "label": "Email", "type": "email" }
+          ],
+          "views": [{ "name": "All residents", "config": {} }]
+        },
+        {
+          "name": "booking",
+          "label": "Booking",
+          "fields": [
+            { "name": "room", "label": "Room", "type": "reference", "ref_entity": "room", "required": true },
+            { "name": "resident", "label": "Resident", "type": "reference", "ref_entity": "resident", "required": true },
+            { "name": "check_in", "label": "Check In", "type": "date", "required": true },
+            { "name": "check_out", "label": "Check Out", "type": "date" },
+            {
+              "name": "status",
+              "label": "Status",
+              "type": "select",
+              "required": true,
+              "is_status": true,
+              "options": [
+                { "value": "reserved", "label": "Reserved" },
+                { "value": "checked_in", "label": "Checked In" },
+                { "value": "checked_out", "label": "Checked Out" },
+                { "value": "cancelled", "label": "Cancelled" }
+              ]
+            }
+          ],
+          "workflow": {
+            "states": [
+              { "name": "reserved", "label": "Reserved" },
+              { "name": "checked_in", "label": "Checked In" },
+              { "name": "checked_out", "label": "Checked Out" },
+              { "name": "cancelled", "label": "Cancelled" }
+            ],
+            "transitions": [
+              { "from_state": "reserved", "to_state": "checked_in", "action": "check_in" },
+              { "from_state": "checked_in", "to_state": "checked_out", "action": "check_out" },
+              { "from_state": "reserved", "to_state": "cancelled", "action": "cancel" }
+            ]
+          },
+          "views": [{ "name": "Active bookings", "config": {} }],
+          "reports": [
+            {
+              "name": "Bookings by status",
+              "config": {
+                "fields": ["status"],
+                "group_by": ["status"],
+                "aggregates": [{ "field": "status", "op": "count", "alias": "booking_count" }]
+              }
+            }
+          ],
+          "notifications": [
+            { "trigger": "transition", "target_url": "https://example.test/dorm-booking", "active": true }
+          ]
+        }
+      ]
+    },
+    "relations": [
+      {
+        "source": "room",
+        "target": "building",
+        "source_field": "building",
+        "name": "room_building",
+        "relation_type": "many_to_one",
+        "on_delete": "restrict"
+      },
+      {
+        "source": "booking",
+        "target": "room",
+        "source_field": "room",
+        "name": "booking_room",
+        "relation_type": "many_to_one",
+        "on_delete": "restrict"
+      },
+      {
+        "source": "booking",
+        "target": "resident",
+        "source_field": "resident",
+        "name": "booking_resident",
+        "relation_type": "many_to_one",
+        "on_delete": "restrict"
+      }
+    ],
+    "actions": [
+      {
+        "entity": "booking",
+        "name": "send_confirmation",
+        "label": "Send Confirmation",
+        "kind": "notify",
+        "config": {}
+      }
+    ],
+    "automations": [
+      {
+        "entity": "booking",
+        "trigger": "transition",
+        "action": "webhook",
+        "target_url": "https://example.test/dorm-checked-in",
+        "active": true,
+        "condition": "{status} == \"checked_in\"",
+        "schedule": "",
+        "max_attempts": 3
+      }
+    ],
+    "dashboards": [
+      {
+        "name": "Dormitory Overview",
+        "description": "Buildings, rooms, residents, and bookings.",
+        "layout": [
+          {
+            "id": "rooms",
+            "kind": "kpi",
+            "title": "Rooms",
+            "entity_id": "room",
+            "config": { "aggregates": [{ "field": "number", "op": "count", "alias": "total" }] },
+            "x": 0,
+            "y": 0,
+            "w": 3,
+            "h": 2
+          },
+          {
+            "id": "bookings",
+            "kind": "kpi",
+            "title": "Bookings",
+            "entity_id": "booking",
+            "config": { "aggregates": [{ "field": "status", "op": "count", "alias": "total" }] },
+            "x": 3,
+            "y": 0,
+            "w": 3,
+            "h": 2
+          }
+        ],
+        "filters": {},
+        "roles": [],
+        "users": []
+      }
+    ]
+  }
+}

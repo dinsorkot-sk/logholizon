@@ -7,5 +7,5 @@ export default defineEventHandler(async (event) => {
   if (!body?.id?.trim() || !body?.name?.trim() || !body?.label?.trim()) {
     throw createError({ statusCode: 400, statusMessage: 'id, name, and label are required' })
   }
-  return coreClient().createEntity(body)
+  return coreClient(event).createEntity(body)
 })

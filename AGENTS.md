@@ -1,4 +1,4 @@
-# Agent Instructions
+﻿# Agent Instructions
 
 ## Architecture
 
@@ -6,7 +6,7 @@
 - `packages/cli`: Rust CLI. Calls core in-process for `migrate`, `seed`, `backup`, `restore`, `check`.
 - `packages/app`: Nuxt 4 + Nuxt UI. UI and thin Nitro gateway only; calls Rust over HTTP.
 - Root `Cargo.toml`: Rust workspace. Root `package.json` + `turbo.json`: JS task orchestration.
-- Roadmap: [`docs/plans/2026-09-05-rust-core-erp.md`](docs/plans/2026-09-05-rust-core-erp.md).
+- Roadmap: [`docs/plans/2026-09-06-next-roadmap.md`](docs/plans/2026-09-06-next-roadmap.md) (active). Completed: [`2026-09-05-rust-core-erp.md`](docs/plans/2026-09-05-rust-core-erp.md), [`2026-09-05-ux-ui-fixes.md`](docs/plans/2026-09-05-ux-ui-fixes.md), [`2026-09-05-product-hardening.md`](docs/plans/2026-09-05-product-hardening.md).
 
 ## Commands
 
@@ -32,11 +32,21 @@ cargo run -p logholizon-cli -- check
 - Migrations are embedded and forward-only; never edit an applied migration.
 - Backup SQLite with `VACUUM INTO`; never copy a live database file.
 - Restore is destructive: require explicit `--force`, validate integrity, preserve rollback path.
-- Keep entities metadata-driven; do not hardcode ERP modules in reusable UI.
-- Keep workflow linear; no auth, D1, branching, canvas, or multi-sheet Excel without explicit scope change.
+- Keep the platform metadata-driven; LOGHOLIZON has no built-in ERP/business modules. Never hardcode Accounting, Inventory, Sales, HR, CRM, or other domain modules into Core or reusable UI.
+- User-created modules are first-class product data and must run through the same Module Runtime, Metadata Runtime, Document Runtime, Workflow, Permission, Report, Automation, and Event contracts as every other module.
+- A module may use a native Rust domain engine only when deterministic domain invariants require it; the module definition and user-facing structure remain metadata-driven.
+- Module definitions created by users are tenant-scoped, upgrade-safe, versioned/publishable, and must not require Rust changes for normal no-code use.
+- Keep workflow linear; no D1, branching, canvas, or API tokens without explicit scope change. Auth, multi-sheet Excel, visual form layout, and webhook notifications are in scope (see roadmap).
 - Do not add NuxtHub, Drizzle, libsql, or a Rust SDK crate unless architecture changes explicitly.
 - Use `pnpm` for Node tasks, `cargo` for Rust tasks. Commit lockfiles.
 - Add one focused test for non-trivial logic. Run relevant gates after changes.
+
+## Working notes
+
+- Read [`docs/plans/2026-09-05-rust-core-erp.md`](docs/plans/2026-09-05-rust-core-erp.md) for scope and [`docs/plans/2026-09-05-ux-ui-fixes.md`](docs/plans/2026-09-05-ux-ui-fixes.md) for UI acceptance criteria.
+- Core dev runs from `packages/core`, therefore defaults to `packages/core/.data/core.db`; root CLI defaults to `.data/core.db`. Set `CORE_DATABASE_URL` when one DB is required.
+- In PowerShell, Cargo progress uses stderr. Judge commands by `$LASTEXITCODE`; stop the running core before a Rust test needs to replace its executable.
+- `sqlx::migrate!("../../migrations")` embeds numbered migrations. Add a new migration; do not change `db.rs`.
 
 ## Generated and local files
 
@@ -48,3 +58,20 @@ Do not commit `target/`, `.data/`, `.nuxt/`, `.output/`, `node_modules/`, `.turb
 - CLI command changes belong under `packages/cli`.
 - App UI belongs under `packages/app/app`; gateway routes under `packages/app/server/api`.
 - Keep gateway handlers thin: parse, validate, call client, map response.
+
+## Git Branch and Release Workflow
+
+- Development must proceed through sequential version branches: v0.0.6, v0.0.7, v0.0.8, and so on.
+- Start each new phase on a new version branch created from the previously completed version branch.
+- Never continue implementing the next phase on an already completed version branch.
+- Work on exactly one planned phase at a time. Use docs/plans/README.md as the source of truth and follow phases in order.
+- Before finishing a phase, run the relevant build, test, format, and lint gates.
+- When a phase is complete, review the diff, update the plan status if needed, then commit all phase changes with a focused commit message.
+- Push the completed version branch to the remote repository.
+- Only after the commit and push succeed, create and switch to the next sequential version branch.
+- Branch sequence is continuous: v0.0.5 -> v0.0.6 -> v0.0.7 -> ... until all phases in docs/plans/README.md are completed.
+- Do not skip version numbers, reuse an old version branch, force-push, or rewrite published phase history unless explicitly instructed.
+- A phase is complete only when its acceptance criteria are implemented and relevant tests/gates pass.
+- If a phase cannot be completed safely, stop on the current branch, report the blocker, and do not create the next version branch.
+- At the end of the entire plan, do not invent additional phases; stop and report that the master plan is complete.
+

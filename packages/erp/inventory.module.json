@@ -1,0 +1,184 @@
+{
+  "schema_version": 2,
+  "kind": "logholizon.module",
+  "manifest": {
+    "name": "inventory",
+    "version": "1.0.0",
+    "dependencies": []
+  },
+  "module": {
+    "name": "inventory",
+    "label": "Inventory",
+    "description": "Ready-made inventory package: products, warehouses, and stock movements with approval.",
+    "icon": "i-lucide-boxes",
+    "color": "orange",
+    "definition": {
+      "entities": [
+        {
+          "name": "product",
+          "label": "Product",
+          "fields": [
+            { "name": "sku", "label": "SKU", "type": "text", "required": true, "is_unique": true },
+            { "name": "name", "label": "Name", "type": "text", "required": true },
+            { "name": "unit", "label": "Unit", "type": "text" },
+            { "name": "unit_cost", "label": "Unit Cost", "type": "currency" },
+            { "name": "reorder_level", "label": "Reorder Level", "type": "number" }
+          ],
+          "views": [{ "name": "All products", "config": {} }],
+          "form_layout": {
+            "config": {
+              "sections": [{ "id": "main", "label": "Main", "fields": ["sku", "name", "unit", "unit_cost", "reorder_level"] }]
+            }
+          },
+          "reports": [
+            {
+              "name": "Products by unit",
+              "config": {
+                "fields": ["unit"],
+                "group_by": ["unit"],
+                "aggregates": [{ "field": "sku", "op": "count", "alias": "product_count" }]
+              }
+            }
+          ]
+        },
+        {
+          "name": "warehouse",
+          "label": "Warehouse",
+          "fields": [
+            { "name": "code", "label": "Code", "type": "text", "required": true, "is_unique": true },
+            { "name": "location", "label": "Location", "type": "text", "required": true }
+          ]
+        },
+        {
+          "name": "stock_move",
+          "label": "Stock Move",
+          "fields": [
+            { "name": "product", "label": "Product", "type": "reference", "ref_entity": "product", "required": true },
+            { "name": "warehouse", "label": "Warehouse", "type": "reference", "ref_entity": "warehouse", "required": true },
+            {
+              "name": "move_type",
+              "label": "Move Type",
+              "type": "select",
+              "required": true,
+              "options": [
+                { "value": "in", "label": "Stock In" },
+                { "value": "out", "label": "Stock Out" },
+                { "value": "adjust", "label": "Adjustment" }
+              ]
+            },
+            { "name": "quantity", "label": "Quantity", "type": "number", "required": true },
+            { "name": "moved_at", "label": "Moved At", "type": "date" },
+            {
+              "name": "status",
+              "label": "Status",
+              "type": "select",
+              "required": true,
+              "is_status": true,
+              "options": [
+                { "value": "draft", "label": "Draft" },
+                { "value": "confirmed", "label": "Confirmed" },
+                { "value": "cancelled", "label": "Cancelled" }
+              ]
+            }
+          ],
+          "workflow": {
+            "states": [
+              { "name": "draft", "label": "Draft" },
+              { "name": "confirmed", "label": "Confirmed" },
+              { "name": "cancelled", "label": "Cancelled" }
+            ],
+            "transitions": [
+              { "from_state": "draft", "to_state": "confirmed", "action": "confirm" },
+              { "from_state": "draft", "to_state": "cancelled", "action": "cancel" }
+            ]
+          },
+          "reports": [
+            {
+              "name": "Moves by type",
+              "config": {
+                "fields": ["move_type"],
+                "group_by": ["move_type"],
+                "aggregates": [{ "field": "quantity", "op": "sum", "alias": "total_quantity" }]
+              }
+            }
+          ],
+          "notifications": [
+            { "trigger": "transition", "target_url": "https://example.test/inventory-move", "active": true }
+          ]
+        }
+      ]
+    },
+    "relations": [
+      {
+        "source": "stock_move",
+        "target": "product",
+        "source_field": "product",
+        "name": "move_product",
+        "relation_type": "many_to_one",
+        "on_delete": "restrict"
+      },
+      {
+        "source": "stock_move",
+        "target": "warehouse",
+        "source_field": "warehouse",
+        "name": "move_warehouse",
+        "relation_type": "many_to_one",
+        "on_delete": "restrict"
+      }
+    ],
+    "actions": [
+      {
+        "entity": "stock_move",
+        "name": "print_slip",
+        "label": "Print Slip",
+        "kind": "generate",
+        "config": {}
+      }
+    ],
+    "automations": [
+      {
+        "entity": "stock_move",
+        "trigger": "transition",
+        "action": "webhook",
+        "target_url": "https://example.test/inventory-confirmed",
+        "active": true,
+        "condition": "{status} == \"confirmed\"",
+        "schedule": "",
+        "max_attempts": 3
+      }
+    ],
+    "dashboards": [
+      {
+        "name": "Inventory Overview",
+        "description": "Products, warehouses, and movement totals.",
+        "layout": [
+          {
+            "id": "products",
+            "kind": "kpi",
+            "title": "Products",
+            "entity_id": "product",
+            "config": { "aggregates": [{ "field": "sku", "op": "count", "alias": "total" }] },
+            "x": 0,
+            "y": 0,
+            "w": 3,
+            "h": 2
+          },
+          {
+            "id": "moves",
+            "kind": "kpi",
+            "title": "Stock moves",
+            "entity_id": "stock_move",
+            "config": { "aggregates": [{ "field": "quantity", "op": "sum", "alias": "total_quantity" }] },
+            "x": 3,
+            "y": 0,
+            "w": 3,
+            "h": 2
+          }
+        ],
+        "filters": {},
+        "roles": [],
+        "users": []
+      }
+    ]
+  }
+}

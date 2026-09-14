@@ -25,15 +25,24 @@ pub enum AppError {
     BadRequest(String),
     NotFound(String),
     Conflict(String),
+    Unauthorized(String),
+    Forbidden(String),
+    TooManyRequests(String),
+    /// Service temporarily unable to serve (e.g. `/ready` failing checks).
+    ServiceUnavailable(String),
     Internal(anyhow::Error),
 }
 
 impl std::fmt::Display for AppError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::BadRequest(message) | Self::NotFound(message) | Self::Conflict(message) => {
-                formatter.write_str(message)
-            }
+            Self::BadRequest(message)
+            | Self::NotFound(message)
+            | Self::Conflict(message)
+            | Self::Unauthorized(message)
+            | Self::Forbidden(message)
+            | Self::TooManyRequests(message)
+            | Self::ServiceUnavailable(message) => formatter.write_str(message),
             Self::Internal(error) => error.fmt(formatter),
         }
     }
@@ -47,6 +56,12 @@ impl IntoResponse for AppError {
             Self::BadRequest(msg) => (StatusCode::BAD_REQUEST, "bad_request", msg),
             Self::NotFound(msg) => (StatusCode::NOT_FOUND, "not_found", msg),
             Self::Conflict(msg) => (StatusCode::CONFLICT, "conflict", msg),
+            Self::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, "unauthorized", msg),
+            Self::Forbidden(msg) => (StatusCode::FORBIDDEN, "forbidden", msg),
+            Self::TooManyRequests(msg) => (StatusCode::TOO_MANY_REQUESTS, "too_many_requests", msg),
+            Self::ServiceUnavailable(msg) => {
+                (StatusCode::SERVICE_UNAVAILABLE, "service_unavailable", msg)
+            }
             Self::Internal(err) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal_error",
@@ -59,6 +74,18 @@ impl IntoResponse for AppError {
 
 impl From<anyhow::Error> for AppError {
     fn from(err: anyhow::Error) -> Self {
+        if let Some(app) = err.downcast_ref::<AppError>() {
+            return match app {
+                AppError::BadRequest(msg) => AppError::BadRequest(msg.clone()),
+                AppError::NotFound(msg) => AppError::NotFound(msg.clone()),
+                AppError::Conflict(msg) => AppError::Conflict(msg.clone()),
+                AppError::Unauthorized(msg) => AppError::Unauthorized(msg.clone()),
+                AppError::Forbidden(msg) => AppError::Forbidden(msg.clone()),
+                AppError::TooManyRequests(msg) => AppError::TooManyRequests(msg.clone()),
+                AppError::ServiceUnavailable(msg) => AppError::ServiceUnavailable(msg.clone()),
+                AppError::Internal(_) => AppError::Internal(anyhow::anyhow!("internal error")),
+            };
+        }
         Self::Internal(err)
     }
 }

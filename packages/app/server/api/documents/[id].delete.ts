@@ -5,6 +5,6 @@ export default defineEventHandler(async (event) => {
   if (!id?.trim()) {
     throw createError({ statusCode: 400, statusMessage: 'id is required' })
   }
-  await coreClient().deleteDocument(id)
+  await coreClient(event).deleteDocument(id)
   return { ok: true }
 })
