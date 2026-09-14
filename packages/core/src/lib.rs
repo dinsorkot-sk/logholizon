@@ -1,10 +1,25 @@
 pub mod auth;
 pub mod backup;
 pub mod config;
+pub mod dashboard;
 pub mod db;
 pub mod error;
+pub mod formula;
 pub mod http;
+pub mod metadata;
+pub mod module_lifecycle;
+pub mod module_package;
+pub mod notify;
+pub mod observability;
+pub mod rbac;
+pub mod relation;
 pub mod repository;
+pub mod security;
 pub mod seed;
 
 pub use config::Config;
+pub mod automation;
+pub mod dynamic_crud;
+pub mod dynamic_http;
+pub mod notification;
+pub mod report;

@@ -1,6 +1,5 @@
-use logholizon_core::{backup, http, Config};
+use logholizon_core::{backup, http, notification, notify, Config};
 use tokio::net::TcpListener;
-use tower_http::cors::CorsLayer;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -38,7 +37,46 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    let app = http::router(&config, pool).layer(CorsLayer::permissive());
+    // Webhook deliveries: poll pending rows, POST with timeout, retry.
+    if config.notify_interval_secs > 0 {
+        let task_pool = pool.clone();
+        let interval = std::time::Duration::from_secs(config.notify_interval_secs);
+        let timeout_secs = config.notify_timeout_secs;
+        let max_attempts = config.notify_max_attempts;
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(interval).await;
+                match notify::deliver_pending(&task_pool, timeout_secs, max_attempts).await {
+                    Ok(0) => {}
+                    Ok(delivered) => tracing::info!("webhook deliveries sent: {delivered}"),
+                    Err(error) => tracing::warn!("webhook delivery failed: {error:#}"),
+                }
+            }
+        });
+        tracing::info!(
+            "webhook deliveries every {}s, timeout {}s, max attempts {}",
+            config.notify_interval_secs,
+            config.notify_timeout_secs,
+            config.notify_max_attempts
+        );
+    }
+
+    // Generic automation engine: event discovery, schedules, action chains and retry logs.
+    if config.notify_interval_secs > 0 {
+        let task_pool = pool.clone();
+        let interval = std::time::Duration::from_secs(config.notify_interval_secs);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(interval).await;
+                let _ = logholizon_core::automation::enqueue_events(&task_pool).await;
+                let _ = logholizon_core::automation::enqueue_scheduled(&task_pool).await;
+                let _ = logholizon_core::automation::process_pending(&task_pool).await;
+                let _ = notification::deliver_pending(&task_pool).await;
+                let _ = notification::deliver_notifications(&task_pool).await;
+            }
+        });
+    }
+    let app = http::router(&config, pool);
     let addr = format!("{}:{}", config.host, config.port);
     let listener = TcpListener::bind(&addr).await?;
     tracing::info!("logholizon-core listening on {addr}");

@@ -7,16 +7,18 @@ async fn seeded_pool() -> sqlx::SqlitePool {
     repository::create_entity(&pool, "ticket", "ticket", "Ticket")
         .await
         .unwrap();
-    repository::create_field(&pool, "ticket", "title", "text", true, false)
+    repository::create_field(&pool, "ticket", "title", "text", true, false, None, None)
         .await
         .unwrap();
-    repository::create_field(&pool, "ticket", "priority", "number", false, false)
-        .await
-        .unwrap();
+    repository::create_field(
+        &pool, "ticket", "priority", "number", false, false, None, None,
+    )
+    .await
+    .unwrap();
     repository::create_entity(&pool, "asset", "asset", "Asset")
         .await
         .unwrap();
-    repository::create_field(&pool, "asset", "name", "text", true, false)
+    repository::create_field(&pool, "asset", "name", "text", true, false, None, None)
         .await
         .unwrap();
     pool
@@ -161,7 +163,7 @@ async fn workbook_preview_reports_unknown_sheet_and_row_errors() {
     sheet.set_name("ticket").unwrap();
     // Required number field: an unparseable value surfaces as missing-required
     // (empty text cells parse as "" which passes the required check, same as CSV).
-    repository::create_field(&pool, "ticket", "qty", "number", true, false)
+    repository::create_field(&pool, "ticket", "qty", "number", true, false, None, None)
         .await
         .unwrap();
     sheet.write_string(0, 0, "id").unwrap();

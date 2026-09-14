@@ -37,6 +37,19 @@ describe('normalizePayload', () => {
     expect(payload.priority).toBe(3)
   })
 
+  it('defaults checkbox fields to false and coerces booleans', () => {
+    const checkboxFields = [...fields, { name: 'done', type: 'checkbox', required: false }]
+    expect(defaultPayload(checkboxFields, 'draft').done).toBe(false)
+    expect(normalizePayload(checkboxFields, { title: 'x', status: 'open', done: 'true' }).done).toBe(true)
+    expect(normalizePayload(checkboxFields, { title: 'x', status: 'open', done: true }).done).toBe(true)
+  })
+
+  it('strips computed fields from outgoing payloads', () => {
+    const computedFields = [...fields, { name: 'summary', type: 'computed', required: false }]
+    const payload = normalizePayload(computedFields, { title: 'x', status: 'open', summary: 'stale' })
+    expect('summary' in payload).toBe(false)
+  })
+
   it('omits empty optional fields', () => {
     const payload = normalizePayload(fields, { title: 'Fix pump', priority: '', status: 'open' })
     expect(payload).toEqual({ title: 'Fix pump', status: 'open' })

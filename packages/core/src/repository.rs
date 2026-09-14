@@ -1,25 +1,53 @@
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use sqlx::SqlitePool;
 
 use crate::error::AppError;
+use crate::formula;
+use crate::metadata;
+
+pub use crate::module_lifecycle::{disable_module, enable_module, submit_module_for_review};
 
 #[derive(Debug, Serialize)]
 pub struct Entity {
     pub id: String,
     pub name: String,
     pub label: String,
+    pub description: String,
+    pub settings: Value,
+    pub module: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct Field {
     pub id: String,
     pub name: String,
+    pub label: String,
+    pub description: String,
     pub r#type: String,
     pub required: bool,
     pub is_status: bool,
     pub position: i64,
+    pub ref_entity: Option<String>,
+    pub computed_expr: Option<String>,
+    pub is_unique: bool,
+    pub min_value: Option<f64>,
+    pub max_value: Option<f64>,
+    pub pattern: Option<String>,
+    pub min_length: Option<i64>,
+    pub max_length: Option<i64>,
+    pub default_value: Option<String>,
+    pub auto_number_prefix: Option<String>,
+    pub auto_number_width: Option<i64>,
+    pub readonly: bool,
+    pub hidden: bool,
+    pub searchable: bool,
+    pub sortable: bool,
+    pub filterable: bool,
+    pub indexed: bool,
+    pub precision: Option<i64>,
+    pub help_text: String,
     pub options: Vec<FieldOption>,
 }
 
@@ -35,6 +63,9 @@ pub struct EntityDetail {
     pub id: String,
     pub name: String,
     pub label: String,
+    pub description: String,
+    pub settings: Value,
+    pub module: Option<String>,
     pub fields: Vec<Field>,
 }
 
@@ -43,6 +74,7 @@ pub struct EntityWithPermission {
     pub id: String,
     pub name: String,
     pub label: String,
+    pub module: Option<String>,
     pub fields: Vec<FieldWithPermission>,
     pub permission: EntityPermission,
 }
@@ -51,10 +83,31 @@ pub struct EntityWithPermission {
 pub struct FieldWithPermission {
     pub id: String,
     pub name: String,
+    pub label: String,
+    pub description: String,
     pub r#type: String,
     pub required: bool,
     pub is_status: bool,
     pub position: i64,
+    pub ref_entity: Option<String>,
+    pub computed_expr: Option<String>,
+    pub is_unique: bool,
+    pub min_value: Option<f64>,
+    pub max_value: Option<f64>,
+    pub pattern: Option<String>,
+    pub min_length: Option<i64>,
+    pub max_length: Option<i64>,
+    pub default_value: Option<String>,
+    pub auto_number_prefix: Option<String>,
+    pub auto_number_width: Option<i64>,
+    pub readonly: bool,
+    pub hidden: bool,
+    pub searchable: bool,
+    pub sortable: bool,
+    pub filterable: bool,
+    pub indexed: bool,
+    pub precision: Option<i64>,
+    pub help_text: String,
     pub options: Vec<FieldOption>,
     pub can_view: bool,
     pub can_edit: bool,
@@ -101,6 +154,76 @@ pub struct AuditList {
 }
 
 #[derive(Debug, Serialize)]
+pub struct DocComment {
+    pub id: String,
+    pub entity_id: String,
+    pub doc_id: String,
+    pub body: String,
+    pub actor: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DocCommentList {
+    pub items: Vec<DocComment>,
+    pub total: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DocFollowerList {
+    pub followers: Vec<String>,
+    pub total: i64,
+    pub is_following: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DocActivity {
+    pub id: String,
+    pub entity_id: String,
+    pub doc_id: String,
+    pub title: String,
+    pub due_date: Option<String>,
+    pub assignee: Option<String>,
+    pub done: bool,
+    pub actor: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DocActivityList {
+    pub items: Vec<DocActivity>,
+    pub total: i64,
+    pub open: i64,
+}
+
+pub const ATTACHMENT_MAX_BYTES: usize = 5 * 1024 * 1024;
+
+#[derive(Debug, Serialize)]
+pub struct DocAttachment {
+    pub id: String,
+    pub entity_id: String,
+    pub doc_id: String,
+    pub filename: String,
+    pub content_type: String,
+    pub size: i64,
+    pub actor: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DocAttachmentList {
+    pub items: Vec<DocAttachment>,
+    pub total: i64,
+}
+
+#[derive(Debug)]
+pub struct DocAttachmentData {
+    pub filename: String,
+    pub content_type: String,
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct GlobalAuditEntry {
     pub id: String,
     pub entity_id: String,
@@ -139,6 +262,40 @@ pub struct WorkflowTransition {
     pub action: String,
     pub from_state: String,
     pub to_state: String,
+    pub condition: String,
+    pub required_role: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkflowHistoryEntry {
+    pub id: String,
+    pub entity_id: String,
+    pub document_id: String,
+    pub transition_id: String,
+    pub action: String,
+    pub from_state: String,
+    pub to_state: String,
+    pub actor: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkflowHistoryList {
+    pub items: Vec<WorkflowHistoryEntry>,
+    pub total: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkflowEvent {
+    pub id: String,
+    pub entity_id: String,
+    pub document_id: String,
+    pub transition_id: String,
+    pub event_type: String,
+    pub action: String,
+    pub payload: Value,
+    pub actor: Option<String>,
+    pub created_at: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -164,6 +321,51 @@ pub struct EntityView {
 }
 
 #[derive(Debug, Serialize)]
+pub struct FormLayout {
+    pub entity_id: String,
+    pub config: Value,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NotificationRule {
+    pub id: String,
+    pub entity_id: String,
+    pub trigger: String,
+    pub target_url: String,
+    pub active: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NotificationDelivery {
+    pub id: String,
+    pub rule_id: String,
+    pub document_id: String,
+    pub action: String,
+    pub payload: Value,
+    pub status: String,
+    pub attempts: i64,
+    pub last_error: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NotificationDeliveryList {
+    pub items: Vec<NotificationDelivery>,
+    pub total: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Report {
+    pub id: String,
+    pub entity_id: String,
+    pub name: String,
+    pub config: Value,
+    pub created_by: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct StatusCount {
     pub status: String,
     pub count: i64,
@@ -175,6 +377,1317 @@ pub struct PmSummary {
     pub overdue: i64,
     pub done_this_week: i64,
     pub total: i64,
+}
+
+// --- User-defined modules: registry, versioning, tenant owner ---
+
+#[derive(Debug, Serialize)]
+pub struct Module {
+    pub id: String,
+    pub name: String,
+    pub label: String,
+    pub description: String,
+    pub icon: String,
+    pub color: String,
+    pub owner: String,
+    pub status: String,
+    pub version: i64,
+    pub semantic_version: String,
+    pub definition: Value,
+    pub created_by: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ModuleVersion {
+    pub id: String,
+    pub module_id: String,
+    pub version: i64,
+    pub semantic_version: String,
+    pub definition: Value,
+    pub actor: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Automation {
+    pub id: String,
+    pub entity_id: String,
+    pub trigger: String,
+    pub action: String,
+    pub target_url: String,
+    pub active: bool,
+    pub created_at: String,
+}
+
+fn bump_patch_version(version: &str) -> Result<String> {
+    let parts: Vec<i64> = version
+        .split(".")
+        .map(|p| p.parse::<i64>())
+        .collect::<std::result::Result<_, _>>()?;
+    if parts.len() != 3 || parts.iter().any(|p| *p < 0) {
+        bail!("invalid semantic version: {version}");
+    }
+    Ok(format!("{}.{}.{}", parts[0], parts[1], parts[2] + 1))
+}
+
+fn validate_module_name(name: &str) -> Result<()> {
+    validate_field_name(name).map_err(|_| {
+        AppError::BadRequest("module name must be lowercase snake_case (e.g. vehicle)".into())
+            .into()
+    })
+}
+
+type ModuleRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    i64,
+    String,
+    Option<String>,
+    String,
+    String,
+    String,
+);
+
+#[allow(clippy::too_many_arguments)]
+fn module_row(
+    id: String,
+    name: String,
+    label: String,
+    description: String,
+    icon: String,
+    color: String,
+    owner: String,
+    status: String,
+    version: i64,
+    definition: String,
+    created_by: Option<String>,
+    created_at: String,
+    updated_at: String,
+    semantic_version: String,
+) -> Result<Module> {
+    Ok(Module {
+        id,
+        name,
+        label,
+        description,
+        icon,
+        color,
+        owner,
+        status,
+        version,
+        semantic_version,
+        definition: serde_json::from_str(&definition)?,
+        created_by,
+        created_at,
+        updated_at,
+    })
+}
+
+async fn get_module_row(pool: &SqlitePool, id: &str) -> Result<Module> {
+    #[allow(clippy::type_complexity)]
+    let row: Option<ModuleRow> = sqlx::query_as(
+        "SELECT id, name, label, description, icon, color, owner, status, version, definition, created_by, created_at, updated_at, semantic_version FROM _module WHERE id = ?",
+    )
+    .bind(id.trim())
+    .fetch_optional(pool)
+    .await?;
+    let Some(row) = row else {
+        return Err(AppError::NotFound(format!("module not found: {id}")).into());
+    };
+    module_row(
+        row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7, row.8, row.9, row.10, row.11,
+        row.12, row.13,
+    )
+}
+
+fn check_module_access(module: &Module, owner: &str, role: &str) -> Result<()> {
+    if role == "admin" {
+        return Ok(());
+    }
+    if !module.owner.trim().is_empty() && module.owner != owner.trim() {
+        return Err(AppError::Forbidden(format!("no access to module: {}", module.id)).into());
+    }
+    Ok(())
+}
+
+/// Validate a module definition: entities with snake_case names, known field
+/// types, reference targets inside the same definition, no self references,
+/// at most one status field per entity, and valid workflow states.
+pub fn validate_module_definition(definition: &Value) -> Result<()> {
+    validate_module_definition_inner(definition, false)
+}
+
+/// Validate a draft module definition. Drafts may start empty so the Module
+/// Builder can create a module shell first and add entities afterwards.
+/// Completeness (at least one entity) is enforced at review/publish time.
+pub fn validate_module_draft(definition: &Value) -> Result<()> {
+    validate_module_definition_inner(definition, true)
+}
+
+fn validate_module_definition_inner(definition: &Value, allow_empty: bool) -> Result<()> {
+    let entities = definition
+        .get("entities")
+        .and_then(Value::as_array)
+        .ok_or_else(|| AppError::BadRequest("definition.entities must be an array".into()))?;
+    if entities.is_empty() {
+        if allow_empty {
+            return Ok(());
+        }
+        return Err(
+            AppError::BadRequest("definition must declare at least one entity".into()).into(),
+        );
+    }
+    let mut names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for entity in entities {
+        let name = entity
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| AppError::BadRequest("each entity requires a name".into()))?;
+        validate_module_name(name)?;
+        if !names.insert(name.to_string()) {
+            return Err(AppError::BadRequest(format!("duplicate entity: {name}")).into());
+        }
+    }
+    for entity in entities {
+        let name = entity.get("name").and_then(Value::as_str).unwrap_or("");
+        let fields = entity
+            .get("fields")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                AppError::BadRequest(format!("entity {name} requires a fields array"))
+            })?;
+        let mut status_count = 0;
+        for field in fields {
+            let field_name = field
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    AppError::BadRequest(format!("entity {name} has a field without a name"))
+                })?;
+            validate_field_name(field_name)?;
+            let field_type = field.get("type").and_then(Value::as_str).unwrap_or("text");
+            validate_field_type(field_type)?;
+            if field
+                .get("is_status")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                if field_type != "select" {
+                    return Err(AppError::BadRequest(format!(
+                        "status field must be of type select: {name}.{field_name}"
+                    ))
+                    .into());
+                }
+                status_count += 1;
+            }
+            if field_type == "reference" {
+                let target = field
+                    .get("ref_entity")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| {
+                        AppError::BadRequest(format!(
+                            "reference field requires ref_entity: {name}.{field_name}"
+                        ))
+                    })?;
+                if target == name {
+                    return Err(AppError::BadRequest(format!(
+                        "reference field cannot point at its own entity: {name}.{field_name}"
+                    ))
+                    .into());
+                }
+                if !names.contains(target) {
+                    return Err(AppError::BadRequest(format!(
+                        "unknown ref_entity {target} in {name}.{field_name}"
+                    ))
+                    .into());
+                }
+            }
+            if matches!(field_type, "computed" | "formula") {
+                let expr = field
+                    .get("computed_expr")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                if field_type == "computed" && (expr.contains("[") || expr.contains("]")) {
+                    continue;
+                }
+                let names: std::collections::HashSet<String> = entities
+                    .iter()
+                    .filter(|e| e.get("name").and_then(Value::as_str) == Some(name))
+                    .flat_map(|e| {
+                        e.get("fields")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                    })
+                    .filter_map(|f| f.get("name").and_then(Value::as_str).map(str::to_string))
+                    .collect();
+                formula::validate(expr, &names)?;
+            }
+            validate_field_rules(field_type, &field_rules_from_definition(field))?;
+        }
+        if status_count > 1 {
+            return Err(AppError::BadRequest(format!(
+                "entity {name} must have at most one status field"
+            ))
+            .into());
+        }
+        // Form layout sections reference fields by name (translated to
+        // materialized IDs at publish). Reject unknown names here so
+        // typos fail fast instead of rendering empty sections.
+        if let Some(layout) = entity.get("form_layout") {
+            let config = layout.get("config").unwrap_or(layout);
+            let field_names: std::collections::HashSet<&str> = fields
+                .iter()
+                .filter_map(|f| f.get("name").and_then(Value::as_str))
+                .collect();
+            if let Some(sections) = config.get("sections").and_then(Value::as_array) {
+                let mut seen_sections: std::collections::HashSet<&str> =
+                    std::collections::HashSet::new();
+                let mut seen_fields: std::collections::HashSet<&str> =
+                    std::collections::HashSet::new();
+                for section in sections {
+                    let section_id = section
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .ok_or_else(|| {
+                            AppError::BadRequest(format!(
+                                "form layout section requires a non-empty id in {name}"
+                            ))
+                        })?;
+                    if !seen_sections.insert(section_id) {
+                        return Err(AppError::BadRequest(format!(
+                            "duplicate form layout section: {name}.{section_id}"
+                        ))
+                        .into());
+                    }
+                    let section_fields = section
+                        .get("fields")
+                        .and_then(Value::as_array)
+                        .ok_or_else(|| {
+                            AppError::BadRequest(format!(
+                                "form layout section requires a fields array: {name}.{section_id}"
+                            ))
+                        })?;
+                    for field_ref in section_fields {
+                        let field_ref = field_ref.as_str().ok_or_else(|| {
+                            AppError::BadRequest(format!(
+                                "form layout field refs must be strings: {name}.{section_id}"
+                            ))
+                        })?;
+                        // Accept plain names (builder convention) and
+                        // materialized IDs (entity-manager convention).
+                        let matches = field_names.contains(field_ref)
+                            || fields.iter().any(|f| {
+                                f.get("name").and_then(Value::as_str).is_some_and(|n| {
+                                    field_ref == n || field_ref.ends_with(&format!("_{n}"))
+                                })
+                            });
+                        if !matches {
+                            return Err(AppError::BadRequest(format!(
+                                "unknown field {field_ref} in form layout: {name}.{section_id}"
+                            ))
+                            .into());
+                        }
+                        if !seen_fields.insert(field_ref) {
+                            return Err(AppError::BadRequest(format!(
+                                "duplicate field {field_ref} in form layout: {name}"
+                            ))
+                            .into());
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(workflow) = entity.get("workflow") {
+            let states: Vec<String> = workflow
+                .get("states")
+                .and_then(Value::as_array)
+                .map(|states| {
+                    states
+                        .iter()
+                        .filter_map(|s| s.get("name").and_then(Value::as_str).map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if let Some(transitions) = workflow.get("transitions").and_then(Value::as_array) {
+                for transition in transitions {
+                    let from = transition
+                        .get("from_state")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    let to = transition
+                        .get("to_state")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    if from == to {
+                        return Err(AppError::BadRequest(format!(
+                            "from_state and to_state must differ in {name}"
+                        ))
+                        .into());
+                    }
+                    for state in [from, to] {
+                        if !states.iter().any(|s| s == state) {
+                            return Err(AppError::BadRequest(format!(
+                                "unknown state {state} in {name}"
+                            ))
+                            .into());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn create_module(
+    pool: &SqlitePool,
+    name: &str,
+    label: &str,
+    description: Option<&str>,
+    icon: Option<&str>,
+    color: Option<&str>,
+    owner: &str,
+    definition: &Value,
+    actor: Option<&str>,
+) -> Result<Module> {
+    let name = name.trim();
+    let label = label.trim();
+    if name.is_empty() || label.is_empty() {
+        bail!("name and label are required");
+    }
+    validate_module_name(name)?;
+    validate_module_draft(definition)?;
+    let owner = owner.trim();
+    if owner.is_empty() {
+        bail!("owner is required");
+    }
+    let id = format!("{owner}_{name}");
+    sqlx::query("INSERT OR IGNORE INTO _tenant (id, name) VALUES (?, ?)")
+        .bind(owner)
+        .bind(owner)
+        .execute(pool)
+        .await?;
+    let definition_string = serde_json::to_string(definition)?;
+    sqlx::query(
+        "INSERT INTO _module (id, name, label, description, icon, color, owner, status, version, semantic_version, definition, created_by, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', 1, '1.0.0', ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(name)
+    .bind(label)
+    .bind(description.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(""))
+    .bind(icon.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(""))
+    .bind(color.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(""))
+    .bind(owner)
+    .bind(&definition_string)
+    .bind(actor)
+    .bind(owner)
+    .execute(pool)
+    .await?;
+    get_module_row(pool, &id).await
+}
+
+pub async fn list_modules(pool: &SqlitePool, owner: &str, role: &str) -> Result<Vec<Module>> {
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<ModuleRow> = if role == "admin" {
+        sqlx::query_as(
+            "SELECT id, name, label, description, icon, color, owner, status, version, definition, created_by, created_at, updated_at, semantic_version FROM _module ORDER BY owner, name",
+        )
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query_as(
+            "SELECT id, name, label, description, icon, color, owner, status, version, definition, created_by, created_at, updated_at, semantic_version FROM _module WHERE owner = ? ORDER BY name",
+        )
+        .bind(owner.trim())
+        .fetch_all(pool)
+        .await?
+    };
+    let mut modules = Vec::new();
+    for row in rows {
+        modules.push(module_row(
+            row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7, row.8, row.9, row.10, row.11,
+            row.12, row.13,
+        )?);
+    }
+    Ok(modules)
+}
+
+pub async fn get_module(pool: &SqlitePool, id: &str, owner: &str, role: &str) -> Result<Module> {
+    let module = get_module_row(pool, id).await?;
+    check_module_access(&module, owner, role)?;
+    Ok(module)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn update_module_draft(
+    pool: &SqlitePool,
+    id: &str,
+    label: Option<&str>,
+    description: Option<&str>,
+    icon: Option<&str>,
+    color: Option<&str>,
+    definition: Option<&Value>,
+    owner: &str,
+    role: &str,
+) -> Result<Module> {
+    let module = get_module_row(pool, id).await?;
+    check_module_access(&module, owner, role)?;
+    if module.status != "draft" {
+        return Err(
+            AppError::Conflict(format!("module is {}: {}", module.status, module.id)).into(),
+        );
+    }
+    if let Some(definition) = definition {
+        validate_module_draft(definition)?;
+    }
+    let label = label
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&module.label);
+    let definition_string = match definition {
+        Some(definition) => serde_json::to_string(definition)?,
+        None => serde_json::to_string(&module.definition)?,
+    };
+    sqlx::query(
+        "UPDATE _module SET label = ?, description = ?, icon = ?, color = ?, definition = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    )
+    .bind(label)
+    .bind(description.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(&module.description))
+    .bind(icon.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(&module.icon))
+    .bind(color.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(&module.color))
+    .bind(&definition_string)
+    .bind(module.id.trim())
+    .execute(pool)
+    .await?;
+    get_module_row(pool, &module.id).await
+}
+
+pub async fn delete_module(pool: &SqlitePool, id: &str, owner: &str, role: &str) -> Result<()> {
+    let module = get_module_row(pool, id).await?;
+    check_module_access(&module, owner, role)?;
+    if module.status == "published" {
+        return Err(
+            AppError::Conflict(format!("archive a published module first: {}", module.id)).into(),
+        );
+    }
+    let result = sqlx::query("DELETE FROM _module WHERE id = ?")
+        .bind(module.id.trim())
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("module not found: {id}")).into());
+    }
+    Ok(())
+}
+
+async fn materialize_module_definition(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    module: &Module,
+) -> Result<()> {
+    let entities = module
+        .definition
+        .get("entities")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for entity in &entities {
+        let name = entity
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if name.is_empty() {
+            continue;
+        }
+        let label = entity
+            .get("label")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(name);
+        let entity_id = format!("{}_{}", module.id, name);
+        sqlx::query(
+            "INSERT INTO _meta_entity (id, name, label, description, settings, module, module_id, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(id) DO UPDATE SET label = excluded.label, description = excluded.description, settings = excluded.settings, module = excluded.module, module_id = excluded.module_id, tenant_id = excluded.tenant_id",
+        )
+        .bind(&entity_id)
+        .bind(name)
+        .bind(label)
+        .bind(entity.get("description").and_then(Value::as_str).unwrap_or(""))
+        .bind(entity.get("settings").cloned().unwrap_or_else(|| Value::Object(Default::default())).to_string())
+        .bind(&module.label)
+        .bind(&module.id)
+        .bind(&module.owner)
+        .execute(&mut **tx)
+        .await?;
+        for role in ["admin", "user"] {
+            sqlx::query(
+                "INSERT OR IGNORE INTO _entity_permission (entity_id, role, can_view, can_edit) VALUES (?, ?, 1, 1)",
+            )
+            .bind(&entity_id)
+            .bind(role)
+            .execute(&mut **tx)
+            .await?;
+        }
+        if let Some(fields) = entity.get("fields").and_then(Value::as_array) {
+            for (position, field) in fields.iter().enumerate() {
+                let field_name = field
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if field_name.is_empty() {
+                    continue;
+                }
+                let field_type = field.get("type").and_then(Value::as_str).unwrap_or("text");
+                let required = field
+                    .get("required")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let is_status = field
+                    .get("is_status")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let ref_entity = field
+                    .get("ref_entity")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|target| format!("{}_{}", module.id, target));
+                let computed_expr = field
+                    .get("computed_expr")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string);
+                let rules = field_rules_from_definition(field);
+                let field_id = format!("{entity_id}_{field_name}");
+                sqlx::query(
+                    "INSERT INTO _meta_field (id, entity_id, name, label, description, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width, readonly, hidden, searchable, sortable, filterable, indexed, precision, help_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                     ON CONFLICT(id) DO UPDATE SET label = excluded.label, description = excluded.description, type = excluded.type, required = excluded.required, is_status = excluded.is_status, position = excluded.position, ref_entity = excluded.ref_entity, computed_expr = excluded.computed_expr, is_unique = excluded.is_unique, min_value = excluded.min_value, max_value = excluded.max_value, pattern = excluded.pattern, min_length = excluded.min_length, max_length = excluded.max_length, default_value = excluded.default_value, auto_number_prefix = excluded.auto_number_prefix, auto_number_width = excluded.auto_number_width, readonly = excluded.readonly, hidden = excluded.hidden, searchable = excluded.searchable, sortable = excluded.sortable, filterable = excluded.filterable, indexed = excluded.indexed, precision = excluded.precision, help_text = excluded.help_text",
+                )
+                .bind(&field_id)
+                .bind(&entity_id)
+                .bind(field_name)
+                .bind(field.get("label").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).unwrap_or(field_name))
+                .bind(field.get("description").and_then(Value::as_str).unwrap_or(""))
+                .bind(field_type)
+                .bind(required as i64)
+                .bind(is_status as i64)
+                .bind(position as i64)
+                .bind(ref_entity.as_deref())
+                .bind(computed_expr.as_deref())
+                .bind(rules.is_unique as i64)
+                .bind(rules.min_value)
+                .bind(rules.max_value)
+                .bind(rules.pattern.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+                .bind(rules.min_length)
+                .bind(rules.max_length)
+                .bind(rules.default_value.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+                .bind(rules.auto_number_prefix.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+                .bind(rules.auto_number_width)
+                .bind(field.get("readonly").and_then(Value::as_bool).unwrap_or(false) as i64)
+                .bind(field.get("hidden").and_then(Value::as_bool).unwrap_or(false) as i64)
+                .bind(field.get("searchable").and_then(Value::as_bool).unwrap_or(false) as i64)
+                .bind(field.get("sortable").and_then(Value::as_bool).unwrap_or(false) as i64)
+                .bind(field.get("filterable").and_then(Value::as_bool).unwrap_or(false) as i64)
+                .bind(field.get("indexed").and_then(Value::as_bool).unwrap_or(false) as i64)
+                .bind(field.get("precision").and_then(Value::as_i64))
+                .bind(field.get("help_text").and_then(Value::as_str).unwrap_or(""))
+                .execute(&mut **tx)
+                .await?;
+                for role in ["admin", "user"] {
+                    sqlx::query(
+                        "INSERT OR IGNORE INTO _field_permission (field_id, role, can_view, can_edit) VALUES (?, ?, 1, 1)",
+                    )
+                    .bind(&field_id)
+                    .bind(role)
+                    .execute(&mut **tx)
+                    .await?;
+                }
+                if let Some(options) = field.get("options").and_then(Value::as_array) {
+                    for option in options {
+                        let value = option
+                            .get("value")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .trim();
+                        let option_label = option
+                            .get("label")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or(value);
+                        if value.is_empty() {
+                            continue;
+                        }
+                        let option_id = format!("{field_id}_{value}");
+                        sqlx::query(
+                            "INSERT OR IGNORE INTO _meta_field_option (id, field_id, value, label) VALUES (?, ?, ?, ?)",
+                        )
+                        .bind(&option_id)
+                        .bind(&field_id)
+                        .bind(value)
+                        .bind(option_label)
+                        .execute(&mut **tx)
+                        .await?;
+                    }
+                }
+            }
+        }
+        if let Some(workflow) = entity.get("workflow") {
+            if let Some(states) = workflow.get("states").and_then(Value::as_array) {
+                for (position, state) in states.iter().enumerate() {
+                    let state_name = state
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim();
+                    if state_name.is_empty() {
+                        continue;
+                    }
+                    let state_label = state
+                        .get("label")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or(state_name);
+                    let state_id = format!("{entity_id}_{state_name}");
+                    sqlx::query(
+                        "INSERT INTO _workflow_state (id, entity_id, name, label, position) VALUES (?, ?, ?, ?, ?) \
+                         ON CONFLICT(id) DO UPDATE SET label = excluded.label, position = excluded.position",
+                    )
+                    .bind(&state_id)
+                    .bind(&entity_id)
+                    .bind(state_name)
+                    .bind(state_label)
+                    .bind(position as i64)
+                    .execute(&mut **tx)
+                    .await?;
+                }
+            }
+            if let Some(transitions) = workflow.get("transitions").and_then(Value::as_array) {
+                for transition in transitions {
+                    let from = transition
+                        .get("from_state")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim();
+                    let to = transition
+                        .get("to_state")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim();
+                    let action = transition
+                        .get("action")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim();
+                    if from.is_empty() || to.is_empty() || action.is_empty() {
+                        continue;
+                    }
+                    let transition_id = format!("{entity_id}_{from}_{action}");
+                    sqlx::query(
+                        "INSERT OR IGNORE INTO _workflow_transition (id, entity_id, from_state, to_state, action) VALUES (?, ?, ?, ?, ?)",
+                    )
+                    .bind(&transition_id)
+                    .bind(&entity_id)
+                    .bind(from)
+                    .bind(to)
+                    .bind(action)
+                    .execute(&mut **tx)
+                    .await?;
+                }
+            }
+        }
+        if let Some(views) = entity.get("views").and_then(Value::as_array) {
+            for view in views {
+                let view_name = view
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if view_name.is_empty() {
+                    continue;
+                }
+                let config = view
+                    .get("config")
+                    .cloned()
+                    .unwrap_or(Value::Object(Default::default()));
+                let view_id = format!("{entity_id}_view_{}", slugify_view_name(view_name));
+                sqlx::query(
+                    "INSERT OR IGNORE INTO _entity_view (id, entity_id, name, config) VALUES (?, ?, ?, ?)",
+                )
+                .bind(&view_id)
+                .bind(&entity_id)
+                .bind(view_name)
+                .bind(config.to_string())
+                .execute(&mut **tx)
+                .await?;
+            }
+        }
+        if let Some(layout) = entity.get("form_layout") {
+            let mut config = layout
+                .get("config")
+                .cloned()
+                .unwrap_or_else(|| layout.clone());
+            // The Module Builder writes field names in layout sections, but
+            // the runtime resolves entries by materialized field ID
+            // (`<module>_<entity>_<field>`). Translate names to IDs here so
+            // builder-authored layouts render correctly after publish.
+            // Entries that already look like IDs pass through untouched.
+            if let Some(sections) = config.get_mut("sections").and_then(Value::as_array_mut) {
+                for section in sections.iter_mut() {
+                    if let Some(fields) = section.get_mut("fields").and_then(Value::as_array_mut) {
+                        for field in fields.iter_mut() {
+                            if let Some(name) = field.as_str() {
+                                let id = format!("{entity_id}_{name}");
+                                let already_id =
+                                    name == entity_id || name.starts_with(&format!("{entity_id}_"));
+                                if !already_id {
+                                    *field = Value::String(id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            sqlx::query(
+                "INSERT INTO _entity_form_layout (entity_id, config) VALUES (?, ?) \
+                 ON CONFLICT(entity_id) DO UPDATE SET config = excluded.config",
+            )
+            .bind(&entity_id)
+            .bind(config.to_string())
+            .execute(&mut **tx)
+            .await?;
+        }
+        if let Some(reports) = entity.get("reports").and_then(Value::as_array) {
+            for report in reports {
+                let report_name = report
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if report_name.is_empty() {
+                    continue;
+                }
+                let config = report
+                    .get("config")
+                    .cloned()
+                    .unwrap_or(Value::Object(Default::default()));
+                let report_id = format!("{entity_id}_report_{}", slugify_view_name(report_name));
+                sqlx::query(
+                    "INSERT OR IGNORE INTO _report (id, entity_id, name, config) VALUES (?, ?, ?, ?)",
+                )
+                .bind(&report_id)
+                .bind(&entity_id)
+                .bind(report_name)
+                .bind(config.to_string())
+                .execute(&mut **tx)
+                .await?;
+            }
+        }
+        if let Some(notifications) = entity.get("notifications").and_then(Value::as_array) {
+            for rule in notifications {
+                let target_url = rule
+                    .get("target_url")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if target_url.is_empty() {
+                    continue;
+                }
+                let trigger = rule
+                    .get("trigger")
+                    .and_then(Value::as_str)
+                    .unwrap_or("transition");
+                let rule_id = format!("{entity_id}_rule_{}", chrono_nanos());
+                sqlx::query(
+                    "INSERT INTO _notification_rule (id, entity_id, trigger, target_url, active) VALUES (?, ?, ?, ?, ?)",
+                )
+                .bind(&rule_id)
+                .bind(&entity_id)
+                .bind(trigger)
+                .bind(target_url)
+                .bind(rule.get("active").and_then(Value::as_bool).unwrap_or(true) as i64)
+                .execute(&mut **tx)
+                .await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn slugify_view_name(name: &str) -> String {
+    name.trim()
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string()
+}
+
+async fn check_publish_compatibility(pool: &SqlitePool, module: &Module) -> Result<()> {
+    let entities = module
+        .definition
+        .get("entities")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for entity in &entities {
+        let name = entity
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if name.is_empty() {
+            continue;
+        }
+        let entity_id = format!("{}_{}", module.id, name);
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _meta_entity WHERE id = ?)")
+                .bind(&entity_id)
+                .fetch_one(pool)
+                .await?;
+        if !exists {
+            continue;
+        }
+        let stored_fields = list_fields(pool, &entity_id).await?;
+        let declared: std::collections::HashSet<String> = entity
+            .get("fields")
+            .and_then(Value::as_array)
+            .map(|fields| {
+                fields
+                    .iter()
+                    .filter_map(|f| f.get("name").and_then(Value::as_str).map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for stored in &stored_fields {
+            if !declared.contains(&stored.name) {
+                let in_use: bool =
+                    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _doc WHERE entity_id = ?)")
+                        .bind(&entity_id)
+                        .fetch_one(pool)
+                        .await?;
+                if in_use {
+                    return Err(AppError::Conflict(format!(
+                        "entity {entity_id} has records; removing field {} is blocked",
+                        stored.name
+                    ))
+                    .into());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn module_definition_diff(from: &Value, to: &Value) -> Value {
+    let mut changes = Vec::new();
+    let from_obj = from.as_object();
+    let to_obj = to.as_object();
+    let mut keys = std::collections::BTreeSet::new();
+    if let Some(obj) = from_obj {
+        keys.extend(obj.keys().cloned());
+    }
+    if let Some(obj) = to_obj {
+        keys.extend(obj.keys().cloned());
+    }
+    for key in keys {
+        let old = from_obj
+            .and_then(|obj| obj.get(&key))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let new = to_obj
+            .and_then(|obj| obj.get(&key))
+            .cloned()
+            .unwrap_or(Value::Null);
+        if old != new {
+            changes.push(serde_json::json!({"path": key, "from": old, "to": new}));
+        }
+    }
+    Value::Array(changes)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn record_module_change(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    module_id: &str,
+    from_version: Option<i64>,
+    to_version: i64,
+    from_semantic_version: Option<&str>,
+    to_semantic_version: &str,
+    change_type: &str,
+    diff: &Value,
+    actor: Option<&str>,
+) -> Result<()> {
+    let id = format!("{}_change_{}_{}", module_id, change_type, to_version);
+    sqlx::query("INSERT INTO _module_change (id, module_id, from_version, to_version, from_semantic_version, to_semantic_version, change_type, diff, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(id).bind(module_id).bind(from_version).bind(to_version)
+        .bind(from_semantic_version).bind(to_semantic_version).bind(change_type)
+        .bind(serde_json::to_string(diff)?).bind(actor).execute(&mut **tx).await?;
+    Ok(())
+}
+pub async fn publish_module(
+    pool: &SqlitePool,
+    id: &str,
+    owner: &str,
+    role: &str,
+    actor: Option<&str>,
+) -> Result<Module> {
+    let module = get_module_row(pool, id).await?;
+    check_module_access(&module, owner, role)?;
+    if module.status != "review" {
+        return Err(AppError::Conflict(format!(
+            "module must be in review before publishing: {}",
+            module.id
+        ))
+        .into());
+    }
+    validate_module_definition(&module.definition)?;
+    check_publish_compatibility(pool, &module).await?;
+    let mut tx = pool.begin().await?;
+    materialize_module_definition(&mut tx, &module).await?;
+    let next_version = module.version + 1;
+    let next_semantic_version = bump_patch_version(&module.semantic_version)?;
+    let previous_definition = module.definition.clone();
+    let definition_string = serde_json::to_string(&module.definition)?;
+    let version_id = format!("{}_{}", module.id, next_version);
+    sqlx::query(
+        "INSERT INTO _module_version (id, module_id, version, semantic_version, definition, actor) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&version_id)
+    .bind(&module.id)
+    .bind(next_version)
+    .bind(&next_semantic_version)
+    .bind(&definition_string)
+    .bind(actor)
+    .execute(&mut *tx)
+    .await?;
+    record_module_change(
+        &mut tx,
+        &module.id,
+        Some(module.version),
+        next_version,
+        Some(&module.semantic_version),
+        &next_semantic_version,
+        "publish",
+        &module_definition_diff(&previous_definition, &module.definition),
+        actor,
+    )
+    .await?;
+    sqlx::query(
+        "UPDATE _module SET status = 'published', version = ?, semantic_version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    )
+    .bind(next_version)
+    .bind(&next_semantic_version)
+    .bind(&module.id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    get_module_row(pool, &module.id).await
+}
+
+pub async fn archive_module(
+    pool: &SqlitePool,
+    id: &str,
+    owner: &str,
+    role: &str,
+) -> Result<Module> {
+    let module = get_module_row(pool, id).await?;
+    check_module_access(&module, owner, role)?;
+    if !matches!(module.status.as_str(), "published" | "disabled") {
+        return Err(AppError::Conflict(format!(
+            "module must be published or disabled before archive: {}",
+            module.id
+        ))
+        .into());
+    }
+    sqlx::query(
+        "UPDATE _module SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    )
+    .bind(&module.id)
+    .execute(pool)
+    .await?;
+    get_module_row(pool, &module.id).await
+}
+
+pub async fn restore_module(
+    pool: &SqlitePool,
+    id: &str,
+    owner: &str,
+    role: &str,
+) -> Result<Module> {
+    let module = get_module_row(pool, id).await?;
+    check_module_access(&module, owner, role)?;
+    if module.status != "archived" {
+        return Err(
+            AppError::Conflict(format!("only archived modules restore: {}", module.id)).into(),
+        );
+    }
+    sqlx::query("UPDATE _module SET status = 'draft', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(&module.id)
+        .execute(pool)
+        .await?;
+    get_module_row(pool, &module.id).await
+}
+
+pub async fn list_module_versions(
+    pool: &SqlitePool,
+    id: &str,
+    owner: &str,
+    role: &str,
+) -> Result<Vec<ModuleVersion>> {
+    let module = get_module_row(pool, id).await?;
+    check_module_access(&module, owner, role)?;
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(String, String, i64, String, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT id, module_id, version, semantic_version, definition, actor, created_at FROM _module_version WHERE module_id = ? ORDER BY version DESC",
+    )
+    .bind(&module.id)
+    .fetch_all(pool)
+    .await?;
+    let mut versions = Vec::new();
+    for (id, module_id, version, semantic_version, definition, actor, created_at) in rows {
+        versions.push(ModuleVersion {
+            id,
+            module_id,
+            version,
+            semantic_version,
+            definition: serde_json::from_str(&definition)?,
+            actor,
+            created_at,
+        });
+    }
+    Ok(versions)
+}
+
+pub async fn list_module_changes(
+    pool: &SqlitePool,
+    id: &str,
+    owner: &str,
+    role: &str,
+) -> Result<Vec<Value>> {
+    let module = get_module_row(pool, id).await?;
+    check_module_access(&module, owner, role)?;
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(String, i64, i64, Option<String>, String, String, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT id, COALESCE(from_version, 0), to_version, from_semantic_version, to_semantic_version, change_type, diff, actor, created_at FROM _module_change WHERE module_id = ? ORDER BY created_at DESC",
+    ).bind(&module.id).fetch_all(pool).await?;
+    Ok(rows.into_iter().map(|(id, from_version, to_version, from_semantic_version, to_semantic_version, change_type, diff, actor, created_at)| {
+        serde_json::json!({"id":id,"from_version":from_version,"to_version":to_version,"from_semantic_version":from_semantic_version,"to_semantic_version":to_semantic_version,"change_type":change_type,"diff":serde_json::from_str::<Value>(&diff).unwrap_or(Value::Array(vec![])),"actor":actor,"created_at":created_at})
+    }).collect())
+}
+pub async fn rollback_module(
+    pool: &SqlitePool,
+    id: &str,
+    version: i64,
+    owner: &str,
+    role: &str,
+    actor: Option<&str>,
+) -> Result<Module> {
+    let module = get_module_row(pool, id).await?;
+    check_module_access(&module, owner, role)?;
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT definition FROM _module_version WHERE module_id = ? AND version = ?",
+    )
+    .bind(&module.id)
+    .bind(version)
+    .fetch_optional(pool)
+    .await?;
+    let Some((definition,)) = row else {
+        return Err(AppError::NotFound(format!("module version not found: {version}")).into());
+    };
+    let definition: Value = serde_json::from_str(&definition)?;
+    validate_module_definition(&definition)?;
+    let definition_string = serde_json::to_string(&definition)?;
+    sqlx::query(
+        "UPDATE _module SET definition = ?, status = 'draft', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    )
+    .bind(&definition_string)
+    .bind(&module.id)
+    .execute(pool)
+    .await?;
+    let rolled_back = get_module_row(pool, &module.id).await?;
+    check_publish_compatibility(pool, &rolled_back).await?;
+    let mut tx = pool.begin().await?;
+    materialize_module_definition(&mut tx, &rolled_back).await?;
+    let next_version = rolled_back.version + 1;
+    let next_semantic_version = bump_patch_version(&rolled_back.semantic_version)?;
+    let version_id = format!("{}_{}", rolled_back.id, next_version);
+    sqlx::query(
+        "INSERT INTO _module_version (id, module_id, version, semantic_version, definition, actor) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&version_id)
+    .bind(&rolled_back.id)
+    .bind(next_version)
+    .bind(&next_semantic_version)
+    .bind(&definition_string)
+    .bind(actor)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        "UPDATE _module SET status = 'published', version = ?, semantic_version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    )
+    .bind(next_version)
+    .bind(&next_semantic_version)
+    .bind(&rolled_back.id)
+    .execute(&mut *tx)
+    .await?;
+    record_module_change(
+        &mut tx,
+        &module.id,
+        Some(module.version),
+        next_version,
+        Some(&module.semantic_version),
+        &next_semantic_version,
+        "rollback",
+        &module_definition_diff(&module.definition, &definition),
+        actor,
+    )
+    .await?;
+    tx.commit().await?;
+    get_module_row(pool, &rolled_back.id).await
+}
+
+pub async fn get_module_manifest(
+    pool: &SqlitePool,
+    id: &str,
+    owner: &str,
+    role: &str,
+) -> Result<Module> {
+    get_module(pool, id, owner, role).await
+}
+
+// --- Generic automations (create/update/delete/transition triggers) ---
+
+pub async fn list_automations(pool: &SqlitePool, entity_id: &str) -> Result<Vec<Automation>> {
+    require_entity(pool, entity_id).await?;
+    let rows: Vec<(String, String, String, String, String, i64, String)> = sqlx::query_as(
+        "SELECT id, entity_id, trigger, action, target_url, active, created_at FROM _automation WHERE entity_id = ? ORDER BY created_at",
+    )
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, entity_id, trigger, action, target_url, active, created_at)| Automation {
+                id,
+                entity_id,
+                trigger,
+                action,
+                target_url,
+                active: active != 0,
+                created_at,
+            },
+        )
+        .collect())
+}
+
+pub async fn create_automation(
+    pool: &SqlitePool,
+    entity_id: &str,
+    trigger: &str,
+    action: &str,
+    target_url: &str,
+    active: bool,
+) -> Result<Automation> {
+    require_entity(pool, entity_id).await?;
+    let trigger = trigger.trim();
+    let action = action.trim();
+    if !matches!(trigger, "create" | "update" | "delete" | "transition") {
+        return Err(AppError::BadRequest(format!("invalid trigger: {trigger}")).into());
+    }
+    if !matches!(action, "webhook" | "notify") {
+        return Err(AppError::BadRequest(format!("invalid action: {action}")).into());
+    }
+    if target_url.trim().is_empty() {
+        bail!("target_url is required");
+    }
+    crate::security::validate_outbound_url(target_url)?;
+    let id = format!("{entity_id}_automation_{}", chrono_nanos());
+    sqlx::query(
+        "INSERT INTO _automation (id, entity_id, trigger, action, target_url, active) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(entity_id)
+    .bind(trigger)
+    .bind(action)
+    .bind(target_url.trim())
+    .bind(active as i64)
+    .execute(pool)
+    .await?;
+    get_automation(pool, &id).await
+}
+
+pub async fn get_automation(pool: &SqlitePool, id: &str) -> Result<Automation> {
+    let row: Option<(String, String, String, String, String, i64, String)> = sqlx::query_as(
+        "SELECT id, entity_id, trigger, action, target_url, active, created_at FROM _automation WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    let Some((id, entity_id, trigger, action, target_url, active, created_at)) = row else {
+        return Err(AppError::NotFound(format!("automation not found: {id}")).into());
+    };
+    Ok(Automation {
+        id,
+        entity_id,
+        trigger,
+        action,
+        target_url,
+        active: active != 0,
+        created_at,
+    })
+}
+
+pub async fn delete_automation(pool: &SqlitePool, id: &str) -> Result<()> {
+    let result = sqlx::query("DELETE FROM _automation WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("automation not found: {id}")).into());
+    }
+    Ok(())
+}
+
+// --- Native extension contract (empty registry; no built-in domains) ---
+
+/// Stable contract for optional native Rust domain engines.
+/// Modules stay metadata-driven; an engine plugs in only when deterministic
+/// invariants cannot be expressed as generic rules.
+pub trait DomainExtension: Send + Sync {
+    fn name(&self) -> &'static str;
+    fn validate(&self, _definition: &Value) -> Result<()> {
+        Ok(())
+    }
+}
+
+pub fn domain_extensions() -> Vec<&'static str> {
+    Vec::new()
 }
 
 #[derive(Debug, Deserialize)]
@@ -195,7 +1708,7 @@ pub async fn list_entities(pool: &SqlitePool) -> Result<Vec<Entity>> {
 
 pub async fn list_entities_for_role(pool: &SqlitePool, role: &str) -> Result<Vec<Entity>> {
     let rows = sqlx::query(
-        "SELECT e.id, e.name, e.label FROM _meta_entity e \
+        "SELECT e.id, e.name, e.label, e.description, e.settings, e.module FROM _meta_entity e \
          LEFT JOIN _entity_permission p ON p.entity_id = e.id AND p.role = ? \
          WHERE COALESCE(p.can_view, 1) != 0 ORDER BY e.name",
     )
@@ -209,6 +1722,9 @@ pub async fn list_entities_for_role(pool: &SqlitePool, role: &str) -> Result<Vec
             id: row.try_get("id")?,
             name: row.try_get("name")?,
             label: row.try_get("label")?,
+            description: row.try_get("description")?,
+            settings: serde_json::from_str(row.try_get::<String, _>("settings")?.as_str())?,
+            module: row.try_get("module")?,
         });
     }
     Ok(entities)
@@ -238,28 +1754,36 @@ pub async fn create_entity(pool: &SqlitePool, id: &str, name: &str, label: &str)
         id: id.to_string(),
         name: name.to_string(),
         label: label.to_string(),
+        description: String::new(),
+        settings: Value::Object(Default::default()),
+        module: None,
     })
 }
 
 pub async fn get_entity_detail(pool: &SqlitePool, entity_id: &str) -> Result<EntityDetail> {
-    let entity = sqlx::query("SELECT id, name, label FROM _meta_entity WHERE id = ?")
-        .bind(entity_id)
-        .fetch_optional(pool)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("entity not found: {entity_id}")))?;
+    let entity = sqlx::query(
+        "SELECT id, name, label, description, settings, module FROM _meta_entity WHERE id = ?",
+    )
+    .bind(entity_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("entity not found: {entity_id}")))?;
     use sqlx::Row;
     let fields = list_fields(pool, entity_id).await?;
     Ok(EntityDetail {
         id: entity.try_get("id")?,
         name: entity.try_get("name")?,
         label: entity.try_get("label")?,
+        description: entity.try_get("description")?,
+        settings: serde_json::from_str(entity.try_get::<String, _>("settings")?.as_str())?,
+        module: entity.try_get("module")?,
         fields,
     })
 }
 
 pub async fn list_fields(pool: &SqlitePool, entity_id: &str) -> Result<Vec<Field>> {
     let rows = sqlx::query(
-        "SELECT id, name, type, required, is_status, position FROM _meta_field WHERE entity_id = ? ORDER BY position, name",
+        "SELECT id, name, label, description, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width, readonly, hidden, searchable, sortable, filterable, indexed, precision, help_text FROM _meta_field WHERE entity_id = ? ORDER BY position, name",
     )
     .bind(entity_id)
     .fetch_all(pool)
@@ -272,10 +1796,31 @@ pub async fn list_fields(pool: &SqlitePool, entity_id: &str) -> Result<Vec<Field
         fields.push(Field {
             id: field_id,
             name: row.try_get("name")?,
+            label: row.try_get("label")?,
+            description: row.try_get("description")?,
             r#type: row.try_get("type")?,
             required: row.try_get::<i64, _>("required")? != 0,
             is_status: row.try_get::<i64, _>("is_status")? != 0,
             position: row.try_get("position")?,
+            ref_entity: row.try_get("ref_entity")?,
+            computed_expr: row.try_get("computed_expr")?,
+            is_unique: row.try_get::<i64, _>("is_unique")? != 0,
+            min_value: row.try_get("min_value")?,
+            max_value: row.try_get("max_value")?,
+            pattern: row.try_get("pattern")?,
+            min_length: row.try_get("min_length")?,
+            max_length: row.try_get("max_length")?,
+            default_value: row.try_get("default_value")?,
+            auto_number_prefix: row.try_get("auto_number_prefix")?,
+            auto_number_width: row.try_get("auto_number_width")?,
+            readonly: row.try_get::<i64, _>("readonly")? != 0,
+            hidden: row.try_get::<i64, _>("hidden")? != 0,
+            searchable: row.try_get::<i64, _>("searchable")? != 0,
+            sortable: row.try_get::<i64, _>("sortable")? != 0,
+            filterable: row.try_get::<i64, _>("filterable")? != 0,
+            indexed: row.try_get::<i64, _>("indexed")? != 0,
+            precision: row.try_get("precision")?,
+            help_text: row.try_get("help_text")?,
             options,
         });
     }
@@ -329,6 +1874,56 @@ pub async fn update_entity_permissions(
     }
     tx.commit().await?;
     get_entity_permissions(pool, entity_id).await
+}
+
+pub async fn check_entity_tenant_access(
+    pool: &SqlitePool,
+    entity_id: &str,
+    owner: &str,
+    role: &str,
+) -> Result<()> {
+    if role == "admin" {
+        return Ok(());
+    }
+    let tenant_owner: Option<String> = sqlx::query_scalar(
+        "SELECT m.owner FROM _meta_entity e JOIN _module m ON m.id = e.module_id WHERE e.id = ?",
+    )
+    .bind(entity_id)
+    .fetch_optional(pool)
+    .await?;
+    match tenant_owner {
+        Some(value) if value == owner.trim() => Ok(()),
+        Some(_) => {
+            Err(AppError::Forbidden(format!("no tenant access to entity: {entity_id}")).into())
+        }
+        None => Err(AppError::Forbidden(format!("entity has no tenant owner: {entity_id}")).into()),
+    }
+}
+
+pub async fn check_document_tenant_access(
+    pool: &SqlitePool,
+    document_id: &str,
+    owner: &str,
+    role: &str,
+) -> Result<()> {
+    if role == "admin" {
+        return Ok(());
+    }
+    let tenant_owner: Option<String> = sqlx::query_scalar(
+        "SELECT m.owner FROM _doc d JOIN _meta_entity e ON e.id = d.entity_id JOIN _module m ON m.id = e.module_id WHERE d.id = ?",
+    )
+    .bind(document_id)
+    .fetch_optional(pool)
+    .await?;
+    match tenant_owner {
+        Some(value) if value == owner.trim() => Ok(()),
+        Some(_) => {
+            Err(AppError::Forbidden(format!("no tenant access to document: {document_id}")).into())
+        }
+        None => {
+            Err(AppError::Forbidden(format!("document has no tenant owner: {document_id}")).into())
+        }
+    }
 }
 
 pub async fn check_permission(
@@ -396,10 +1991,31 @@ pub async fn get_entity_with_permission(
             FieldWithPermission {
                 id: f.id,
                 name: f.name,
+                label: f.label,
+                description: f.description,
                 r#type: f.r#type,
                 required: f.required,
                 is_status: f.is_status,
                 position: f.position,
+                ref_entity: f.ref_entity,
+                computed_expr: f.computed_expr,
+                is_unique: f.is_unique,
+                min_value: f.min_value,
+                max_value: f.max_value,
+                pattern: f.pattern,
+                min_length: f.min_length,
+                max_length: f.max_length,
+                default_value: f.default_value,
+                auto_number_prefix: f.auto_number_prefix,
+                auto_number_width: f.auto_number_width,
+                readonly: f.readonly,
+                hidden: f.hidden,
+                searchable: f.searchable,
+                sortable: f.sortable,
+                filterable: f.filterable,
+                indexed: f.indexed,
+                precision: f.precision,
+                help_text: f.help_text,
                 options: f.options,
                 can_view,
                 can_edit,
@@ -410,9 +2026,73 @@ pub async fn get_entity_with_permission(
         id: detail.id,
         name: detail.name,
         label: detail.label,
+        module: detail.module,
         fields,
         permission,
     })
+}
+
+#[derive(Debug, Serialize)]
+pub struct EntityOption {
+    pub id: String,
+    pub label: String,
+}
+
+/// Dropdown options for reference fields: id + display label, where the
+/// label is the first text field value (falling back to the document id).
+/// Respects the caller's view permission on the target entity.
+/// `search` filters by id or label substring (case-insensitive);
+/// `limit` caps rows at 1..=100 (default 50).
+pub async fn list_entity_options(
+    pool: &SqlitePool,
+    entity_id: &str,
+    role: &str,
+    search: Option<&str>,
+    limit: i64,
+) -> Result<Vec<EntityOption>> {
+    check_permission(pool, entity_id, role, false).await?;
+    let limit = limit.clamp(1, 100);
+    let fields = list_fields(pool, entity_id).await?;
+    let label_field = fields
+        .iter()
+        .find(|f| f.r#type == "text")
+        .map(|f| f.name.clone());
+    let rows = sqlx::query_as::<_, (String, String)>(
+        "SELECT id, payload FROM _doc WHERE entity_id = ? ORDER BY created_at DESC LIMIT 500",
+    )
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await?;
+    let mut options = Vec::new();
+    for (id, payload) in rows {
+        let label = label_field
+            .as_deref()
+            .and_then(|name| {
+                serde_json::from_str::<Value>(&payload)
+                    .ok()?
+                    .get(name)?
+                    .as_str()
+                    .map(str::to_string)
+            })
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| id.clone());
+        if let Some(query) = search.map(str::trim).filter(|s| !s.is_empty()) {
+            let query = query.to_lowercase();
+            if !id.to_lowercase().contains(&query) && !label.to_lowercase().contains(&query) {
+                continue;
+            }
+        }
+        options.push(EntityOption { id, label });
+        if options.len() as i64 >= limit {
+            break;
+        }
+    }
+    Ok(options)
+}
+
+/// Evaluate computed/formula fields on read. Derived values are never persisted.
+pub fn apply_computed_fields(fields: &[Field], payload: &Value) -> Result<Value> {
+    formula::apply(fields, payload)
 }
 
 pub async fn get_field_permissions(
@@ -606,6 +2286,389 @@ pub async fn delete_entity_view(pool: &SqlitePool, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Webhook notifications (Phase 3, transition-only). Rules are admin-managed
+/// per entity; deliveries are enqueued atomically with the transition audit
+/// row and sent by a background worker with retry.
+fn validate_notification_rule(trigger: &str, target_url: &str) -> Result<()> {
+    if trigger != "transition" {
+        return Err(AppError::BadRequest(format!("unknown trigger: {trigger}")).into());
+    }
+    let url = target_url.trim();
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err(
+            AppError::BadRequest("target_url must start with http:// or https://".into()).into(),
+        );
+    }
+    Ok(())
+}
+
+fn notification_rule_row(
+    id: String,
+    entity_id: String,
+    trigger: String,
+    target_url: String,
+    active: i64,
+    created_at: String,
+) -> NotificationRule {
+    NotificationRule {
+        id,
+        entity_id,
+        trigger,
+        target_url,
+        active: active != 0,
+        created_at,
+    }
+}
+
+pub async fn list_notification_rules(
+    pool: &SqlitePool,
+    entity_id: &str,
+) -> Result<Vec<NotificationRule>> {
+    require_entity(pool, entity_id).await?;
+    let rows = sqlx::query_as::<_, (String, String, String, String, i64, String)>(
+        "SELECT id, entity_id, trigger, target_url, active, created_at FROM _notification_rule WHERE entity_id = ? ORDER BY created_at",
+    )
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, entity_id, trigger, target_url, active, created_at)| {
+            notification_rule_row(id, entity_id, trigger, target_url, active, created_at)
+        })
+        .collect())
+}
+
+pub async fn create_notification_rule(
+    pool: &SqlitePool,
+    entity_id: &str,
+    trigger: &str,
+    target_url: &str,
+    active: bool,
+) -> Result<NotificationRule> {
+    require_entity(pool, entity_id).await?;
+    validate_notification_rule(trigger, target_url)?;
+    let id = format!("{entity_id}_rule_{}", chrono_nanos());
+    sqlx::query(
+        "INSERT INTO _notification_rule (id, entity_id, trigger, target_url, active) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(entity_id)
+    .bind(trigger)
+    .bind(target_url.trim())
+    .bind(i64::from(active))
+    .execute(pool)
+    .await?;
+    get_notification_rule(pool, &id).await
+}
+
+pub async fn get_notification_rule(pool: &SqlitePool, id: &str) -> Result<NotificationRule> {
+    let row = sqlx::query_as::<_, (String, String, String, String, i64, String)>(
+        "SELECT id, entity_id, trigger, target_url, active, created_at FROM _notification_rule WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("notification rule not found: {id}")))?;
+    let (id, entity_id, trigger, target_url, active, created_at) = row;
+    Ok(notification_rule_row(
+        id, entity_id, trigger, target_url, active, created_at,
+    ))
+}
+
+pub async fn update_notification_rule(
+    pool: &SqlitePool,
+    id: &str,
+    trigger: Option<&str>,
+    target_url: Option<&str>,
+    active: Option<bool>,
+) -> Result<NotificationRule> {
+    let existing = get_notification_rule(pool, id).await?;
+    let next_trigger = trigger.unwrap_or(&existing.trigger).to_string();
+    let next_url = target_url.unwrap_or(&existing.target_url).to_string();
+    let next_active = active.unwrap_or(existing.active);
+    validate_notification_rule(&next_trigger, &next_url)?;
+    let result = sqlx::query(
+        "UPDATE _notification_rule SET trigger = ?, target_url = ?, active = ? WHERE id = ?",
+    )
+    .bind(&next_trigger)
+    .bind(next_url.trim())
+    .bind(i64::from(next_active))
+    .bind(id)
+    .execute(pool)
+    .await?;
+    debug_assert_eq!(result.rows_affected(), 1);
+    get_notification_rule(pool, id).await
+}
+
+pub async fn delete_notification_rule(pool: &SqlitePool, id: &str) -> Result<()> {
+    let result = sqlx::query("DELETE FROM _notification_rule WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("notification rule not found: {id}")).into());
+    }
+    Ok(())
+}
+
+/// Saved report definitions are generic JSON configurations; chart_type is validated when present.
+/// Admin-managed; users read reports for entities they can view.
+fn validate_report_config(config: &Value) -> Result<()> {
+    let object = config
+        .as_object()
+        .ok_or_else(|| AppError::BadRequest("report config must be a JSON object".to_string()))?;
+    let has_query_definition = object.contains_key("group_by")
+        || object.contains_key("fields")
+        || object.contains_key("filters")
+        || object.contains_key("sort")
+        || object.contains_key("aggregates")
+        || object.contains_key("calculated")
+        || object.contains_key("date_range")
+        || object.contains_key("date_field")
+        || object.contains_key("relation_id");
+    if !has_query_definition {
+        return Err(
+            AppError::BadRequest("report config requires a query definition".to_string()).into(),
+        );
+    }
+    if let Some(chart_type) = object.get("chart_type") {
+        let chart_type = chart_type
+            .as_str()
+            .ok_or_else(|| AppError::BadRequest("chart_type must be a string".to_string()))?;
+        if chart_type != "bar" && chart_type != "pie" {
+            return Err(AppError::BadRequest(format!("unknown chart_type: {chart_type}")).into());
+        }
+    }
+    Ok(())
+}
+
+fn report_row(
+    id: String,
+    entity_id: String,
+    name: String,
+    config: String,
+    created_by: Option<String>,
+    created_at: String,
+) -> Result<Report> {
+    Ok(Report {
+        id,
+        entity_id,
+        name,
+        config: serde_json::from_str(&config)?,
+        created_by,
+        created_at,
+    })
+}
+
+pub async fn list_reports(pool: &SqlitePool, entity_id: &str) -> Result<Vec<Report>> {
+    require_entity(pool, entity_id).await?;
+    let rows = sqlx::query_as::<_, (String, String, String, String, Option<String>, String)>(
+        "SELECT id, entity_id, name, config, created_by, created_at FROM _report WHERE entity_id = ? ORDER BY name",
+    )
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter()
+        .map(|(id, entity_id, name, config, created_by, created_at)| {
+            report_row(id, entity_id, name, config, created_by, created_at)
+        })
+        .collect()
+}
+
+pub async fn create_report(
+    pool: &SqlitePool,
+    entity_id: &str,
+    name: &str,
+    config: &Value,
+    created_by: Option<&str>,
+) -> Result<Report> {
+    require_entity(pool, entity_id).await?;
+    if name.trim().is_empty() {
+        anyhow::bail!("report name is required");
+    }
+    validate_report_config(config)?;
+    let id = format!("{entity_id}_report_{}", chrono_nanos());
+    sqlx::query(
+        "INSERT INTO _report (id, entity_id, name, config, created_by) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(entity_id)
+    .bind(name.trim())
+    .bind(config.to_string())
+    .bind(created_by)
+    .execute(pool)
+    .await?;
+    get_report(pool, &id).await
+}
+
+pub async fn get_report(pool: &SqlitePool, id: &str) -> Result<Report> {
+    let row = sqlx::query_as::<_, (String, String, String, String, Option<String>, String)>(
+        "SELECT id, entity_id, name, config, created_by, created_at FROM _report WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("report not found: {id}")))?;
+    let (id, entity_id, name, config, created_by, created_at) = row;
+    report_row(id, entity_id, name, config, created_by, created_at)
+}
+
+pub async fn delete_report(pool: &SqlitePool, id: &str) -> Result<()> {
+    let result = sqlx::query("DELETE FROM _report WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("report not found: {id}")).into());
+    }
+    Ok(())
+}
+
+pub fn chrono_nanos_public() -> i64 {
+    chrono_nanos()
+}
+
+fn chrono_nanos() -> i64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    // Monotonic suffix: parallel tests on coarse Windows clocks can
+    // otherwise generate duplicate ids within the same tick.
+    (millis * 1_000_000 + COUNTER.fetch_add(1, Ordering::Relaxed) % 1_000_000) as i64
+}
+
+pub async fn list_notification_deliveries(
+    pool: &SqlitePool,
+    limit: i64,
+    offset: i64,
+) -> Result<NotificationDeliveryList> {
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _notification_delivery")
+        .fetch_one(pool)
+        .await?;
+    let rows = sqlx::query_as::<_, (String, String, String, String, String, String, i64, Option<String>, String)>(
+        "SELECT id, rule_id, document_id, action, payload, status, attempts, last_error, created_at FROM _notification_delivery ORDER BY created_at DESC LIMIT ? OFFSET ?",
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    let mut items = Vec::new();
+    for (id, rule_id, document_id, action, payload, status, attempts, last_error, created_at) in
+        rows
+    {
+        items.push(NotificationDelivery {
+            id,
+            rule_id,
+            document_id,
+            action,
+            payload: serde_json::from_str(&payload)?,
+            status,
+            attempts,
+            last_error,
+            created_at,
+        });
+    }
+    Ok(NotificationDeliveryList { items, total })
+}
+
+/// Form layout designer (Visual Builder Phase 2). The layout is a singleton
+/// config per entity: `{ "sections": [{ "id", "label", "fields": [field_id] }] }`.
+/// Missing layout = default flat render. Unknown field ids are rejected on
+/// write (400) and ignored at render time (tolerant policy).
+pub async fn get_entity_form_layout(pool: &SqlitePool, entity_id: &str) -> Result<FormLayout> {
+    require_entity(pool, entity_id).await?;
+    let config: Option<String> =
+        sqlx::query_scalar("SELECT config FROM _entity_form_layout WHERE entity_id = ?")
+            .bind(entity_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(FormLayout {
+        entity_id: entity_id.to_string(),
+        config: config
+            .map(|raw| serde_json::from_str(&raw))
+            .transpose()?
+            .unwrap_or_else(|| serde_json::json!({})),
+    })
+}
+
+fn validate_form_layout_config(config: &Value, field_ids: &[String]) -> Result<()> {
+    let object = config.as_object().ok_or_else(|| {
+        AppError::BadRequest("form layout config must be a JSON object".to_string())
+    })?;
+    let sections = object.get("sections").ok_or_else(|| {
+        AppError::BadRequest("form layout config requires a sections array".to_string())
+    })?;
+    let sections = sections
+        .as_array()
+        .ok_or_else(|| AppError::BadRequest("sections must be an array".to_string()))?;
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for section in sections {
+        let section = section
+            .as_object()
+            .ok_or_else(|| AppError::BadRequest("each section must be an object".to_string()))?;
+        let id = section
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AppError::BadRequest("each section requires a non-empty id".to_string())
+            })?;
+        if !seen.insert(id) {
+            return Err(AppError::BadRequest(format!("duplicate section id: {id}")).into());
+        }
+        if let Some(label) = section.get("label") {
+            if !label.is_string() {
+                return Err(
+                    AppError::BadRequest(format!("section label must be a string: {id}")).into(),
+                );
+            }
+        }
+        let fields = section.get("fields").ok_or_else(|| {
+            AppError::BadRequest(format!("section requires a fields array: {id}"))
+        })?;
+        let fields = fields.as_array().ok_or_else(|| {
+            AppError::BadRequest(format!("section fields must be an array: {id}"))
+        })?;
+        for field in fields {
+            let field_id = field.as_str().ok_or_else(|| {
+                AppError::BadRequest(format!("section field ids must be strings: {id}"))
+            })?;
+            if !field_ids.iter().any(|known| known == field_id) {
+                return Err(AppError::BadRequest(format!("unknown field: {field_id}")).into());
+            }
+            if !seen.insert(field_id) {
+                return Err(AppError::BadRequest(format!("duplicate field: {field_id}")).into());
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn update_entity_form_layout(
+    pool: &SqlitePool,
+    entity_id: &str,
+    config: &Value,
+) -> Result<FormLayout> {
+    require_entity(pool, entity_id).await?;
+    let fields = list_fields(pool, entity_id).await?;
+    let field_ids: Vec<String> = fields.into_iter().map(|f| f.id).collect();
+    validate_form_layout_config(config, &field_ids)?;
+    sqlx::query(
+        "INSERT INTO _entity_form_layout (entity_id, config) VALUES (?, ?) \
+         ON CONFLICT(entity_id) DO UPDATE SET config = excluded.config",
+    )
+    .bind(entity_id)
+    .bind(config.to_string())
+    .execute(pool)
+    .await?;
+    get_entity_form_layout(pool, entity_id).await
+}
+
 pub async fn list_field_options(pool: &SqlitePool, field_id: &str) -> Result<Vec<FieldOption>> {
     let rows = sqlx::query(
         "SELECT id, value, label FROM _meta_field_option WHERE field_id = ? ORDER BY value",
@@ -625,16 +2688,24 @@ pub async fn list_field_options(pool: &SqlitePool, field_id: &str) -> Result<Vec
     Ok(options)
 }
 
-pub async fn update_entity(pool: &SqlitePool, id: &str, name: &str, label: &str) -> Result<Entity> {
+pub async fn update_entity(
+    pool: &SqlitePool,
+    id: &str,
+    name: &str,
+    label: &str,
+    module: Option<&str>,
+) -> Result<Entity> {
     if name.trim().is_empty() || label.trim().is_empty() {
         bail!("name and label are required");
     }
-    let result = sqlx::query("UPDATE _meta_entity SET name = ?, label = ? WHERE id = ?")
-        .bind(name)
-        .bind(label)
-        .bind(id)
-        .execute(pool)
-        .await?;
+    let result =
+        sqlx::query("UPDATE _meta_entity SET name = ?, label = ?, module = ? WHERE id = ?")
+            .bind(name)
+            .bind(label)
+            .bind(module.map(str::trim).filter(|s| !s.is_empty()))
+            .bind(id)
+            .execute(pool)
+            .await?;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("entity not found: {id}")).into());
     }
@@ -642,7 +2713,36 @@ pub async fn update_entity(pool: &SqlitePool, id: &str, name: &str, label: &str)
         id: id.to_string(),
         name: name.to_string(),
         label: label.to_string(),
+        description: String::new(),
+        settings: Value::Object(Default::default()),
+        module: module
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
     })
+}
+
+pub async fn update_entity_metadata(
+    pool: &SqlitePool,
+    id: &str,
+    description: Option<&str>,
+    settings: Option<&Value>,
+) -> Result<EntityDetail> {
+    require_entity(pool, id).await?;
+    if let Some(settings) = settings {
+        if !settings.is_object() {
+            return Err(
+                AppError::BadRequest("entity settings must be a JSON object".into()).into(),
+            );
+        }
+    }
+    sqlx::query("UPDATE _meta_entity SET description = COALESCE(?, description), settings = COALESCE(?, settings) WHERE id = ?")
+        .bind(description.map(str::trim))
+        .bind(settings.map(Value::to_string))
+        .bind(id)
+        .execute(pool)
+        .await?;
+    get_entity_detail(pool, id).await
 }
 
 pub async fn delete_entity(pool: &SqlitePool, id: &str) -> Result<()> {
@@ -670,6 +2770,30 @@ pub async fn delete_entity(pool: &SqlitePool, id: &str) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct FieldRules {
+    pub is_unique: bool,
+    pub min_value: Option<f64>,
+    pub max_value: Option<f64>,
+    pub pattern: Option<String>,
+    pub min_length: Option<i64>,
+    pub max_length: Option<i64>,
+    pub default_value: Option<String>,
+    pub auto_number_prefix: Option<String>,
+    pub auto_number_width: Option<i64>,
+    pub label: Option<String>,
+    pub description: Option<String>,
+    pub readonly: bool,
+    pub hidden: bool,
+    pub searchable: bool,
+    pub sortable: bool,
+    pub filterable: bool,
+    pub indexed: bool,
+    pub precision: Option<i64>,
+    pub help_text: Option<String>,
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn create_field(
     pool: &SqlitePool,
     entity_id: &str,
@@ -677,16 +2801,56 @@ pub async fn create_field(
     field_type: &str,
     required: bool,
     is_status: bool,
+    ref_entity: Option<&str>,
+    computed_expr: Option<&str>,
+) -> Result<Field> {
+    create_field_with_rules(
+        pool,
+        entity_id,
+        name,
+        field_type,
+        required,
+        is_status,
+        ref_entity,
+        computed_expr,
+        &FieldRules::default(),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn create_field_with_rules(
+    pool: &SqlitePool,
+    entity_id: &str,
+    name: &str,
+    field_type: &str,
+    required: bool,
+    is_status: bool,
+    ref_entity: Option<&str>,
+    computed_expr: Option<&str>,
+    rules: &FieldRules,
 ) -> Result<Field> {
     validate_field_name(name)?;
     validate_field_type(field_type)?;
     validate_status_field(pool, entity_id, None, field_type, is_status).await?;
+    validate_reference_field(pool, entity_id, field_type, ref_entity).await?;
+    validate_computed_field(field_type, computed_expr)?;
+    validate_field_rules(field_type, rules)?;
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _meta_entity WHERE id = ?)")
         .bind(entity_id)
         .fetch_one(pool)
         .await?;
     if !exists {
         return Err(AppError::NotFound(format!("entity not found: {entity_id}")).into());
+    }
+    if matches!(field_type, "computed" | "formula")
+        && !computed_expr
+            .map(|e| e.contains('[') || e.contains(']'))
+            .unwrap_or(false)
+    {
+        if let Some(expr) = computed_expr {
+            formula::validate_syntax(expr)?;
+        }
     }
     let position: i64 = sqlx::query_scalar(
         "SELECT COALESCE(MAX(position), -1) + 1 FROM _meta_field WHERE entity_id = ?",
@@ -696,15 +2860,36 @@ pub async fn create_field(
     .await?;
     let field_id = format!("{entity_id}_{name}");
     sqlx::query(
-        "INSERT INTO _meta_field (id, entity_id, name, type, required, is_status, position) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO _meta_field (id, entity_id, name, label, description, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width, readonly, hidden, searchable, sortable, filterable, indexed, precision, help_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&field_id)
     .bind(entity_id)
     .bind(name)
+    .bind(rules.label.as_deref().unwrap_or(name))
+    .bind(rules.description.as_deref().unwrap_or(""))
     .bind(field_type)
     .bind(required as i64)
     .bind(is_status as i64)
     .bind(position)
+    .bind(ref_entity.map(str::trim).filter(|s| !s.is_empty()))
+    .bind(computed_expr.map(str::trim).filter(|s| !s.is_empty()))
+    .bind(rules.is_unique as i64)
+    .bind(rules.min_value)
+    .bind(rules.max_value)
+    .bind(rules.pattern.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+    .bind(rules.min_length)
+    .bind(rules.max_length)
+    .bind(rules.default_value.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+    .bind(rules.auto_number_prefix.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+    .bind(rules.auto_number_width)
+    .bind(rules.readonly as i64)
+    .bind(rules.hidden as i64)
+    .bind(rules.searchable as i64)
+    .bind(rules.sortable as i64)
+    .bind(rules.filterable as i64)
+    .bind(rules.indexed as i64)
+    .bind(rules.precision)
+    .bind(rules.help_text.as_deref().unwrap_or(""))
     .execute(pool)
     .await?;
     // Default field permissions: both roles can view and edit.
@@ -722,7 +2907,7 @@ pub async fn create_field(
 
 pub async fn get_field(pool: &SqlitePool, field_id: &str) -> Result<Field> {
     let row = sqlx::query(
-        "SELECT id, name, type, required, is_status, position FROM _meta_field WHERE id = ?",
+        "SELECT id, name, label, description, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width, readonly, hidden, searchable, sortable, filterable, indexed, precision, help_text FROM _meta_field WHERE id = ?",
     )
     .bind(field_id)
     .fetch_optional(pool)
@@ -733,14 +2918,36 @@ pub async fn get_field(pool: &SqlitePool, field_id: &str) -> Result<Field> {
     Ok(Field {
         id: row.try_get("id")?,
         name: row.try_get("name")?,
+        label: row.try_get("label")?,
+        description: row.try_get("description")?,
         r#type: row.try_get("type")?,
         required: row.try_get::<i64, _>("required")? != 0,
         is_status: row.try_get::<i64, _>("is_status")? != 0,
         position: row.try_get("position")?,
+        ref_entity: row.try_get("ref_entity")?,
+        computed_expr: row.try_get("computed_expr")?,
+        is_unique: row.try_get::<i64, _>("is_unique")? != 0,
+        min_value: row.try_get("min_value")?,
+        max_value: row.try_get("max_value")?,
+        pattern: row.try_get("pattern")?,
+        min_length: row.try_get("min_length")?,
+        max_length: row.try_get("max_length")?,
+        default_value: row.try_get("default_value")?,
+        auto_number_prefix: row.try_get("auto_number_prefix")?,
+        auto_number_width: row.try_get("auto_number_width")?,
+        readonly: row.try_get::<i64, _>("readonly")? != 0,
+        hidden: row.try_get::<i64, _>("hidden")? != 0,
+        searchable: row.try_get::<i64, _>("searchable")? != 0,
+        sortable: row.try_get::<i64, _>("sortable")? != 0,
+        filterable: row.try_get::<i64, _>("filterable")? != 0,
+        indexed: row.try_get::<i64, _>("indexed")? != 0,
+        precision: row.try_get("precision")?,
+        help_text: row.try_get("help_text")?,
         options,
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn update_field(
     pool: &SqlitePool,
     field_id: &str,
@@ -748,6 +2955,34 @@ pub async fn update_field(
     field_type: &str,
     required: bool,
     is_status: bool,
+    ref_entity: Option<&str>,
+    computed_expr: Option<&str>,
+) -> Result<Field> {
+    update_field_with_rules(
+        pool,
+        field_id,
+        name,
+        field_type,
+        required,
+        is_status,
+        ref_entity,
+        computed_expr,
+        &FieldRules::default(),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn update_field_with_rules(
+    pool: &SqlitePool,
+    field_id: &str,
+    name: &str,
+    field_type: &str,
+    required: bool,
+    is_status: bool,
+    ref_entity: Option<&str>,
+    computed_expr: Option<&str>,
+    rules: &FieldRules,
 ) -> Result<Field> {
     validate_field_name(name)?;
     validate_field_type(field_type)?;
@@ -757,13 +2992,52 @@ pub async fn update_field(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("field not found: {field_id}")))?;
     validate_status_field(pool, &entity_id, Some(field_id), field_type, is_status).await?;
+    validate_reference_field(pool, &entity_id, field_type, ref_entity).await?;
+    validate_computed_field(field_type, computed_expr)?;
+    validate_field_rules(field_type, rules)?;
+    if matches!(field_type, "computed" | "formula")
+        && !computed_expr
+            .map(|e| e.contains('[') || e.contains(']'))
+            .unwrap_or(false)
+    {
+        let mut names: std::collections::HashSet<String> = list_fields(pool, &entity_id)
+            .await?
+            .into_iter()
+            .map(|f| f.name)
+            .collect();
+        names.insert(name.to_string());
+        if let Some(expr) = computed_expr {
+            formula::validate(expr, &names)?;
+        }
+    }
     let result = sqlx::query(
-        "UPDATE _meta_field SET name = ?, type = ?, required = ?, is_status = ? WHERE id = ?",
+        "UPDATE _meta_field SET name = ?, label = ?, description = ?, type = ?, required = ?, is_status = ?, ref_entity = ?, computed_expr = ?, is_unique = ?, min_value = ?, max_value = ?, pattern = ?, min_length = ?, max_length = ?, default_value = ?, auto_number_prefix = ?, auto_number_width = ?, readonly = ?, hidden = ?, searchable = ?, sortable = ?, filterable = ?, indexed = ?, precision = ?, help_text = ? WHERE id = ?",
     )
     .bind(name)
+    .bind(rules.label.as_deref().unwrap_or(name))
+    .bind(rules.description.as_deref().unwrap_or(""))
     .bind(field_type)
     .bind(required as i64)
     .bind(is_status as i64)
+    .bind(ref_entity.map(str::trim).filter(|s| !s.is_empty()))
+    .bind(computed_expr.map(str::trim).filter(|s| !s.is_empty()))
+    .bind(rules.is_unique as i64)
+    .bind(rules.min_value)
+    .bind(rules.max_value)
+    .bind(rules.pattern.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+    .bind(rules.min_length)
+    .bind(rules.max_length)
+    .bind(rules.default_value.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+    .bind(rules.auto_number_prefix.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+    .bind(rules.auto_number_width)
+    .bind(rules.readonly as i64)
+    .bind(rules.hidden as i64)
+    .bind(rules.searchable as i64)
+    .bind(rules.sortable as i64)
+    .bind(rules.filterable as i64)
+    .bind(rules.indexed as i64)
+    .bind(rules.precision)
+    .bind(rules.help_text.as_deref().unwrap_or(""))
     .bind(field_id)
     .execute(pool)
     .await?;
@@ -899,10 +3173,346 @@ fn validate_field_name(name: &str) -> Result<()> {
 }
 
 fn validate_field_type(field_type: &str) -> Result<()> {
-    if !matches!(field_type, "text" | "number" | "date" | "select") {
-        return Err(AppError::BadRequest(format!("invalid field type: {field_type}")).into());
+    metadata::validate_field_type(field_type)
+}
+
+async fn validate_reference_field(
+    pool: &SqlitePool,
+    entity_id: &str,
+    field_type: &str,
+    ref_entity: Option<&str>,
+) -> Result<()> {
+    if field_type != "reference" {
+        if ref_entity
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .is_some()
+        {
+            return Err(AppError::BadRequest(
+                "ref_entity is only valid for reference fields".into(),
+            )
+            .into());
+        }
+        return Ok(());
+    }
+    let target = ref_entity
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| AppError::BadRequest("reference fields require a ref_entity".into()))?;
+    if target == entity_id {
+        return Err(
+            AppError::BadRequest("reference field cannot point at its own entity".into()).into(),
+        );
+    }
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _meta_entity WHERE id = ?)")
+        .bind(target)
+        .fetch_one(pool)
+        .await?;
+    if !exists {
+        return Err(AppError::NotFound(format!("entity not found: {target}")).into());
     }
     Ok(())
+}
+
+fn field_rules_from_definition(field: &Value) -> FieldRules {
+    let rules = field.get("rules");
+    FieldRules {
+        label: field
+            .get("label")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        description: field
+            .get("description")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        readonly: field
+            .get("readonly")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        hidden: field
+            .get("hidden")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        searchable: field
+            .get("searchable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        sortable: field
+            .get("sortable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        filterable: field
+            .get("filterable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        indexed: field
+            .get("indexed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        precision: field.get("precision").and_then(Value::as_i64),
+        help_text: field
+            .get("help_text")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        is_unique: field
+            .get("unique")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            || rules
+                .and_then(|rules| rules.get("unique"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        min_value: field
+            .get("min_value")
+            .and_then(Value::as_f64)
+            .or_else(|| {
+                rules
+                    .and_then(|rules| rules.get("min_value"))
+                    .and_then(Value::as_f64)
+            })
+            .or_else(|| {
+                rules
+                    .and_then(|rules| rules.get("min"))
+                    .and_then(Value::as_f64)
+            }),
+        max_value: field
+            .get("max_value")
+            .and_then(Value::as_f64)
+            .or_else(|| {
+                rules
+                    .and_then(|rules| rules.get("max_value"))
+                    .and_then(Value::as_f64)
+            })
+            .or_else(|| {
+                rules
+                    .and_then(|rules| rules.get("max"))
+                    .and_then(Value::as_f64)
+            }),
+        pattern: field
+            .get("pattern")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| {
+                rules
+                    .and_then(|rules| rules.get("pattern"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            }),
+        min_length: field.get("min_length").and_then(Value::as_i64).or_else(|| {
+            rules
+                .and_then(|rules| rules.get("min_length"))
+                .and_then(Value::as_i64)
+        }),
+        max_length: field.get("max_length").and_then(Value::as_i64).or_else(|| {
+            rules
+                .and_then(|rules| rules.get("max_length"))
+                .and_then(Value::as_i64)
+        }),
+        default_value: field
+            .get("default")
+            .and_then(|value| match value {
+                Value::String(text) => Some(text.clone()),
+                Value::Number(number) => Some(number.to_string()),
+                Value::Bool(flag) => Some(flag.to_string()),
+                _ => None,
+            })
+            .or_else(|| {
+                rules
+                    .and_then(|rules| rules.get("default"))
+                    .and_then(|value| match value {
+                        Value::String(text) => Some(text.clone()),
+                        Value::Number(number) => Some(number.to_string()),
+                        Value::Bool(flag) => Some(flag.to_string()),
+                        _ => None,
+                    })
+            }),
+        auto_number_prefix: field
+            .get("auto_number")
+            .and_then(|value| value.get("prefix"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| {
+                rules
+                    .and_then(|rules| rules.get("auto_number"))
+                    .and_then(|value| value.get("prefix"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            }),
+        auto_number_width: field
+            .get("auto_number")
+            .and_then(|value| value.get("width"))
+            .and_then(Value::as_i64)
+            .or_else(|| {
+                rules
+                    .and_then(|rules| rules.get("auto_number"))
+                    .and_then(|value| value.get("width"))
+                    .and_then(Value::as_i64)
+            }),
+    }
+}
+
+fn validate_field_rules(field_type: &str, rules: &FieldRules) -> Result<()> {
+    if let Some(precision) = rules.precision {
+        if !(0..=38).contains(&precision) {
+            return Err(AppError::BadRequest("precision must be between 0 and 38".into()).into());
+        }
+        if !metadata::is_numeric_type(field_type) {
+            return Err(
+                AppError::BadRequest("precision is only valid for number fields".into()).into(),
+            );
+        }
+    }
+    if let Some(min) = rules.min_value {
+        if !metadata::is_numeric_type(field_type) {
+            return Err(
+                AppError::BadRequest("min_value is only valid for number fields".into()).into(),
+            );
+        }
+        if !min.is_finite() {
+            return Err(AppError::BadRequest("min_value must be finite".into()).into());
+        }
+    }
+    if let Some(max) = rules.max_value {
+        if !metadata::is_numeric_type(field_type) {
+            return Err(
+                AppError::BadRequest("max_value is only valid for number fields".into()).into(),
+            );
+        }
+        if !max.is_finite() {
+            return Err(AppError::BadRequest("max_value must be finite".into()).into());
+        }
+    }
+    if let (Some(min), Some(max)) = (rules.min_value, rules.max_value) {
+        if min > max {
+            return Err(AppError::BadRequest("min_value must be <= max_value".into()).into());
+        }
+    }
+    if let Some(pattern) = rules
+        .pattern
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if !metadata::is_text_type(field_type) {
+            return Err(
+                AppError::BadRequest("pattern is only valid for text fields".into()).into(),
+            );
+        }
+        if pattern.len() > 500 {
+            return Err(AppError::BadRequest("pattern is too long".into()).into());
+        }
+    }
+    if (rules.min_length.is_some() || rules.max_length.is_some())
+        && !metadata::is_text_type(field_type)
+    {
+        return Err(
+            AppError::BadRequest("length limits are only valid for text fields".into()).into(),
+        );
+    }
+    if let Some(min_length) = rules.min_length {
+        if min_length < 0 {
+            return Err(AppError::BadRequest("min_length must be >= 0".into()).into());
+        }
+    }
+    if let Some(max_length) = rules.max_length {
+        if max_length < 0 {
+            return Err(AppError::BadRequest("max_length must be >= 0".into()).into());
+        }
+    }
+    if let (Some(min_length), Some(max_length)) = (rules.min_length, rules.max_length) {
+        if min_length > max_length {
+            return Err(AppError::BadRequest("min_length must be <= max_length".into()).into());
+        }
+    }
+    if let Some(default) = rules
+        .default_value
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if metadata::is_numeric_type(field_type) && default.parse::<f64>().is_err() {
+            return Err(AppError::BadRequest("default_value must be a number".into()).into());
+        }
+        if metadata::is_boolean_type(field_type)
+            && !matches!(default.to_ascii_lowercase().as_str(), "true" | "false")
+        {
+            return Err(AppError::BadRequest("default_value must be true or false".into()).into());
+        }
+    }
+    if rules.auto_number_prefix.is_some() || rules.auto_number_width.is_some() {
+        if !metadata::is_text_type(field_type) {
+            return Err(
+                AppError::BadRequest("auto_number is only valid for text fields".into()).into(),
+            );
+        }
+        if let Some(width) = rules.auto_number_width {
+            if !(1..=10).contains(&width) {
+                return Err(AppError::BadRequest("auto_number width must be 1..=10".into()).into());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_computed_field(field_type: &str, computed_expr: Option<&str>) -> Result<()> {
+    if !matches!(field_type, "computed" | "formula") {
+        if computed_expr
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .is_some()
+        {
+            return Err(AppError::BadRequest(
+                "computed_expr is only valid for computed fields".into(),
+            )
+            .into());
+        }
+        return Ok(());
+    }
+    let Some(expr) = computed_expr.map(str::trim).filter(|s| !s.is_empty()) else {
+        if field_type == "formula" {
+            return Ok(());
+        }
+        return Err(AppError::BadRequest("computed fields require a computed_expr".into()).into());
+    };
+    // Legacy computed templates support literal square brackets, e.g. `{title} [{status}]`.
+    if field_type == "computed" && (expr.contains('[') || expr.contains(']')) {
+        return Ok(());
+    }
+    formula::validate_syntax(expr)?;
+    Ok(())
+}
+
+/// Template interpolation for computed fields: `{field_name}` placeholders
+/// are replaced with the payload value (missing = empty string).
+pub fn compute_field_value(expr: &str, payload: &Value) -> String {
+    let mut output = String::with_capacity(expr.len());
+    let mut rest = expr;
+    while let Some(start) = rest.find('{') {
+        output.push_str(&rest[..start]);
+        let after = &rest[start + 1..];
+        match after.find('}') {
+            Some(end) => {
+                let key = after[..end].trim();
+                let value = payload
+                    .get(key)
+                    .map(|v| match v {
+                        Value::String(s) => s.clone(),
+                        Value::Null => String::new(),
+                        other => other.to_string().trim_matches('"').to_string(),
+                    })
+                    .unwrap_or_default();
+                output.push_str(&value);
+                rest = &after[end + 1..];
+            }
+            None => {
+                output.push_str(&rest[start..]);
+                rest = "";
+                break;
+            }
+        }
+    }
+    output.push_str(rest);
+    output
 }
 
 async fn validate_status_field(
@@ -966,13 +3576,20 @@ pub async fn create_document_as_role(
     }
     // Create: drop hidden fields, but keep view-only (non-editable) fields
     // so the initial values are stored.
-    let payload = filter_hidden_payload(pool, entity_id, payload, role).await?;
-    validate_payload_for_role(pool, entity_id, &payload, role).await?;
+    let filtered = filter_hidden_payload(pool, entity_id, payload, role).await?;
+    let fields = list_fields(pool, entity_id).await?;
+    let with_defaults = apply_field_defaults(&fields, &filtered);
+    let mut with_defaults_object = with_defaults.as_object().cloned().unwrap_or_default();
+    allocate_auto_numbers(pool, entity_id, &mut with_defaults_object).await?;
+    let with_defaults = Value::Object(with_defaults_object);
+    validate_payload_for_role(pool, entity_id, &with_defaults, role).await?;
+    let payload = with_defaults;
     let mut tx = pool.begin().await?;
-    sqlx::query("INSERT INTO _doc (id, entity_id, payload) VALUES (?, ?, ?)")
+    sqlx::query("INSERT INTO _doc (id, entity_id, payload, tenant_id) VALUES (?, ?, ?, (SELECT tenant_id FROM _meta_entity WHERE id = ?))")
         .bind(id)
         .bind(entity_id)
         .bind(payload.to_string())
+        .bind(entity_id)
         .execute(&mut *tx)
         .await?;
     sqlx::query(
@@ -984,6 +3601,17 @@ pub async fn create_document_as_role(
     .bind(payload.to_string())
     .bind(actor)
     .execute(&mut *tx)
+    .await?;
+    enqueue_automation_deliveries(&mut tx, entity_id, id, "create", &payload, actor).await?;
+    emit_event_tx(
+        &mut tx,
+        entity_id,
+        Some(id),
+        "record.created",
+        None,
+        &payload,
+        actor,
+    )
     .await?;
     tx.commit().await?;
     get_document(pool, id).await
@@ -997,10 +3625,13 @@ pub async fn get_document(pool: &SqlitePool, id: &str) -> Result<Document> {
             .await?
             .ok_or_else(|| AppError::NotFound(format!("document not found: {id}")))?;
     use sqlx::Row;
+    let entity_id: String = row.try_get("entity_id")?;
+    let payload: Value = serde_json::from_str(&row.try_get::<String, _>("payload")?)?;
+    let fields = list_fields(pool, &entity_id).await?;
     Ok(Document {
         id: row.try_get("id")?,
-        entity_id: row.try_get("entity_id")?,
-        payload: serde_json::from_str(&row.try_get::<String, _>("payload")?)?,
+        entity_id,
+        payload: apply_computed_fields(&fields, &payload)?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
     })
@@ -1388,10 +4019,11 @@ async fn upsert_document_in_tx(
             .execute(&mut **transaction)
             .await?;
     } else {
-        sqlx::query("INSERT INTO _doc (id, entity_id, payload) VALUES (?, ?, ?)")
+        sqlx::query("INSERT INTO _doc (id, entity_id, payload, tenant_id) VALUES (?, ?, ?, (SELECT tenant_id FROM _meta_entity WHERE id = ?))")
             .bind(id)
             .bind(entity_id)
             .bind(payload.to_string())
+            .bind(entity_id)
             .execute(&mut **transaction)
             .await?;
     }
@@ -1761,10 +4393,11 @@ pub async fn list_documents_as_role(
     let mut items = Vec::new();
     for row in rows {
         let payload: Value = serde_json::from_str(&row.try_get::<String, _>("payload")?)?;
+        let with_computed = apply_computed_fields(&fields, &payload)?;
         items.push(Document {
             id: row.try_get("id")?,
             entity_id: row.try_get("entity_id")?,
-            payload: redact_payload(&payload, &viewable),
+            payload: redact_payload(&with_computed, &viewable),
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
         });
@@ -1795,11 +4428,21 @@ pub async fn update_document_as_role(
     // tolerance), then merge over stored values and restore stored values
     // for non-editable fields so a forced write cannot change them.
     let incoming = filter_hidden_payload(pool, &existing.entity_id, payload, role).await?;
-    let merged = merge_editable_payload(&existing.payload, &incoming);
+    let mut stored = existing.payload.clone();
+    if let Some(object) = stored.as_object_mut() {
+        for field in list_fields(pool, &existing.entity_id)
+            .await?
+            .into_iter()
+            .filter(|f| f.r#type == "computed" || f.r#type == "formula")
+        {
+            object.remove(&field.name);
+        }
+    }
+    let merged = merge_editable_payload(&stored, &incoming);
     let merged =
         restore_readonly_fields(pool, &existing.entity_id, &existing.payload, &merged, role)
             .await?;
-    validate_payload_for_role(pool, &existing.entity_id, &merged, role).await?;
+    validate_payload_for_role_excluding(pool, &existing.entity_id, &merged, role, Some(id)).await?;
     let payload = merged;
     let mut tx = pool.begin().await?;
     let result = sqlx::query(
@@ -1825,6 +4468,18 @@ pub async fn update_document_as_role(
     .bind(payload.to_string())
     .bind(actor)
     .execute(&mut *tx)
+    .await?;
+    enqueue_automation_deliveries(&mut tx, &existing.entity_id, id, "update", &payload, actor)
+        .await?;
+    emit_event_tx(
+        &mut tx,
+        &existing.entity_id,
+        Some(id),
+        "record.updated",
+        None,
+        &payload,
+        actor,
+    )
     .await?;
     tx.commit().await?;
     get_document(pool, id).await
@@ -1858,22 +4513,49 @@ pub async fn transition_document_as_role(
         .payload
         .get(&status_field.name)
         .and_then(Value::as_str)
-        .ok_or_else(|| AppError::BadRequest("document has no status".into()))?;
-    let target: Option<String> = sqlx::query_scalar(
-        "SELECT to_state FROM _workflow_transition WHERE entity_id = ? AND from_state = ? AND action = ?",
+        .ok_or_else(|| AppError::BadRequest("document has no status".into()))?
+        .to_string();
+    let transition: Option<(String, String, String, String)> = sqlx::query_as(
+        "SELECT id, to_state, condition, required_role FROM _workflow_transition WHERE entity_id = ? AND from_state = ? AND action = ?",
     )
     .bind(&existing.entity_id)
-    .bind(current)
+    .bind(&current)
     .bind(action)
     .fetch_optional(pool)
     .await?;
-    let target = target.ok_or_else(|| {
+    let (transition_id, target, condition, required_role) = transition.ok_or_else(|| {
         AppError::BadRequest(format!("invalid transition: {current} cannot {action}"))
     })?;
+    if !required_role.trim().is_empty() && role != "admin" && role != required_role {
+        return Err(
+            AppError::Forbidden(format!("transition requires role: {required_role}")).into(),
+        );
+    }
+    if !condition.trim().is_empty() {
+        let vars: std::collections::HashMap<String, Value> = existing
+            .payload
+            .as_object()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        let result = crate::formula::evaluate(&condition, &vars)
+            .map_err(|e| AppError::BadRequest(format!("invalid workflow condition: {e}")))?;
+        if !result.as_bool().unwrap_or(false) {
+            return Err(AppError::Forbidden("workflow condition is not satisfied".into()).into());
+        }
+    }
     check_field_permission(pool, &existing.entity_id, &status_field.name, role, true).await?;
     let mut next = existing.payload;
-    next[status_field.name.as_str()] = Value::String(target);
-    validate_payload_for_role(pool, &existing.entity_id, &next, role).await?;
+    next[status_field.name.as_str()] = Value::String(target.clone());
+    // Stored payloads may carry a previously computed value (get_document
+    // interpolates on read); strip computed keys before re-validating.
+    if let Some(object) = next.as_object_mut() {
+        for field in fields.iter().filter(|f| f.r#type == "computed") {
+            object.remove(&field.name);
+        }
+    }
+    validate_payload_for_role_excluding(pool, &existing.entity_id, &next, role, Some(id)).await?;
     let mut tx = pool.begin().await?;
     let result = sqlx::query(
         "UPDATE _doc SET payload = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ? AND (? IS NULL OR updated_at = ?)",
@@ -1899,8 +4581,579 @@ pub async fn transition_document_as_role(
     .bind(actor)
     .execute(&mut *tx)
     .await?;
+    let history_id = format!("{id}-workflow-{}", chrono_nanos());
+    sqlx::query(
+        "INSERT INTO _workflow_history (id, entity_id, document_id, transition_id, action, from_state, to_state, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&history_id)
+    .bind(&existing.entity_id)
+    .bind(id)
+    .bind(&transition_id)
+    .bind(action)
+    .bind(&current)
+    .bind(&target)
+    .bind(actor)
+    .execute(&mut *tx)
+    .await?;
+    let event_id = format!("{id}-workflow-event-{}", chrono_nanos());
+    sqlx::query(
+        "INSERT INTO _workflow_event (id, entity_id, document_id, transition_id, event_type, action, payload, actor) VALUES (?, ?, ?, ?, 'transition', ?, ?, ?)",
+    )
+    .bind(&event_id)
+    .bind(&existing.entity_id)
+    .bind(id)
+    .bind(&transition_id)
+    .bind(action)
+    .bind(next.to_string())
+    .bind(actor)
+    .execute(&mut *tx)
+    .await?;
+    enqueue_transition_deliveries(
+        &mut tx,
+        &existing.entity_id,
+        id,
+        action,
+        &current,
+        &target,
+        &next,
+        actor,
+    )
+    .await?;
+    enqueue_automation_deliveries(&mut tx, &existing.entity_id, id, "transition", &next, actor)
+        .await?;
+    emit_event_tx(
+        &mut tx,
+        &existing.entity_id,
+        Some(id),
+        "record.updated",
+        None,
+        &next,
+        actor,
+    )
+    .await?;
     tx.commit().await?;
+    // Observability: workflow transitions are first-class audit events.
+    let _ = crate::observability::record(
+        pool,
+        "info",
+        "workflow",
+        "transition",
+        actor,
+        None,
+        None,
+        Some("document"),
+        Some(id),
+        None,
+        None,
+        &format!("{action}: {current} -> {target}"),
+        &serde_json::json!({"entity_id": existing.entity_id, "action": action, "from_state": current, "to_state": target}),
+    )
+    .await;
     get_document(pool, id).await
+}
+
+/// Enqueue one pending webhook delivery per active transition rule. Runs
+/// inside the transition transaction so a delivery row always matches its
+/// audit row. Never performs network I/O; the worker sends later.
+#[allow(clippy::too_many_arguments)]
+async fn enqueue_transition_deliveries(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    entity_id: &str,
+    doc_id: &str,
+    action: &str,
+    from_state: &str,
+    to_state: &str,
+    payload: &Value,
+    actor: Option<&str>,
+) -> Result<()> {
+    let rules: Vec<(String,)> = sqlx::query_as(
+        "SELECT id FROM _notification_rule WHERE entity_id = ? AND trigger = 'transition' AND active != 0",
+    )
+    .bind(entity_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    for (rule_id,) in rules {
+        let body = serde_json::json!({
+            "entity_id": entity_id,
+            "document_id": doc_id,
+            "action": action,
+            "from_state": from_state,
+            "to_state": to_state,
+            "actor": actor,
+            "payload": payload,
+        });
+        let body_string = body.to_string();
+        let body_string = if body_string.len() > 1_000_000 {
+            serde_json::json!({
+                "entity_id": entity_id,
+                "document_id": doc_id,
+                "action": action,
+                "from_state": from_state,
+                "to_state": to_state,
+                "actor": actor,
+                "truncated": true,
+            })
+            .to_string()
+        } else {
+            body_string
+        };
+        sqlx::query(
+            "INSERT INTO _notification_delivery (id, rule_id, document_id, action, payload) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(format!("{doc_id}-{action}-{}", chrono_nanos()))
+        .bind(rule_id)
+        .bind(doc_id)
+        .bind(action)
+        .bind(body_string)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
+/// Enqueue one pending webhook delivery per active generic automation.
+/// Runs inside the caller's transaction so the delivery row always matches
+/// its audit row. Reuses the 1MB payload cap from transition deliveries.
+async fn enqueue_automation_deliveries(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    entity_id: &str,
+    doc_id: &str,
+    trigger: &str,
+    payload: &Value,
+    actor: Option<&str>,
+) -> Result<()> {
+    let automations: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, target_url FROM _automation WHERE entity_id = ? AND trigger = ? AND active != 0",
+    )
+    .bind(entity_id)
+    .bind(trigger)
+    .fetch_all(&mut **tx)
+    .await?;
+    for (automation_id, target_url) in automations {
+        let body = serde_json::json!({
+            "entity_id": entity_id,
+            "document_id": doc_id,
+            "trigger": trigger,
+            "target_url": target_url,
+            "actor": actor,
+            "payload": payload,
+        });
+        let body_string = body.to_string();
+        let body_string = if body_string.len() > 1_000_000 {
+            serde_json::json!({
+                "entity_id": entity_id,
+                "document_id": doc_id,
+                "trigger": trigger,
+                "target_url": target_url,
+                "actor": actor,
+                "truncated": true,
+            })
+            .to_string()
+        } else {
+            body_string
+        };
+        sqlx::query(
+            "INSERT INTO _notification_delivery (id, rule_id, document_id, action, payload) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(format!("{doc_id}-{trigger}-automation-{}", chrono_nanos()))
+        .bind(automation_id)
+        .bind(doc_id)
+        .bind(trigger)
+        .bind(body_string)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
+// --- Generic Action & Event Engine ---
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ModuleAction {
+    pub id: String,
+    pub entity_id: String,
+    pub name: String,
+    pub label: String,
+    pub kind: String,
+    pub config: Value,
+    pub active: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ModuleActionResult {
+    pub action: ModuleAction,
+    pub document: Option<Document>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EventEntry {
+    pub id: String,
+    pub entity_id: String,
+    pub document_id: Option<String>,
+    pub event_type: String,
+    pub action_id: Option<String>,
+    pub payload: Value,
+    pub actor: Option<String>,
+    pub created_at: String,
+}
+
+fn validate_action_kind(kind: &str) -> Result<()> {
+    if matches!(
+        kind,
+        "create"
+            | "update"
+            | "delete"
+            | "change_status"
+            | "notify"
+            | "webhook"
+            | "formula"
+            | "generate"
+    ) {
+        Ok(())
+    } else {
+        Err(AppError::BadRequest(format!("invalid action kind: {kind}")).into())
+    }
+}
+
+pub async fn list_module_actions(pool: &SqlitePool, entity_id: &str) -> Result<Vec<ModuleAction>> {
+    require_entity(pool, entity_id).await?;
+    let rows = sqlx::query("SELECT id, entity_id, name, label, kind, config, active FROM _action WHERE entity_id = ? ORDER BY name")
+        .bind(entity_id).fetch_all(pool).await?;
+    use sqlx::Row;
+    rows.into_iter()
+        .map(|r| {
+            Ok(ModuleAction {
+                id: r.try_get("id")?,
+                entity_id: r.try_get("entity_id")?,
+                name: r.try_get("name")?,
+                label: r.try_get("label")?,
+                kind: r.try_get("kind")?,
+                config: serde_json::from_str(&r.try_get::<String, _>("config")?)
+                    .unwrap_or(Value::Object(Default::default())),
+                active: r.try_get::<i64, _>("active")? != 0,
+            })
+        })
+        .collect()
+}
+
+pub async fn create_module_action(
+    pool: &SqlitePool,
+    entity_id: &str,
+    name: &str,
+    label: &str,
+    kind: &str,
+    config: &Value,
+) -> Result<ModuleAction> {
+    require_entity(pool, entity_id).await?;
+    let name = name.trim();
+    let label = label.trim();
+    let kind = kind.trim();
+    validate_action_name(name)?;
+    validate_action_kind(kind)?;
+    if config.to_string().len() > 16384 {
+        return Err(AppError::BadRequest("action config exceeds 16384 bytes".into()).into());
+    }
+    let id = format!("{entity_id}_{name}");
+    sqlx::query(
+        "INSERT INTO _action (id, entity_id, name, label, kind, config) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(entity_id)
+    .bind(name)
+    .bind(label)
+    .bind(kind)
+    .bind(config.to_string())
+    .execute(pool)
+    .await?;
+    get_module_action(pool, &id).await
+}
+
+pub async fn get_module_action(pool: &SqlitePool, id: &str) -> Result<ModuleAction> {
+    let row = sqlx::query(
+        "SELECT id, entity_id, name, label, kind, config, active FROM _action WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    let Some(r) = row else {
+        return Err(AppError::NotFound(format!("action not found: {id}")).into());
+    };
+    use sqlx::Row;
+    Ok(ModuleAction {
+        id: r.try_get("id")?,
+        entity_id: r.try_get("entity_id")?,
+        name: r.try_get("name")?,
+        label: r.try_get("label")?,
+        kind: r.try_get("kind")?,
+        config: serde_json::from_str(&r.try_get::<String, _>("config")?)
+            .unwrap_or(Value::Object(Default::default())),
+        active: r.try_get::<i64, _>("active")? != 0,
+    })
+}
+
+pub async fn delete_module_action(pool: &SqlitePool, id: &str) -> Result<()> {
+    let result = sqlx::query("DELETE FROM _action WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("action not found: {id}")).into());
+    }
+    Ok(())
+}
+
+async fn emit_event_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    entity_id: &str,
+    document_id: Option<&str>,
+    event_type: &str,
+    action_id: Option<&str>,
+    payload: &Value,
+    actor: Option<&str>,
+) -> Result<()> {
+    let id = format!("event-{}", chrono_nanos());
+    sqlx::query("INSERT INTO _event (id, entity_id, document_id, event_type, action_id, payload, actor) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .bind(id).bind(entity_id).bind(document_id).bind(event_type).bind(action_id).bind(payload.to_string()).bind(actor).execute(&mut **tx).await?;
+    Ok(())
+}
+
+pub async fn list_events(
+    pool: &SqlitePool,
+    entity_id: &str,
+    document_id: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<EventEntry>> {
+    let limit = limit.clamp(1, 100);
+    let offset = offset.max(0);
+    let rows = if let Some(doc) = document_id {
+        sqlx::query("SELECT id, entity_id, document_id, event_type, action_id, payload, actor, created_at FROM _event WHERE entity_id = ? AND document_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?").bind(entity_id).bind(doc).bind(limit).bind(offset).fetch_all(pool).await?
+    } else {
+        sqlx::query("SELECT id, entity_id, document_id, event_type, action_id, payload, actor, created_at FROM _event WHERE entity_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?").bind(entity_id).bind(limit).bind(offset).fetch_all(pool).await?
+    };
+    use sqlx::Row;
+    rows.into_iter()
+        .map(|r| {
+            Ok(EventEntry {
+                id: r.try_get("id")?,
+                entity_id: r.try_get("entity_id")?,
+                document_id: r.try_get("document_id")?,
+                event_type: r.try_get("event_type")?,
+                action_id: r.try_get("action_id")?,
+                payload: serde_json::from_str(&r.try_get::<String, _>("payload")?)
+                    .unwrap_or(Value::Object(Default::default())),
+                actor: r.try_get("actor")?,
+                created_at: r.try_get("created_at")?,
+            })
+        })
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_module_action(
+    pool: &SqlitePool,
+    entity_id: &str,
+    action_id: &str,
+    document_id: Option<&str>,
+    payload: Option<&Value>,
+    actor: Option<&str>,
+    expected_updated_at: Option<&str>,
+    role: &str,
+) -> Result<ModuleActionResult> {
+    require_entity(pool, entity_id).await?;
+    check_entity_capability(pool, entity_id, role, "execute").await?;
+    let action = get_module_action(pool, action_id).await?;
+    if action.entity_id != entity_id {
+        return Err(AppError::BadRequest("action belongs to another entity".into()).into());
+    }
+    if !action.active {
+        return Err(AppError::BadRequest("action is inactive".into()).into());
+    }
+    let config = action.config.as_object().cloned().unwrap_or_default();
+    match action.kind.as_str() {
+        "create" => {
+            let body = payload
+                .cloned()
+                .unwrap_or(Value::Object(Default::default()));
+            let id = document_id
+                .filter(|v| !v.trim().is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("{entity_id}_{}", chrono_nanos()));
+            let doc = create_document_as_role(pool, &id, entity_id, &body, actor, role).await?;
+            let mut tx = pool.begin().await?;
+            emit_event_tx(
+                &mut tx,
+                entity_id,
+                Some(&id),
+                "action.executed",
+                Some(&action.id),
+                &doc.payload,
+                actor,
+            )
+            .await?;
+            tx.commit().await?;
+            Ok(ModuleActionResult {
+                action,
+                document: Some(doc),
+            })
+        }
+        "update" => {
+            let id = document_id
+                .ok_or_else(|| AppError::BadRequest("update requires a document id".into()))?;
+            let mut body = payload
+                .cloned()
+                .unwrap_or(Value::Object(Default::default()));
+            if let Some(object) = body.as_object_mut() {
+                for field in list_fields(pool, entity_id)
+                    .await?
+                    .into_iter()
+                    .filter(|f| f.r#type == "computed" || f.r#type == "formula")
+                {
+                    object.remove(&field.name);
+                }
+            }
+            let doc =
+                update_document_as_role(pool, id, &body, actor, expected_updated_at, role).await?;
+            let mut tx = pool.begin().await?;
+            sqlx::query("INSERT INTO _audit_log (id, entity_id, doc_id, action, payload, actor) VALUES (?, ?, ?, ?, ?, ?)")
+                .bind(audit_id(id, &action.name)).bind(entity_id).bind(id).bind(&action.name).bind(doc.payload.to_string()).bind(actor).execute(&mut *tx).await?;
+            emit_event_tx(
+                &mut tx,
+                entity_id,
+                Some(id),
+                "action.executed",
+                Some(&action.id),
+                &doc.payload,
+                actor,
+            )
+            .await?;
+            tx.commit().await?;
+            Ok(ModuleActionResult {
+                action,
+                document: Some(doc),
+            })
+        }
+        "delete" => {
+            let id = document_id
+                .ok_or_else(|| AppError::BadRequest("delete requires a document id".into()))?;
+            let doc = get_document(pool, id).await?;
+            if doc.entity_id != entity_id {
+                return Err(
+                    AppError::BadRequest("document belongs to another entity".into()).into(),
+                );
+            }
+            delete_document_as_role(pool, id, actor, role).await?;
+            let mut tx = pool.begin().await?;
+            emit_event_tx(
+                &mut tx,
+                entity_id,
+                Some(id),
+                "action.executed",
+                Some(&action.id),
+                &doc.payload,
+                actor,
+            )
+            .await?;
+            tx.commit().await?;
+            Ok(ModuleActionResult {
+                action,
+                document: None,
+            })
+        }
+        "change_status" => {
+            let id = document_id.ok_or_else(|| {
+                AppError::BadRequest("change_status requires a document id".into())
+            })?;
+            let state = config.get("state").and_then(Value::as_str).ok_or_else(|| {
+                AppError::BadRequest("change_status action requires config.state".into())
+            })?;
+            let fields = list_fields(pool, entity_id).await?;
+            let status = fields
+                .into_iter()
+                .find(|f| f.r#type == "select" && f.options.iter().any(|o| o.value == state))
+                .ok_or_else(|| {
+                    AppError::BadRequest("configured status is not valid for this entity".into())
+                })?;
+            let existing = get_document(pool, id).await?;
+            let mut body = existing.payload.clone();
+            body[status.name] = Value::String(state.to_string());
+            let doc =
+                update_document_as_role(pool, id, &body, actor, expected_updated_at, role).await?;
+            let mut tx = pool.begin().await?;
+            emit_event_tx(
+                &mut tx,
+                entity_id,
+                Some(id),
+                "action.executed",
+                Some(&action.id),
+                &doc.payload,
+                actor,
+            )
+            .await?;
+            tx.commit().await?;
+            Ok(ModuleActionResult {
+                action,
+                document: Some(doc),
+            })
+        }
+        "formula" => {
+            let vars = payload
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            let expr = config
+                .get("expression")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    AppError::BadRequest("formula action requires config.expression".into())
+                })?;
+            let vars: std::collections::HashMap<String, Value> = vars.into_iter().collect();
+            let result = crate::formula::evaluate(expr, &vars)
+                .map_err(|e| AppError::BadRequest(format!("invalid action formula: {e}")))?;
+            let mut tx = pool.begin().await?;
+            emit_event_tx(
+                &mut tx,
+                entity_id,
+                document_id,
+                "action.executed",
+                Some(&action.id),
+                &json!({"result": result}),
+                actor,
+            )
+            .await?;
+            tx.commit().await?;
+            Ok(ModuleActionResult {
+                action,
+                document: None,
+            })
+        }
+        "notify" | "webhook" | "generate" => {
+            let body = payload
+                .cloned()
+                .unwrap_or(Value::Object(Default::default()));
+            let mut tx = pool.begin().await?;
+            emit_event_tx(
+                &mut tx,
+                entity_id,
+                document_id,
+                "action.executed",
+                Some(&action.id),
+                &body,
+                actor,
+            )
+            .await?;
+            tx.commit().await?;
+            let doc = match document_id {
+                Some(id) => Some(get_document(pool, id).await?),
+                None => None,
+            };
+            Ok(ModuleActionResult {
+                action,
+                document: doc,
+            })
+        }
+        _ => unreachable!(),
+    }
 }
 
 pub async fn get_workflow(pool: &SqlitePool, entity_id: &str) -> Result<WorkflowDefinition> {
@@ -1918,18 +5171,20 @@ pub async fn get_workflow(pool: &SqlitePool, entity_id: &str) -> Result<Workflow
         position,
     })
     .collect();
-    let transitions = sqlx::query_as::<_, (String, String, String, String)>(
-        "SELECT id, action, from_state, to_state FROM _workflow_transition WHERE entity_id = ? ORDER BY from_state, action",
+    let transitions = sqlx::query_as::<_, (String, String, String, String, String, String)>(
+        "SELECT id, action, from_state, to_state, condition, required_role FROM _workflow_transition WHERE entity_id = ? ORDER BY from_state, action",
     )
     .bind(entity_id)
     .fetch_all(pool)
     .await?
     .into_iter()
-    .map(|(id, action, from_state, to_state)| WorkflowTransition {
+    .map(|(id, action, from_state, to_state, condition, required_role)| WorkflowTransition {
         id,
         action,
         from_state,
         to_state,
+        condition,
+        required_role,
     })
     .collect();
     Ok(WorkflowDefinition {
@@ -2063,7 +5318,29 @@ pub async fn create_workflow_transition(
     to_state: &str,
     action: &str,
 ) -> Result<WorkflowTransition> {
+    create_workflow_transition_with_options(pool, entity_id, from_state, to_state, action, "", "")
+        .await
+}
+
+pub async fn create_workflow_transition_with_options(
+    pool: &SqlitePool,
+    entity_id: &str,
+    from_state: &str,
+    to_state: &str,
+    action: &str,
+    condition: &str,
+    required_role: &str,
+) -> Result<WorkflowTransition> {
     validate_action_name(action)?;
+    if condition.len() > 2048 {
+        return Err(
+            AppError::BadRequest("workflow condition exceeds 2048 characters".into()).into(),
+        );
+    }
+    if !condition.trim().is_empty() {
+        crate::formula::validate_syntax(condition)
+            .map_err(|e| AppError::BadRequest(format!("invalid workflow condition: {e}")))?;
+    }
     require_entity(pool, entity_id).await?;
     for state in [from_state, to_state] {
         let exists: bool = sqlx::query_scalar(
@@ -2082,13 +5359,15 @@ pub async fn create_workflow_transition(
     }
     let id = format!("{entity_id}_{from_state}_{action}");
     sqlx::query(
-        "INSERT INTO _workflow_transition (id, entity_id, from_state, to_state, action) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO _workflow_transition (id, entity_id, from_state, to_state, action, condition, required_role) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(entity_id)
     .bind(from_state)
-    .bind(to_state)
+        .bind(to_state)
     .bind(action)
+    .bind(condition.trim())
+    .bind(required_role.trim())
     .execute(pool)
     .await?;
     get_workflow_transition(pool, &id).await
@@ -2096,7 +5375,7 @@ pub async fn create_workflow_transition(
 
 pub async fn get_workflow_transition(pool: &SqlitePool, id: &str) -> Result<WorkflowTransition> {
     let row = sqlx::query(
-        "SELECT id, action, from_state, to_state FROM _workflow_transition WHERE id = ?",
+        "SELECT id, action, from_state, to_state, condition, required_role FROM _workflow_transition WHERE id = ?",
     )
     .bind(id)
     .fetch_optional(pool)
@@ -2108,6 +5387,8 @@ pub async fn get_workflow_transition(pool: &SqlitePool, id: &str) -> Result<Work
         action: row.try_get("action")?,
         from_state: row.try_get("from_state")?,
         to_state: row.try_get("to_state")?,
+        condition: row.try_get("condition")?,
+        required_role: row.try_get("required_role")?,
     })
 }
 
@@ -2120,6 +5401,41 @@ pub async fn delete_workflow_transition(pool: &SqlitePool, id: &str) -> Result<(
         return Err(AppError::NotFound(format!("workflow transition not found: {id}")).into());
     }
     Ok(())
+}
+
+pub async fn list_workflow_history(
+    pool: &SqlitePool,
+    document_id: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<WorkflowHistoryList> {
+    let limit = limit.clamp(1, 100);
+    let offset = offset.max(0);
+    let total: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM _workflow_history WHERE document_id = ?")
+            .bind(document_id)
+            .fetch_one(pool)
+            .await?;
+    let rows = sqlx::query("SELECT id, entity_id, document_id, transition_id, action, from_state, to_state, actor, created_at FROM _workflow_history WHERE document_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?")
+        .bind(document_id).bind(limit).bind(offset).fetch_all(pool).await?;
+    use sqlx::Row;
+    let items = rows
+        .into_iter()
+        .map(|row| {
+            Ok(WorkflowHistoryEntry {
+                id: row.try_get("id")?,
+                entity_id: row.try_get("entity_id")?,
+                document_id: row.try_get("document_id")?,
+                transition_id: row.try_get("transition_id")?,
+                action: row.try_get("action")?,
+                from_state: row.try_get("from_state")?,
+                to_state: row.try_get("to_state")?,
+                actor: row.try_get("actor")?,
+                created_at: row.try_get("created_at")?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(WorkflowHistoryList { items, total })
 }
 
 pub async fn count_documents_by_status(
@@ -2150,6 +5466,44 @@ pub async fn count_documents_by_status_as_role(
     Ok(rows
         .into_iter()
         .map(|(status, count)| StatusCount { status, count })
+        .collect())
+}
+
+/// Report aggregation: count documents grouped by a select/status field.
+/// Only `select` fields (including the status field) are allowed, keeping
+/// bucket cardinality low. Hidden fields are rejected (400) rather than
+/// leaking existence.
+pub async fn report_aggregate_as_role(
+    pool: &SqlitePool,
+    entity_id: &str,
+    group_by: &str,
+    role: &str,
+) -> Result<Vec<StatusCount>> {
+    let fields = list_fields(pool, entity_id).await?;
+    let Some(field) = fields.iter().find(|f| f.name == group_by) else {
+        return Err(AppError::BadRequest(format!("unknown field: {group_by}")).into());
+    };
+    if field.r#type != "select" {
+        return Err(AppError::BadRequest(format!(
+            "group-by field must be a select field: {group_by}"
+        ))
+        .into());
+    }
+    check_field_permission(pool, entity_id, &field.name, role, false).await?;
+    let query = format!(
+        "SELECT json_extract(payload, '$.{}'), COUNT(*) FROM _doc WHERE entity_id = ? GROUP BY json_extract(payload, '$.{}') ORDER BY 1",
+        field.name, field.name
+    );
+    let rows = sqlx::query_as::<_, (Option<String>, i64)>(&query)
+        .bind(entity_id)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(status, count)| StatusCount {
+            status: status.unwrap_or_default(),
+            count,
+        })
         .collect())
 }
 
@@ -2218,7 +5572,17 @@ pub async fn pm_summary_as_role(
 }
 
 pub async fn delete_document(pool: &SqlitePool, id: &str, actor: Option<&str>) -> Result<()> {
+    delete_document_as_role(pool, id, actor, "admin").await
+}
+
+pub async fn delete_document_as_role(
+    pool: &SqlitePool,
+    id: &str,
+    actor: Option<&str>,
+    role: &str,
+) -> Result<()> {
     let existing = get_document(pool, id).await?;
+    check_permission(pool, &existing.entity_id, role, true).await?;
     let mut tx = pool.begin().await?;
     sqlx::query("DELETE FROM _doc WHERE id = ?")
         .bind(id)
@@ -2234,6 +5598,25 @@ pub async fn delete_document(pool: &SqlitePool, id: &str, actor: Option<&str>) -
     .bind(actor)
     .execute(&mut *tx)
     .await?;
+    enqueue_automation_deliveries(
+        &mut tx,
+        &existing.entity_id,
+        id,
+        "delete",
+        &existing.payload,
+        actor,
+    )
+    .await?;
+    emit_event_tx(
+        &mut tx,
+        &existing.entity_id,
+        Some(id),
+        "record.deleted",
+        None,
+        &existing.payload,
+        actor,
+    )
+    .await?;
     tx.commit().await?;
     Ok(())
 }
@@ -2245,6 +5628,511 @@ pub async fn list_document_audit(
     offset: i64,
 ) -> Result<AuditList> {
     list_document_audit_as_role(pool, doc_id, limit, offset, "admin").await
+}
+
+/// Record comments (chatter write). Any role with view access can read;
+/// creating requires edit access. Bodies are trimmed, 1..=2000 chars.
+pub async fn list_doc_comments_as_role(
+    pool: &SqlitePool,
+    doc_id: &str,
+    limit: i64,
+    offset: i64,
+    role: &str,
+) -> Result<DocCommentList> {
+    let document = get_document(pool, doc_id)
+        .await
+        .map_err(|_| AppError::NotFound(format!("document not found: {doc_id}")))?;
+    check_permission(pool, &document.entity_id, role, false).await?;
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _doc_comment WHERE doc_id = ?")
+        .bind(doc_id)
+        .fetch_one(pool)
+        .await?;
+    let rows = sqlx::query_as::<_, (String, String, String, String, Option<String>, String)>(
+        "SELECT id, entity_id, doc_id, body, actor, created_at FROM _doc_comment WHERE doc_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+    )
+    .bind(doc_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    Ok(DocCommentList {
+        items: rows
+            .into_iter()
+            .map(
+                |(id, entity_id, doc_id, body, actor, created_at)| DocComment {
+                    id,
+                    entity_id,
+                    doc_id,
+                    body,
+                    actor,
+                    created_at,
+                },
+            )
+            .collect(),
+        total,
+    })
+}
+
+pub async fn create_doc_comment_as_role(
+    pool: &SqlitePool,
+    doc_id: &str,
+    body: &str,
+    role: &str,
+    actor: Option<&str>,
+) -> Result<DocComment> {
+    let document = get_document(pool, doc_id)
+        .await
+        .map_err(|_| AppError::NotFound(format!("document not found: {doc_id}")))?;
+    check_permission(pool, &document.entity_id, role, true).await?;
+    let body = body.trim();
+    if body.is_empty() {
+        return Err(AppError::BadRequest("comment body is required".into()).into());
+    }
+    if body.chars().count() > 2000 {
+        return Err(
+            AppError::BadRequest("comment body must be at most 2000 characters".into()).into(),
+        );
+    }
+    let id = format!("{doc_id}_comment_{}", chrono_nanos());
+    sqlx::query(
+        "INSERT INTO _doc_comment (id, entity_id, doc_id, body, actor) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(&document.entity_id)
+    .bind(doc_id)
+    .bind(body)
+    .bind(actor)
+    .execute(pool)
+    .await?;
+    let row = sqlx::query_as::<_, (String, String, String, String, Option<String>, String)>(
+        "SELECT id, entity_id, doc_id, body, actor, created_at FROM _doc_comment WHERE id = ?",
+    )
+    .bind(&id)
+    .fetch_one(pool)
+    .await?;
+    let (id, entity_id, doc_id, body, actor, created_at) = row;
+    Ok(DocComment {
+        id,
+        entity_id,
+        doc_id,
+        body,
+        actor,
+        created_at,
+    })
+}
+
+/// Document followers: any role with view access can list; toggling
+/// requires an actor identity and view access. Toggle is idempotent.
+pub async fn list_doc_followers_as_role(
+    pool: &SqlitePool,
+    doc_id: &str,
+    role: &str,
+    actor: Option<&str>,
+) -> Result<DocFollowerList> {
+    let document = get_document(pool, doc_id)
+        .await
+        .map_err(|_| AppError::NotFound(format!("document not found: {doc_id}")))?;
+    check_permission(pool, &document.entity_id, role, false).await?;
+    let followers: Vec<String> =
+        sqlx::query_scalar("SELECT actor FROM _doc_follower WHERE doc_id = ? ORDER BY actor")
+            .bind(doc_id)
+            .fetch_all(pool)
+            .await?;
+    let total = followers.len() as i64;
+    let is_following = actor
+        .map(|a| followers.iter().any(|f| f == a))
+        .unwrap_or(false);
+    Ok(DocFollowerList {
+        followers,
+        total,
+        is_following,
+    })
+}
+
+pub async fn toggle_doc_follower_as_role(
+    pool: &SqlitePool,
+    doc_id: &str,
+    role: &str,
+    actor: Option<&str>,
+) -> Result<DocFollowerList> {
+    let document = get_document(pool, doc_id)
+        .await
+        .map_err(|_| AppError::NotFound(format!("document not found: {doc_id}")))?;
+    check_permission(pool, &document.entity_id, role, false).await?;
+    let actor = actor
+        .map(str::trim)
+        .filter(|a| !a.is_empty())
+        .ok_or_else(|| AppError::Unauthorized("missing actor identity".into()))?;
+    let existing: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM _doc_follower WHERE doc_id = ? AND actor = ?)",
+    )
+    .bind(doc_id)
+    .bind(actor)
+    .fetch_one(pool)
+    .await?;
+    if existing {
+        sqlx::query("DELETE FROM _doc_follower WHERE doc_id = ? AND actor = ?")
+            .bind(doc_id)
+            .bind(actor)
+            .execute(pool)
+            .await?;
+    } else {
+        sqlx::query("INSERT INTO _doc_follower (doc_id, actor) VALUES (?, ?)")
+            .bind(doc_id)
+            .bind(actor)
+            .execute(pool)
+            .await?;
+    }
+    list_doc_followers_as_role(pool, doc_id, role, Some(actor)).await
+}
+
+/// Document activities: any role with view access can list; creating and
+/// toggling done require edit access. Title is trimmed, 1..=200 chars;
+/// due_date must be YYYY-MM-DD when present.
+pub async fn list_doc_activities_as_role(
+    pool: &SqlitePool,
+    doc_id: &str,
+    role: &str,
+) -> Result<DocActivityList> {
+    let document = get_document(pool, doc_id)
+        .await
+        .map_err(|_| AppError::NotFound(format!("document not found: {doc_id}")))?;
+    check_permission(pool, &document.entity_id, role, false).await?;
+    let rows = sqlx::query_as::<_, (String, String, String, String, Option<String>, Option<String>, i64, Option<String>, String)>(
+        "SELECT id, entity_id, doc_id, title, due_date, assignee, done, actor, created_at FROM _doc_activity WHERE doc_id = ? ORDER BY done, due_date, created_at DESC, id DESC",
+    )
+    .bind(doc_id)
+    .fetch_all(pool)
+    .await?;
+    let total = rows.len() as i64;
+    let open = rows.iter().filter(|row| row.6 == 0).count() as i64;
+    Ok(DocActivityList {
+        items: rows
+            .into_iter()
+            .map(
+                |(id, entity_id, doc_id, title, due_date, assignee, done, actor, created_at)| {
+                    DocActivity {
+                        id,
+                        entity_id,
+                        doc_id,
+                        title,
+                        due_date,
+                        assignee,
+                        done: done != 0,
+                        actor,
+                        created_at,
+                    }
+                },
+            )
+            .collect(),
+        total,
+        open,
+    })
+}
+
+pub async fn create_doc_activity_as_role(
+    pool: &SqlitePool,
+    doc_id: &str,
+    title: &str,
+    due_date: Option<&str>,
+    assignee: Option<&str>,
+    role: &str,
+    actor: Option<&str>,
+) -> Result<DocActivity> {
+    let document = get_document(pool, doc_id)
+        .await
+        .map_err(|_| AppError::NotFound(format!("document not found: {doc_id}")))?;
+    check_permission(pool, &document.entity_id, role, true).await?;
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(AppError::BadRequest("activity title is required".into()).into());
+    }
+    if title.chars().count() > 200 {
+        return Err(
+            AppError::BadRequest("activity title must be at most 200 characters".into()).into(),
+        );
+    }
+    let due_date = due_date.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(date) = due_date {
+        if !valid_activity_date(date) {
+            return Err(AppError::BadRequest("due_date must be YYYY-MM-DD".into()).into());
+        }
+    }
+    let assignee = assignee.map(str::trim).filter(|s| !s.is_empty());
+    let id = format!("{doc_id}_activity_{}", chrono_nanos());
+    sqlx::query(
+        "INSERT INTO _doc_activity (id, entity_id, doc_id, title, due_date, assignee, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(&document.entity_id)
+    .bind(doc_id)
+    .bind(title)
+    .bind(due_date)
+    .bind(assignee)
+    .bind(actor)
+    .execute(pool)
+    .await?;
+    get_doc_activity(pool, &id).await
+}
+
+pub async fn toggle_doc_activity_as_role(
+    pool: &SqlitePool,
+    activity_id: &str,
+    role: &str,
+) -> Result<DocActivity> {
+    let row: Option<(String, String)> =
+        sqlx::query_as("SELECT doc_id, entity_id FROM _doc_activity WHERE id = ?")
+            .bind(activity_id)
+            .fetch_optional(pool)
+            .await?;
+    let Some((doc_id, entity_id)) = row else {
+        return Err(AppError::NotFound(format!("activity not found: {activity_id}")).into());
+    };
+    let _ = doc_id;
+    check_permission(pool, &entity_id, role, true).await?;
+    sqlx::query("UPDATE _doc_activity SET done = 1 - done WHERE id = ?")
+        .bind(activity_id)
+        .execute(pool)
+        .await?;
+    get_doc_activity(pool, activity_id).await
+}
+
+async fn get_doc_activity(pool: &SqlitePool, activity_id: &str) -> Result<DocActivity> {
+    let row = sqlx::query_as::<_, (String, String, String, String, Option<String>, Option<String>, i64, Option<String>, String)>(
+        "SELECT id, entity_id, doc_id, title, due_date, assignee, done, actor, created_at FROM _doc_activity WHERE id = ?",
+    )
+    .bind(activity_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("activity not found: {activity_id}")))?;
+    let (id, entity_id, doc_id, title, due_date, assignee, done, actor, created_at) = row;
+    Ok(DocActivity {
+        id,
+        entity_id,
+        doc_id,
+        title,
+        due_date,
+        assignee,
+        done: done != 0,
+        actor,
+        created_at,
+    })
+}
+
+fn valid_activity_date(date: &str) -> bool {
+    let parts: Vec<&str> = date.split('-').collect();
+    if parts.len() != 3 {
+        return false;
+    }
+    let parsed: Vec<u32> = parts
+        .iter()
+        .filter_map(|part| part.parse::<u32>().ok())
+        .collect();
+    if parsed.len() != 3 {
+        return false;
+    }
+    let (year, month, day) = (parsed[0], parsed[1], parsed[2]);
+    if parts[0].len() != 4 || parts[1].len() != 2 || parts[2].len() != 2 {
+        return false;
+    }
+    if year == 0 || month == 0 || month > 12 || day == 0 || day > 31 {
+        return false;
+    }
+    true
+}
+
+/// Record attachments: any role with view access can list and download;
+/// uploading and deleting require edit access. Files are stored as DB
+/// blobs with a 5MB per-file cap; MIME allowlist blocks executables.
+pub fn validate_attachment(filename: &str, content_type: &str, size: usize) -> Result<()> {
+    crate::security::validate_filename(filename)?;
+    let filename = filename.trim();
+    if filename.is_empty() {
+        return Err(AppError::BadRequest("filename is required".into()).into());
+    }
+    if filename.chars().count() > 255 {
+        return Err(AppError::BadRequest("filename must be at most 255 characters".into()).into());
+    }
+    if size == 0 {
+        return Err(AppError::BadRequest("file is empty".into()).into());
+    }
+    if size > ATTACHMENT_MAX_BYTES {
+        return Err(AppError::BadRequest("file must be at most 5MB".into()).into());
+    }
+    let content_type = content_type.trim().to_lowercase();
+    let allowed = content_type.starts_with("image/")
+        || matches!(
+            content_type.as_str(),
+            "application/pdf"
+                | "text/plain"
+                | "text/csv"
+                | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        );
+    if !allowed {
+        return Err(AppError::BadRequest("unsupported file type".into()).into());
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn attachment_row(
+    id: String,
+    entity_id: String,
+    doc_id: String,
+    filename: String,
+    content_type: String,
+    size: i64,
+    actor: Option<String>,
+    created_at: String,
+) -> DocAttachment {
+    DocAttachment {
+        id,
+        entity_id,
+        doc_id,
+        filename,
+        content_type,
+        size,
+        actor,
+        created_at,
+    }
+}
+
+pub async fn list_doc_attachments_as_role(
+    pool: &SqlitePool,
+    doc_id: &str,
+    role: &str,
+) -> Result<DocAttachmentList> {
+    let document = get_document(pool, doc_id)
+        .await
+        .map_err(|_| AppError::NotFound(format!("document not found: {doc_id}")))?;
+    check_permission(pool, &document.entity_id, role, false).await?;
+    let rows = sqlx::query_as::<_, (String, String, String, String, String, i64, Option<String>, String)>(
+        "SELECT id, entity_id, doc_id, filename, content_type, size, actor, created_at FROM _doc_attachment WHERE doc_id = ? ORDER BY created_at DESC, id DESC",
+    )
+    .bind(doc_id)
+    .fetch_all(pool)
+    .await?;
+    let total = rows.len() as i64;
+    Ok(DocAttachmentList {
+        items: rows
+            .into_iter()
+            .map(
+                |(id, entity_id, doc_id, filename, content_type, size, actor, created_at)| {
+                    attachment_row(
+                        id,
+                        entity_id,
+                        doc_id,
+                        filename,
+                        content_type,
+                        size,
+                        actor,
+                        created_at,
+                    )
+                },
+            )
+            .collect(),
+        total,
+    })
+}
+
+pub async fn upload_doc_attachment_as_role(
+    pool: &SqlitePool,
+    doc_id: &str,
+    filename: &str,
+    content_type: &str,
+    data: &[u8],
+    role: &str,
+    actor: Option<&str>,
+) -> Result<DocAttachment> {
+    let document = get_document(pool, doc_id)
+        .await
+        .map_err(|_| AppError::NotFound(format!("document not found: {doc_id}")))?;
+    check_permission(pool, &document.entity_id, role, true).await?;
+    validate_attachment(filename, content_type, data.len())?;
+    let id = format!("{doc_id}_attachment_{}", chrono_nanos());
+    sqlx::query(
+        "INSERT INTO _doc_attachment (id, entity_id, doc_id, filename, content_type, size, data, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(&document.entity_id)
+    .bind(doc_id)
+    .bind(filename.trim())
+    .bind(content_type.trim().to_lowercase())
+    .bind(data.len() as i64)
+    .bind(data)
+    .bind(actor)
+    .execute(pool)
+    .await?;
+    get_doc_attachment(pool, &id, role).await
+}
+
+pub async fn get_doc_attachment_data_as_role(
+    pool: &SqlitePool,
+    attachment_id: &str,
+    role: &str,
+) -> Result<DocAttachmentData> {
+    let row: Option<(String, String, String, Vec<u8>)> = sqlx::query_as(
+        "SELECT a.entity_id, a.filename, a.content_type, a.data FROM _doc_attachment a WHERE a.id = ?",
+    )
+    .bind(attachment_id)
+    .fetch_optional(pool)
+    .await?;
+    let Some((entity_id, filename, content_type, data)) = row else {
+        return Err(AppError::NotFound(format!("attachment not found: {attachment_id}")).into());
+    };
+    check_permission(pool, &entity_id, role, false).await?;
+    Ok(DocAttachmentData {
+        filename,
+        content_type,
+        data,
+    })
+}
+
+pub async fn delete_doc_attachment_as_role(
+    pool: &SqlitePool,
+    attachment_id: &str,
+    role: &str,
+) -> Result<()> {
+    let row: Option<String> =
+        sqlx::query_scalar("SELECT entity_id FROM _doc_attachment WHERE id = ?")
+            .bind(attachment_id)
+            .fetch_optional(pool)
+            .await?;
+    let Some(entity_id) = row else {
+        return Err(AppError::NotFound(format!("attachment not found: {attachment_id}")).into());
+    };
+    check_permission(pool, &entity_id, role, true).await?;
+    sqlx::query("DELETE FROM _doc_attachment WHERE id = ?")
+        .bind(attachment_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+async fn get_doc_attachment(
+    pool: &SqlitePool,
+    attachment_id: &str,
+    role: &str,
+) -> Result<DocAttachment> {
+    let row = sqlx::query_as::<_, (String, String, String, String, String, i64, Option<String>, String)>(
+        "SELECT id, entity_id, doc_id, filename, content_type, size, actor, created_at FROM _doc_attachment WHERE id = ?",
+    )
+    .bind(attachment_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("attachment not found: {attachment_id}")))?;
+    let (id, entity_id, doc_id, filename, content_type, size, actor, created_at) = row;
+    check_permission(pool, &entity_id, role, false).await?;
+    Ok(attachment_row(
+        id,
+        entity_id,
+        doc_id,
+        filename,
+        content_type,
+        size,
+        actor,
+        created_at,
+    ))
 }
 
 pub async fn list_document_audit_as_role(
@@ -2400,6 +6288,16 @@ async fn validate_payload_for_role(
     payload: &Value,
     role: &str,
 ) -> Result<()> {
+    validate_payload_for_role_excluding(pool, entity_id, payload, role, None).await
+}
+
+async fn validate_payload_for_role_excluding(
+    pool: &SqlitePool,
+    entity_id: &str,
+    payload: &Value,
+    role: &str,
+    exclude_doc_id: Option<&str>,
+) -> Result<()> {
     let object = payload
         .as_object()
         .ok_or_else(|| AppError::BadRequest("payload must be a JSON object".into()))?;
@@ -2410,6 +6308,17 @@ async fn validate_payload_for_role(
         .filter(|f| field_map.get(&f.name).copied().unwrap_or((true, true)).0)
         .collect();
     for field in &visible {
+        // Computed fields are derived on read; never accepted from clients.
+        if matches!(field.r#type.as_str(), "computed" | "formula") {
+            if object.contains_key(&field.name) {
+                return Err(AppError::BadRequest(format!(
+                    "derived field is read-only: {}",
+                    field.name
+                ))
+                .into());
+            }
+            continue;
+        }
         let value = object.get(&field.name);
         if field.required && value.is_none() {
             return Err(
@@ -2418,12 +6327,328 @@ async fn validate_payload_for_role(
         }
         if let Some(value) = value {
             validate_field_value(field, value)?;
+            validate_field_rules_value(pool, entity_id, field, value, exclude_doc_id).await?;
+            if field.r#type == "reference" {
+                let target = field.ref_entity.as_deref().unwrap_or_default();
+                let doc_id = value.as_str().unwrap_or_default();
+                let exists: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM _doc WHERE id = ? AND entity_id = ?)",
+                )
+                .bind(doc_id)
+                .bind(target)
+                .fetch_one(pool)
+                .await?;
+                if !exists {
+                    return Err(AppError::BadRequest(format!(
+                        "unknown reference: {} is not a {target}",
+                        field.name
+                    ))
+                    .into());
+                }
+            }
         }
     }
     for key in object.keys() {
         if !visible.iter().any(|f| f.name == *key) {
             return Err(AppError::BadRequest(format!("unknown field: {key}")).into());
         }
+    }
+    Ok(())
+}
+
+async fn validate_field_rules_value(
+    pool: &SqlitePool,
+    entity_id: &str,
+    field: &Field,
+    value: &Value,
+    exclude_doc_id: Option<&str>,
+) -> Result<()> {
+    if field.is_unique {
+        if let Some(text) = value.as_str() {
+            let query = match exclude_doc_id {
+                Some(_) => "SELECT EXISTS(SELECT 1 FROM _doc WHERE entity_id = ? AND id != ? AND json_extract(payload, ?) = ?)",
+                None => "SELECT EXISTS(SELECT 1 FROM _doc WHERE entity_id = ? AND json_extract(payload, ?) = ?)",
+            };
+            let path = format!("$.{}", field.name);
+            let exists: bool = match exclude_doc_id {
+                Some(exclude) => {
+                    sqlx::query_scalar(query)
+                        .bind(entity_id)
+                        .bind(exclude)
+                        .bind(path)
+                        .bind(text)
+                        .fetch_one(pool)
+                        .await?
+                }
+                None => {
+                    sqlx::query_scalar(query)
+                        .bind(entity_id)
+                        .bind(path)
+                        .bind(text)
+                        .fetch_one(pool)
+                        .await?
+                }
+            };
+            if exists {
+                return Err(AppError::Conflict(format!(
+                    "duplicate value for unique field: {}",
+                    field.name
+                ))
+                .into());
+            }
+        } else if let Some(number) = value.as_f64() {
+            let query = match exclude_doc_id {
+                Some(_) => "SELECT EXISTS(SELECT 1 FROM _doc WHERE entity_id = ? AND id != ? AND json_extract(payload, ?) = ?)",
+                None => "SELECT EXISTS(SELECT 1 FROM _doc WHERE entity_id = ? AND json_extract(payload, ?) = ?)",
+            };
+            let path = format!("$.{}", field.name);
+            let exists: bool = match exclude_doc_id {
+                Some(exclude) => {
+                    sqlx::query_scalar(query)
+                        .bind(entity_id)
+                        .bind(exclude)
+                        .bind(path)
+                        .bind(number)
+                        .fetch_one(pool)
+                        .await?
+                }
+                None => {
+                    sqlx::query_scalar(query)
+                        .bind(entity_id)
+                        .bind(path)
+                        .bind(number)
+                        .fetch_one(pool)
+                        .await?
+                }
+            };
+            if exists {
+                return Err(AppError::Conflict(format!(
+                    "duplicate value for unique field: {}",
+                    field.name
+                ))
+                .into());
+            }
+        }
+    }
+    if matches!(field.r#type.as_str(), "number" | "currency") {
+        if let Some(number) = value.as_f64() {
+            if let Some(min) = field.min_value {
+                if number < min {
+                    return Err(AppError::BadRequest(format!(
+                        "value below minimum for field {}: {number} < {min}",
+                        field.name
+                    ))
+                    .into());
+                }
+            }
+            if let Some(max) = field.max_value {
+                if number > max {
+                    return Err(AppError::BadRequest(format!(
+                        "value above maximum for field {}: {number} > {max}",
+                        field.name
+                    ))
+                    .into());
+                }
+            }
+        }
+    }
+    if matches!(field.r#type.as_str(), "text" | "textarea") {
+        if let Some(text) = value.as_str() {
+            let length = text.chars().count() as i64;
+            if let Some(min_length) = field.min_length {
+                if length < min_length {
+                    return Err(AppError::BadRequest(format!(
+                        "value too short for field {}: {length} < {min_length}",
+                        field.name
+                    ))
+                    .into());
+                }
+            }
+            if let Some(max_length) = field.max_length {
+                if length > max_length {
+                    return Err(AppError::BadRequest(format!(
+                        "value too long for field {}: {length} > {max_length}",
+                        field.name
+                    ))
+                    .into());
+                }
+            }
+            if let Some(pattern) = field
+                .pattern
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                if !matches_simple_pattern(pattern, text) {
+                    return Err(AppError::BadRequest(format!(
+                        "value does not match pattern for field {}",
+                        field.name
+                    ))
+                    .into());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Minimal pattern matcher (no extra dependency): supports `^`, `$`, `.*`,
+/// `.+`, literal prefixes/suffixes, and character classes like `[0-9]+`.
+/// Anything else falls back to substring matching so rules stay predictable.
+fn matches_simple_pattern(pattern: &str, text: &str) -> bool {
+    let pattern = pattern.trim();
+    if pattern.is_empty() {
+        return true;
+    }
+    if pattern == ".*" || pattern == ".+" {
+        return !text.is_empty() || pattern == ".*";
+    }
+    let anchored_start = pattern.starts_with('^');
+    let anchored_end = pattern.ends_with('$');
+    let core = pattern
+        .strip_prefix('^')
+        .unwrap_or(pattern)
+        .strip_suffix('$')
+        .unwrap_or_else(|| pattern.strip_prefix('^').unwrap_or(pattern));
+    if core.contains("[0-9]") {
+        let digits_only = core
+            .replace("[0-9]+", "")
+            .replace("[0-9]*", "")
+            .replace("[0-9]", "");
+        let has_plus = core.contains("[0-9]+");
+        let letters: String = text.chars().filter(|c| !c.is_ascii_digit()).collect();
+        let digits: String = text.chars().filter(|c| c.is_ascii_digit()).collect();
+        if has_plus && digits.is_empty() {
+            return false;
+        }
+        if digits_only.is_empty() {
+            return text.chars().all(|c| c.is_ascii_digit()) && !text.is_empty();
+        }
+        if anchored_start && anchored_end {
+            return text.starts_with(&digits_only)
+                || text.ends_with(&digits_only)
+                || letters == digits_only;
+        }
+        return text.contains(&digits_only);
+    }
+    if core.contains(".*") {
+        let parts: Vec<&str> = core.split(".*").collect();
+        if anchored_start && !text.starts_with(parts[0]) {
+            return false;
+        }
+        if anchored_end && !text.ends_with(parts[parts.len() - 1]) {
+            return false;
+        }
+        let mut rest = text;
+        for (index, part) in parts.iter().enumerate() {
+            if part.is_empty() {
+                continue;
+            }
+            match rest.find(part) {
+                Some(position) => {
+                    if index == 0 && anchored_start && position != 0 {
+                        return false;
+                    }
+                    rest = &rest[position + part.len()..];
+                }
+                None => return false,
+            }
+        }
+        return true;
+    }
+    if anchored_start && anchored_end {
+        return text == core;
+    }
+    if anchored_start {
+        return text.starts_with(core);
+    }
+    if anchored_end {
+        return text.ends_with(core);
+    }
+    text.contains(core)
+}
+
+fn field_default_payload(field: &Field) -> Option<Value> {
+    if field.auto_number_prefix.is_some() || field.auto_number_width.is_some() {
+        return None;
+    }
+    let default = field
+        .default_value
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?;
+    match field.r#type.as_str() {
+        "number" | "currency" => default
+            .parse::<f64>()
+            .ok()
+            .and_then(serde_json::Number::from_f64)
+            .map(Value::Number),
+        "checkbox" | "boolean" => match default.to_ascii_lowercase().as_str() {
+            "true" => Some(Value::Bool(true)),
+            "false" => Some(Value::Bool(false)),
+            _ => None,
+        },
+        _ => Some(Value::String(default.to_string())),
+    }
+}
+
+fn apply_field_defaults(fields: &[Field], payload: &Value) -> Value {
+    let Some(object) = payload.as_object() else {
+        return payload.clone();
+    };
+    let mut next = object.clone();
+    for field in fields {
+        if matches!(field.r#type.as_str(), "computed" | "formula") || next.contains_key(&field.name)
+        {
+            continue;
+        }
+        if let Some(default) = field_default_payload(field) {
+            next.insert(field.name.clone(), default);
+        }
+    }
+    Value::Object(next)
+}
+
+async fn allocate_auto_numbers(
+    pool: &SqlitePool,
+    entity_id: &str,
+    payload: &mut serde_json::Map<String, Value>,
+) -> Result<()> {
+    let fields = list_fields(pool, entity_id).await?;
+    let numbered: Vec<(String, Option<String>, Option<i64>)> = fields
+        .iter()
+        .filter(|f| {
+            f.r#type == "text" && (f.auto_number_prefix.is_some() || f.auto_number_width.is_some())
+        })
+        .filter(|f| !payload.contains_key(&f.name))
+        .map(|f| {
+            (
+                f.name.clone(),
+                f.auto_number_prefix.clone(),
+                f.auto_number_width,
+            )
+        })
+        .collect();
+    for (name, prefix, width) in numbered {
+        // Single-connection in-memory pools deadlock if a write tx opens
+        // while this read is outstanding; allocate outside any tx.
+        let next_value: i64 = sqlx::query_scalar(
+            "INSERT INTO _number_counter (entity_id, field_name, next_value) VALUES (?, ?, 2) \
+             ON CONFLICT(entity_id, field_name) DO UPDATE SET next_value = next_value + 1 \
+             RETURNING next_value - 1",
+        )
+        .bind(entity_id)
+        .bind(&name)
+        .fetch_one(pool)
+        .await?;
+        let prefix = prefix.as_deref().unwrap_or("");
+        let formatted = match width {
+            Some(width) if width > 0 => {
+                format!("{prefix}{next_value:0>width$}", width = width as usize)
+            }
+            _ => format!("{prefix}{next_value}"),
+        };
+        payload.insert(name, Value::String(formatted));
     }
     Ok(())
 }
@@ -2531,11 +6756,31 @@ pub async fn viewable_field_names(
 }
 
 fn validate_field_value(field: &Field, value: &Value) -> Result<()> {
+    // Every canonical field type accepts document writes; server-computed
+    // types (computed/formula) reject them. Format-level checks (email
+    // shape, option membership) stay permissive at the value layer —
+    // stricter rules belong in field rules (regex/min/max), not here.
     let valid = match field.r#type.as_str() {
-        "text" => value.is_string(),
-        "number" => value.is_number(),
-        "boolean" => value.is_boolean(),
-        "date" => value.is_string(),
+        "text" | "textarea" | "long_text" | "date" | "datetime" | "time" | "email" | "phone"
+        | "url" | "file" | "image" | "auto_number" => value.is_string(),
+        "number" | "decimal" | "currency" | "percentage" | "integer" => value.is_number(),
+        "checkbox" | "boolean" => value.is_boolean(),
+        "reference" => value.is_string(),
+        "json" => true,
+        "multi_select" => {
+            value.is_array()
+                && value.as_array().is_some_and(|items| {
+                    items.iter().all(|item| {
+                        item.is_string()
+                            && (field.options.is_empty()
+                                || field
+                                    .options
+                                    .iter()
+                                    .any(|o| Some(o.value.as_str()) == item.as_str()))
+                    })
+                })
+        }
+        "computed" | "formula" => false,
         "select" => {
             value.is_string()
                 && field
@@ -2549,6 +6794,39 @@ fn validate_field_value(field: &Field, value: &Value) -> Result<()> {
         return Err(AppError::BadRequest(format!(
             "invalid value for field {}: expected {}",
             field.name, field.r#type
+        ))
+        .into());
+    }
+    Ok(())
+}
+
+/// Evaluate generic entity capabilities such as export/import/execute/approve.
+#[allow(dead_code)]
+pub async fn check_entity_capability(
+    pool: &SqlitePool,
+    entity_id: &str,
+    role: &str,
+    capability: &str,
+) -> Result<()> {
+    if role == "admin" {
+        return Ok(());
+    }
+    let column = match capability {
+        "export" => "can_export",
+        "import" => "can_import",
+        "execute" => "can_execute",
+        "approve" => "can_approve",
+        _ => return Err(AppError::BadRequest("unknown permission capability".into()).into()),
+    };
+    let query = format!("SELECT {column} FROM _entity_permission WHERE entity_id=? AND role=?");
+    let value: Option<i64> = sqlx::query_scalar(&query)
+        .bind(entity_id)
+        .bind(role)
+        .fetch_optional(pool)
+        .await?;
+    if value.unwrap_or(1) == 0 {
+        return Err(AppError::Forbidden(format!(
+            "no {capability} permission for entity: {entity_id}"
         ))
         .into());
     }

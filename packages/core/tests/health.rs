@@ -13,6 +13,12 @@ fn test_config() -> Config {
         database_url: "sqlite://:memory:".into(),
         backup_interval_hours: 24,
         backup_keep: 7,
+        notify_interval_secs: 30,
+        notify_timeout_secs: 10,
+        notify_max_attempts: 3,
+        allowed_origins: Vec::new(),
+        auth_rate_limit_max_attempts: 10,
+        auth_rate_limit_window_secs: 60,
     }
 }
 
@@ -41,6 +47,12 @@ async fn authed_app() -> (axum::Router, String, sqlx::SqlitePool, std::path::Pat
         database_url: url,
         backup_interval_hours: 24,
         backup_keep: 7,
+        notify_interval_secs: 30,
+        notify_timeout_secs: 10,
+        notify_max_attempts: 3,
+        allowed_origins: Vec::new(),
+        auth_rate_limit_max_attempts: 10,
+        auth_rate_limit_window_secs: 60,
     };
     let app = http::router(&config, pool.clone());
     (app, session.token, pool, dir)
@@ -73,7 +85,7 @@ async fn admin_status_reports_counts() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["entities"], 2);
+    assert_eq!(json["entities"], 5);
     assert_eq!(json["integrity"], true);
 }
 
@@ -283,6 +295,30 @@ async fn field_permission_routes_require_admin() {
 }
 
 #[tokio::test]
+async fn user_can_save_shared_entity_view() {
+    let (app, token) = authed_user_app().await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/entities/work_order/views")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"name":"Open orders","config":{"status":"open"}}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["name"], "Open orders");
+    assert_eq!(json["config"]["status"], "open");
+}
+
+#[tokio::test]
 async fn health_returns_ok() {
     let pool = db::connect("sqlite::memory:").await.unwrap();
     db::migrate(&pool).await.unwrap();
@@ -321,4 +357,71 @@ async fn version_returns_package_version() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["name"], "logholizon-core");
     assert_eq!(json["version"], env!("CARGO_PKG_VERSION"));
+}
+
+// --- Phase C: readiness probe ---
+
+#[tokio::test]
+async fn ready_reports_migrated_integrity_wal_and_queues() {
+    // WAL requires a file-backed database; in-memory SQLite stays in
+    // `memory` journal mode, so use a temp file to assert the policy.
+    let seq = TEST_DIR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!(
+        "logholizon-test-ready-{}-{seq}",
+        std::process::id()
+    ));
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+    let db_path = dir.join("core.db");
+    let url = format!("sqlite://{}", db_path.to_str().unwrap().replace('\\', "/"));
+    let pool = db::connect(&url).await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    let config = Config {
+        database_url: url.clone(),
+        ..test_config()
+    };
+    let app = http::router(&config, pool);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/ready")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["ready"], true);
+    assert_eq!(json["checks"]["migrated"], true);
+    assert_eq!(json["checks"]["integrity"], true);
+    assert_eq!(json["checks"]["wal"], true);
+    assert_eq!(json["checks"]["pragmas"]["journal_mode"], "WAL");
+    assert_eq!(json["checks"]["pragmas"]["synchronous"], "NORMAL");
+    assert_eq!(json["checks"]["pragmas"]["foreign_keys"], true);
+    assert!(json["checks"]["pending_automation"].is_number());
+    assert!(json["checks"]["pending_webhooks"].is_number());
+    tokio::fs::remove_dir_all(&dir).await.ok();
+}
+
+#[tokio::test]
+async fn ready_is_public_but_reports_unmigrated_as_503() {
+    // No auth header and no migrations: probe is reachable (no 401) and
+    // reports unready with 503 + service_unavailable code.
+    let pool = db::connect("sqlite::memory:").await.unwrap();
+    let app = http::router(&test_config(), pool);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/ready")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["code"], "service_unavailable");
+    assert!(json["message"].as_str().unwrap_or("").contains("migrated"));
 }

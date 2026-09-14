@@ -1,0 +1,216 @@
+{
+  "schema_version": 2,
+  "kind": "logholizon.module",
+  "manifest": {
+    "name": "accounting",
+    "version": "1.0.0",
+    "dependencies": []
+  },
+  "module": {
+    "name": "accounting",
+    "label": "Accounting",
+    "description": "Ready-made accounting package: chart of accounts, journal entries with lines, and approval workflow.",
+    "icon": "i-lucide-calculator",
+    "color": "green",
+    "definition": {
+      "entities": [
+        {
+          "name": "gl_account",
+          "label": "GL Account",
+          "fields": [
+            { "name": "code", "label": "Code", "type": "text", "required": true, "is_unique": true },
+            { "name": "name", "label": "Name", "type": "text", "required": true },
+            {
+              "name": "account_type",
+              "label": "Type",
+              "type": "select",
+              "required": true,
+              "options": [
+                { "value": "asset", "label": "Asset" },
+                { "value": "liability", "label": "Liability" },
+                { "value": "equity", "label": "Equity" },
+                { "value": "revenue", "label": "Revenue" },
+                { "value": "expense", "label": "Expense" }
+              ]
+            },
+            { "name": "is_active", "label": "Active", "type": "boolean" }
+          ],
+          "views": [{ "name": "Active accounts", "config": {} }],
+          "form_layout": {
+            "config": {
+              "sections": [{ "id": "main", "label": "Main", "fields": ["code", "name", "account_type", "is_active"] }]
+            }
+          },
+          "reports": [
+            {
+              "name": "Accounts by type",
+              "config": {
+                "fields": ["account_type"],
+                "group_by": ["account_type"],
+                "aggregates": [{ "field": "code", "op": "count", "alias": "account_count" }]
+              }
+            }
+          ]
+        },
+        {
+          "name": "journal_entry",
+          "label": "Journal Entry",
+          "fields": [
+            { "name": "number", "label": "Number", "type": "text", "required": true, "is_unique": true },
+            { "name": "entry_date", "label": "Date", "type": "date", "required": true },
+            { "name": "memo", "label": "Memo", "type": "long_text" },
+            {
+              "name": "status",
+              "label": "Status",
+              "type": "select",
+              "required": true,
+              "is_status": true,
+              "options": [
+                { "value": "draft", "label": "Draft" },
+                { "value": "posted", "label": "Posted" },
+                { "value": "void", "label": "Void" }
+              ]
+            }
+          ],
+          "workflow": {
+            "states": [
+              { "name": "draft", "label": "Draft" },
+              { "name": "posted", "label": "Posted" },
+              { "name": "void", "label": "Void" }
+            ],
+            "transitions": [
+              { "from_state": "draft", "to_state": "posted", "action": "post" },
+              { "from_state": "posted", "to_state": "void", "action": "void" }
+            ]
+          },
+          "views": [{ "name": "Posted entries", "config": {} }],
+          "reports": [
+            {
+              "name": "Entries by status",
+              "config": {
+                "fields": ["status"],
+                "group_by": ["status"],
+                "aggregates": [{ "field": "number", "op": "count", "alias": "entry_count" }]
+              }
+            }
+          ],
+          "notifications": [
+            { "trigger": "transition", "target_url": "https://example.test/accounting-entry", "active": true }
+          ]
+        },
+        {
+          "name": "journal_line",
+          "label": "Journal Line",
+          "fields": [
+            { "name": "entry", "label": "Entry", "type": "reference", "ref_entity": "journal_entry", "required": true },
+            { "name": "account", "label": "Account", "type": "reference", "ref_entity": "gl_account", "required": true },
+            { "name": "debit", "label": "Debit", "type": "currency" },
+            { "name": "credit", "label": "Credit", "type": "currency" },
+            { "name": "narration", "label": "Narration", "type": "text" }
+          ],
+          "reports": [
+            {
+              "name": "Trial totals",
+              "config": {
+                "fields": ["debit", "credit"],
+                "aggregates": [
+                  { "field": "debit", "op": "sum", "alias": "total_debit" },
+                  { "field": "credit", "op": "sum", "alias": "total_credit" }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "relations": [
+      {
+        "source": "journal_line",
+        "target": "journal_entry",
+        "source_field": "entry",
+        "name": "line_entry",
+        "relation_type": "many_to_one",
+        "on_delete": "restrict"
+      },
+      {
+        "source": "journal_line",
+        "target": "gl_account",
+        "source_field": "account",
+        "name": "line_account",
+        "relation_type": "many_to_one",
+        "on_delete": "restrict"
+      }
+    ],
+    "actions": [
+      {
+        "entity": "journal_entry",
+        "name": "export_voucher",
+        "label": "Export Voucher",
+        "kind": "generate",
+        "config": {}
+      }
+    ],
+    "automations": [
+      {
+        "entity": "journal_entry",
+        "trigger": "transition",
+        "action": "webhook",
+        "target_url": "https://example.test/accounting-posted",
+        "active": true,
+        "condition": "{status} == \"posted\"",
+        "schedule": "",
+        "max_attempts": 3
+      }
+    ],
+    "dashboards": [
+      {
+        "name": "Accounting Overview",
+        "description": "Accounts, entries, and trial totals.",
+        "layout": [
+          {
+            "id": "accounts",
+            "kind": "kpi",
+            "title": "GL accounts",
+            "entity_id": "gl_account",
+            "config": { "aggregates": [{ "field": "code", "op": "count", "alias": "total" }] },
+            "x": 0,
+            "y": 0,
+            "w": 3,
+            "h": 2
+          },
+          {
+            "id": "entries",
+            "kind": "kpi",
+            "title": "Journal entries",
+            "entity_id": "journal_entry",
+            "config": { "aggregates": [{ "field": "number", "op": "count", "alias": "total" }] },
+            "x": 3,
+            "y": 0,
+            "w": 3,
+            "h": 2
+          },
+          {
+            "id": "trial",
+            "kind": "table",
+            "title": "Trial totals",
+            "entity_id": "journal_line",
+            "config": {
+              "fields": ["debit", "credit"],
+              "aggregates": [
+                { "field": "debit", "op": "sum", "alias": "total_debit" },
+                { "field": "credit", "op": "sum", "alias": "total_credit" }
+              ]
+            },
+            "x": 0,
+            "y": 2,
+            "w": 6,
+            "h": 3
+          }
+        ],
+        "filters": {},
+        "roles": [],
+        "users": []
+      }
+    ]
+  }
+}

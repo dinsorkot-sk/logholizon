@@ -23,6 +23,14 @@ dist/
 .data/
 **/.data/
 
+# Playwright
+test-results/
+**/test-results/
+playwright-report/
+**/playwright-report/
+playwright/.cache/
+**/playwright/.cache/
+
 # Environment files
 .env
 .env.*

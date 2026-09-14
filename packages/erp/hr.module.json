@@ -1,0 +1,209 @@
+{
+  "schema_version": 2,
+  "kind": "logholizon.module",
+  "manifest": {
+    "name": "hr",
+    "version": "1.0.0",
+    "dependencies": []
+  },
+  "module": {
+    "name": "hr",
+    "label": "Human Resources",
+    "description": "Ready-made HR package: employees, leave requests with approval, and payroll runs.",
+    "icon": "i-lucide-users",
+    "color": "pink",
+    "definition": {
+      "entities": [
+        {
+          "name": "employee",
+          "label": "Employee",
+          "fields": [
+            { "name": "code", "label": "Code", "type": "text", "required": true, "is_unique": true },
+            { "name": "name", "label": "Name", "type": "text", "required": true },
+            { "name": "email", "label": "Email", "type": "email" },
+            { "name": "department", "label": "Department", "type": "text" },
+            { "name": "hire_date", "label": "Hire Date", "type": "date" }
+          ],
+          "views": [{ "name": "All employees", "config": {} }],
+          "form_layout": {
+            "config": {
+              "sections": [{ "id": "main", "label": "Main", "fields": ["code", "name", "email", "department", "hire_date"] }]
+            }
+          },
+          "reports": [
+            {
+              "name": "Headcount by department",
+              "config": {
+                "fields": ["department"],
+                "group_by": ["department"],
+                "aggregates": [{ "field": "code", "op": "count", "alias": "headcount" }]
+              }
+            }
+          ]
+        },
+        {
+          "name": "leave_request",
+          "label": "Leave Request",
+          "fields": [
+            { "name": "employee", "label": "Employee", "type": "reference", "ref_entity": "employee", "required": true },
+            {
+              "name": "leave_type",
+              "label": "Leave Type",
+              "type": "select",
+              "required": true,
+              "options": [
+                { "value": "annual", "label": "Annual" },
+                { "value": "sick", "label": "Sick" },
+                { "value": "unpaid", "label": "Unpaid" }
+              ]
+            },
+            { "name": "start_date", "label": "Start Date", "type": "date", "required": true },
+            { "name": "end_date", "label": "End Date", "type": "date", "required": true },
+            {
+              "name": "status",
+              "label": "Status",
+              "type": "select",
+              "required": true,
+              "is_status": true,
+              "options": [
+                { "value": "draft", "label": "Draft" },
+                { "value": "approved", "label": "Approved" },
+                { "value": "rejected", "label": "Rejected" }
+              ]
+            }
+          ],
+          "workflow": {
+            "states": [
+              { "name": "draft", "label": "Draft" },
+              { "name": "approved", "label": "Approved" },
+              { "name": "rejected", "label": "Rejected" }
+            ],
+            "transitions": [
+              { "from_state": "draft", "to_state": "approved", "action": "approve" },
+              { "from_state": "draft", "to_state": "rejected", "action": "reject" }
+            ]
+          },
+          "reports": [
+            {
+              "name": "Leaves by type",
+              "config": {
+                "fields": ["leave_type"],
+                "group_by": ["leave_type"],
+                "aggregates": [{ "field": "leave_type", "op": "count", "alias": "request_count" }]
+              }
+            }
+          ],
+          "notifications": [
+            { "trigger": "transition", "target_url": "https://example.test/hr-leave", "active": true }
+          ]
+        },
+        {
+          "name": "payroll_run",
+          "label": "Payroll Run",
+          "fields": [
+            { "name": "period", "label": "Period", "type": "text", "required": true },
+            { "name": "run_date", "label": "Run Date", "type": "date", "required": true },
+            { "name": "total_amount", "label": "Total Amount", "type": "currency" },
+            {
+              "name": "status",
+              "label": "Status",
+              "type": "select",
+              "required": true,
+              "is_status": true,
+              "options": [
+                { "value": "draft", "label": "Draft" },
+                { "value": "processed", "label": "Processed" },
+                { "value": "paid", "label": "Paid" }
+              ]
+            }
+          ],
+          "workflow": {
+            "states": [
+              { "name": "draft", "label": "Draft" },
+              { "name": "processed", "label": "Processed" },
+              { "name": "paid", "label": "Paid" }
+            ],
+            "transitions": [
+              { "from_state": "draft", "to_state": "processed", "action": "process" },
+              { "from_state": "processed", "to_state": "paid", "action": "pay" }
+            ]
+          },
+          "reports": [
+            {
+              "name": "Payroll totals",
+              "config": {
+                "fields": ["status"],
+                "group_by": ["status"],
+                "aggregates": [{ "field": "total_amount", "op": "sum", "alias": "payroll_total" }]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "relations": [
+      {
+        "source": "leave_request",
+        "target": "employee",
+        "source_field": "employee",
+        "name": "leave_employee",
+        "relation_type": "many_to_one",
+        "on_delete": "restrict"
+      }
+    ],
+    "actions": [
+      {
+        "entity": "leave_request",
+        "name": "notify_employee",
+        "label": "Notify Employee",
+        "kind": "notify",
+        "config": {}
+      }
+    ],
+    "automations": [
+      {
+        "entity": "leave_request",
+        "trigger": "transition",
+        "action": "webhook",
+        "target_url": "https://example.test/hr-approved",
+        "active": true,
+        "condition": "{status} == \"approved\"",
+        "schedule": "",
+        "max_attempts": 3
+      }
+    ],
+    "dashboards": [
+      {
+        "name": "HR Overview",
+        "description": "Headcount, leave requests, and payroll.",
+        "layout": [
+          {
+            "id": "headcount",
+            "kind": "kpi",
+            "title": "Employees",
+            "entity_id": "employee",
+            "config": { "aggregates": [{ "field": "code", "op": "count", "alias": "total" }] },
+            "x": 0,
+            "y": 0,
+            "w": 3,
+            "h": 2
+          },
+          {
+            "id": "payroll",
+            "kind": "kpi",
+            "title": "Payroll total",
+            "entity_id": "payroll_run",
+            "config": { "aggregates": [{ "field": "total_amount", "op": "sum", "alias": "total" }] },
+            "x": 3,
+            "y": 0,
+            "w": 3,
+            "h": 2
+          }
+        ],
+        "filters": {},
+        "roles": [],
+        "users": []
+      }
+    ]
+  }
+}

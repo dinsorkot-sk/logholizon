@@ -1,5 +1,5 @@
 <script setup lang="ts">
-await navigateTo('/dashboard')
+await navigateTo('/apps')
 </script>
 
 <template />

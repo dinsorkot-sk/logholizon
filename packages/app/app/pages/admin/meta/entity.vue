@@ -1,22 +1,29 @@
 <script setup lang="ts">
 definePageMeta({ middleware: 'auth' })
 
-import { h, resolveComponent } from 'vue'
+import { h, nextTick, resolveComponent } from 'vue'
 import type { TableColumn } from '@nuxt/ui'
 
 const UButton = resolveComponent('UButton')
 const UBadge = resolveComponent('UBadge')
 
-type Entity = { id: string; name: string; label: string }
+type Entity = { id: string; name: string; label: string; module?: string | null }
 type FieldOption = { id: string; value: string; label: string }
-type Field = { id: string; name: string; type: string; required: boolean; is_status: boolean; position: number; options: FieldOption[] }
+type Field = { id: string; name: string; label: string; description: string; type: string; required: boolean; is_status: boolean; position: number; ref_entity?: string | null; computed_expr?: string | null; is_unique: boolean; min_value?: number | null; max_value?: number | null; pattern?: string | null; min_length?: number | null; max_length?: number | null; default_value?: string | null; auto_number_prefix?: string | null; auto_number_width?: number | null; readonly: boolean; hidden: boolean; searchable: boolean; sortable: boolean; filterable: boolean; indexed: boolean; precision?: number | null; help_text: string; options: FieldOption[] }
 type EntityDetail = Entity & { fields: Field[] }
+
+ type Relation = { id: string; source_entity_id: string; source_field_id?: string | null; target_entity_id: string; target_field_id?: string | null; name: string; relation_type: string; on_delete: string }
 type WorkflowState = { id: string; name: string; label: string; position: number }
 type WorkflowTransition = { id: string; action: string; from_state: string; to_state: string }
 type WorkflowDefinition = { states: WorkflowState[]; transitions: WorkflowTransition[] }
 type EntityPermission = { role: string; can_view: boolean; can_edit: boolean }
 type FieldPermission = { field_id: string; role: string; can_view: boolean; can_edit: boolean }
 type EntityView = { id: string; entity_id: string; name: string; config: Record<string, unknown>; created_at: string }
+type FormLayoutSection = { id: string; label: string; fields: string[] }
+type FormLayout = { entity_id: string; config: { sections?: FormLayoutSection[] } }
+type NotificationRule = { id: string; entity_id: string; trigger: string; target_url: string; active: boolean; created_at: string }
+type ModuleAction = { id: string; entity_id: string; name: string; label: string; kind: string; config: Record<string, unknown>; active: boolean }
+type Automation = { id: string; entity_id: string; trigger: string; action: string; target_url: string; active: boolean; created_at: string }
 
 const toast = useToast()
 const { data: entities, status, refresh } = await useFetch<Entity[]>('/api/meta/entities')
@@ -33,6 +40,14 @@ const fieldPermissionsUrl = computed(() => selectedId.value ? `/api/meta/entitie
 const { data: fieldPermissions, status: fieldPermissionsStatus, error: fieldPermissionsError, refresh: refreshFieldPermissions } = await useFetch<FieldPermission[]>(fieldPermissionsUrl, { immediate: false })
 const viewsUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/views` : '')
 const { data: views, status: viewsStatus, error: viewsError, refresh: refreshViews } = await useFetch<EntityView[]>(viewsUrl, { immediate: false })
+const formLayoutUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/form-layout` : '')
+const { data: formLayout, status: formLayoutStatus, error: formLayoutError, refresh: refreshFormLayout } = await useFetch<FormLayout>(formLayoutUrl, { immediate: false })
+const notifyRulesUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/notification-rules` : '')
+const { data: notifyRules, status: notifyRulesStatus, error: notifyRulesError, refresh: refreshNotifyRules } = await useFetch<NotificationRule[]>(notifyRulesUrl, { immediate: false })
+const actionsUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/actions` : '')
+const { data: moduleActions, status: moduleActionsStatus, error: moduleActionsError, refresh: refreshModuleActions } = await useFetch<ModuleAction[]>(actionsUrl, { immediate: false })
+const automationsUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/automations` : '')
+const { data: automations, status: automationsStatus, error: automationsError, refresh: refreshAutomations } = await useFetch<Automation[]>(automationsUrl, { immediate: false })
 
 const filteredEntities = computed(() => {
   const q = search.value.trim().toLowerCase()
@@ -46,14 +61,23 @@ const tabItems = [
   { label: 'Fields', icon: 'i-lucide-table', slot: 'fields' },
   { label: 'Workflow', icon: 'i-lucide-git-branch', slot: 'workflow' },
   { label: 'Permissions', icon: 'i-lucide-shield', slot: 'permissions' },
-  { label: 'Views', icon: 'i-lucide-eye', slot: 'views' }
+  { label: 'Views', icon: 'i-lucide-eye', slot: 'views' },
+  { label: 'Form Layout', icon: 'i-lucide-layout-dashboard', slot: 'form-layout' },
+  { label: 'Notifications', icon: 'i-lucide-bell', slot: 'notifications' },
+  { label: 'Actions', icon: 'i-lucide-zap', slot: 'actions' },
+  { label: 'Automations', icon: 'i-lucide-workflow', slot: 'automations' }
 ]
 
 const typeItems = [
   { label: 'Text', value: 'text', icon: 'i-lucide-type' },
   { label: 'Number', value: 'number', icon: 'i-lucide-hash' },
   { label: 'Date', value: 'date', icon: 'i-lucide-calendar' },
-  { label: 'Select', value: 'select', icon: 'i-lucide-chevrons-up-down' }
+  { label: 'Select', value: 'select', icon: 'i-lucide-chevrons-up-down' },
+  { label: 'Checkbox', value: 'checkbox', icon: 'i-lucide-square-check' },
+  { label: 'Textarea', value: 'textarea', icon: 'i-lucide-align-left' },
+  { label: 'Currency', value: 'currency', icon: 'i-lucide-dollar-sign' },
+  { label: 'Reference', value: 'reference', icon: 'i-lucide-link' },
+  { label: 'Computed', value: 'computed', icon: 'i-lucide-function-square' }
 ]
 
 function typeBadgeColor(type: string) {
@@ -61,17 +85,28 @@ function typeBadgeColor(type: string) {
     case 'text': return 'info'
     case 'select': return 'primary'
     case 'number': return 'warning'
+    case 'checkbox': return 'success'
+    case 'currency': return 'success'
+    case 'reference': return 'info'
+    case 'computed': return 'neutral'
     default: return 'neutral'
   }
 }
 
-function selectEntity(id: string) {
+async function selectEntity(id: string) {
   selectedId.value = id
+  await nextTick()
+  await refreshRelations()
   refreshDetail()
   refreshWorkflow()
   refreshPermissions()
   refreshFieldPermissions()
   refreshViews()
+  refreshFormLayout()
+  resetLayoutEditor()
+  refreshNotifyRules()
+  refreshModuleActions()
+  refreshAutomations()
 }
 
 // --- Permissions ---
@@ -172,6 +207,417 @@ async function saveView() {
   }
 }
 
+// --- Form Layout ---
+const layoutSections = ref<FormLayoutSection[]>([])
+const layoutDirty = ref(false)
+const savingLayout = ref(false)
+const layoutError = ref('')
+const sectionForm = reactive({ label: '' })
+const sectionOpen = ref(false)
+
+function layoutFieldIds(sections: FormLayoutSection[]) {
+  return new Set(sections.flatMap(s => s.fields))
+}
+
+function resetLayoutEditor() {
+  const sections = formLayout.value?.config?.sections
+  layoutSections.value = Array.isArray(sections)
+    ? sections.map(s => ({ id: String(s.id), label: String(s.label || s.id), fields: [...(s.fields || [])] }))
+    : []
+  layoutDirty.value = false
+  layoutError.value = ''
+}
+
+watch(formLayout, () => {
+  if (!layoutDirty.value) resetLayoutEditor()
+})
+
+const unassignedFields = computed(() => {
+  const assigned = layoutFieldIds(layoutSections.value)
+  return (detail.value?.fields || []).filter(f => !f.is_status && !assigned.has(f.id))
+})
+
+const layoutPreview = computed(() => {
+  const byId = new Map((detail.value?.fields || []).map(f => [f.id, f]))
+  const sections = layoutSections.value
+    .map(s => ({ id: s.id, label: s.label, fields: s.fields.map(id => byId.get(id)).filter(Boolean) as Field[] }))
+    .filter(s => s.fields.length > 0)
+  const assigned = new Set(sections.flatMap(s => s.fields.map(f => f.id)))
+  const other = (detail.value?.fields || []).filter(f => !f.is_status && !assigned.has(f.id))
+  if (other.length) sections.push({ id: 'other', label: 'Other', fields: other })
+  return sections
+})
+
+function markLayoutDirty() {
+  layoutDirty.value = true
+}
+
+function openAddSection() {
+  sectionForm.label = ''
+  layoutError.value = ''
+  sectionOpen.value = true
+}
+
+function saveSection() {
+  layoutError.value = ''
+  const label = sectionForm.label.trim()
+  if (!label) {
+    layoutError.value = 'section label is required'
+    return
+  }
+  const id = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || `section_${layoutSections.value.length + 1}`
+  if (layoutSections.value.some(s => s.id === id)) {
+    layoutError.value = `section already exists: ${id}`
+    return
+  }
+  layoutSections.value.push({ id, label, fields: [] })
+  sectionOpen.value = false
+  markLayoutDirty()
+}
+
+function removeSection(index: number) {
+  layoutSections.value.splice(index, 1)
+  markLayoutDirty()
+}
+
+function moveSection(index: number, dir: -1 | 1) {
+  const next = index + dir
+  if (next < 0 || next >= layoutSections.value.length) return
+  const [section] = layoutSections.value.splice(index, 1)
+  if (!section) return
+  layoutSections.value.splice(next, 0, section)
+  markLayoutDirty()
+}
+
+function moveField(sectionIndex: number, fieldIndex: number, dir: -1 | 1) {
+  const fields = layoutSections.value[sectionIndex]?.fields
+  if (!fields) return
+  const next = fieldIndex + dir
+  if (next < 0 || next >= fields.length) return
+  const [field] = fields.splice(fieldIndex, 1)
+  if (field === undefined) return
+  fields.splice(next, 0, field)
+  markLayoutDirty()
+}
+
+function moveFieldToSection(fromSection: number, fieldIndex: number, toSection: number) {
+  if (toSection < 0 || toSection >= layoutSections.value.length || fromSection === toSection) return
+  const from = layoutSections.value[fromSection]?.fields
+  const to = layoutSections.value[toSection]?.fields
+  if (!from || !to) return
+  const [field] = from.splice(fieldIndex, 1)
+  if (field === undefined) return
+  to.push(field)
+  markLayoutDirty()
+}
+
+function removeFieldFromLayout(sectionIndex: number, fieldIndex: number) {
+  layoutSections.value[sectionIndex]?.fields.splice(fieldIndex, 1)
+  markLayoutDirty()
+}
+
+function addFieldToSection(sectionIndex: number, fieldId: string) {
+  if (!fieldId || layoutFieldIds(layoutSections.value).has(fieldId)) return
+  layoutSections.value[sectionIndex]?.fields.push(fieldId)
+  markLayoutDirty()
+}
+
+function fieldName(fieldId: string) {
+  return (detail.value?.fields || []).find(f => f.id === fieldId)?.name || fieldId
+}
+
+async function saveLayout() {
+  if (!selectedId.value) return
+  layoutError.value = ''
+  savingLayout.value = true
+  try {
+    await $fetch(`/api/meta/entities/${encodeURIComponent(selectedId.value)}/form-layout`, {
+      method: 'PUT',
+      body: { config: { sections: layoutSections.value } }
+    })
+    layoutDirty.value = false
+    await refreshFormLayout()
+    toast.add({ title: 'Form layout saved', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    layoutError.value = e?.data?.message || e?.statusMessage || 'Failed to save layout'
+  } finally {
+    savingLayout.value = false
+  }
+}
+
+// --- Notifications ---
+const ruleOpen = ref(false)
+const ruleForm = reactive({ target_url: '', active: true })
+const ruleError = ref('')
+const savingRule = ref(false)
+const deleteRuleOpen = ref(false)
+const ruleToDelete = ref<NotificationRule | null>(null)
+const deletingRule = ref(false)
+const togglingRuleId = ref('')
+
+function openAddRule() {
+  ruleForm.target_url = ''
+  ruleForm.active = true
+  ruleError.value = ''
+  ruleOpen.value = true
+}
+
+async function saveRule() {
+  if (!selectedId.value) return
+  ruleError.value = ''
+  if (!ruleForm.target_url.trim()) {
+    ruleError.value = 'target_url is required'
+    return
+  }
+  savingRule.value = true
+  try {
+    await $fetch(`/api/meta/entities/${encodeURIComponent(selectedId.value)}/notification-rules`, {
+      method: 'POST',
+      body: { trigger: 'transition', target_url: ruleForm.target_url, active: ruleForm.active }
+    })
+    ruleOpen.value = false
+    await refreshNotifyRules()
+    toast.add({ title: 'Notification rule created', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    ruleError.value = e?.data?.message || e?.statusMessage || 'Failed to create rule'
+  } finally {
+    savingRule.value = false
+  }
+}
+
+async function toggleRule(rule: NotificationRule) {
+  togglingRuleId.value = rule.id
+  try {
+    await $fetch(`/api/meta/notification-rules/${encodeURIComponent(rule.id)}`, {
+      method: 'PUT',
+      body: { active: !rule.active }
+    })
+    await refreshNotifyRules()
+    toast.add({ title: rule.active ? 'Rule disabled' : 'Rule enabled', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    toast.add({
+      title: 'Unable to update rule',
+      description: e?.data?.message || e?.statusMessage || 'Update failed',
+      color: 'error',
+      icon: 'i-lucide-alert-circle'
+    })
+  } finally {
+    togglingRuleId.value = ''
+  }
+}
+
+function confirmDeleteRule(rule: NotificationRule) {
+  ruleToDelete.value = rule
+  deleteRuleOpen.value = true
+}
+
+// --- Module actions ---
+const actionOpen = ref(false)
+const actionForm = reactive({ name: '', label: '', kind: 'webhook', config: '{}' })
+const actionError = ref('')
+const savingAction = ref(false)
+const deleteActionOpen = ref(false)
+const actionToDelete = ref<ModuleAction | null>(null)
+const deletingAction = ref(false)
+
+const actionKindItems = [
+  { label: 'Create record', value: 'create' },
+  { label: 'Update record', value: 'update' },
+  { label: 'Delete record', value: 'delete' },
+  { label: 'Change status', value: 'change_status' },
+  { label: 'Notify', value: 'notify' },
+  { label: 'Webhook', value: 'webhook' },
+  { label: 'Formula', value: 'formula' },
+  { label: 'Generate', value: 'generate' }
+]
+
+function openAddAction() {
+  actionForm.name = ''
+  actionForm.label = ''
+  actionForm.kind = 'webhook'
+  actionForm.config = '{}'
+  actionError.value = ''
+  actionOpen.value = true
+}
+
+async function saveAction() {
+  if (!selectedId.value) return
+  actionError.value = ''
+  if (!actionForm.name.trim() || !actionForm.label.trim()) {
+    actionError.value = 'name and label are required'
+    return
+  }
+  let config: Record<string, unknown> = {}
+  try {
+    config = actionForm.config.trim() ? JSON.parse(actionForm.config) : {}
+  } catch {
+    actionError.value = 'config must be valid JSON'
+    return
+  }
+  savingAction.value = true
+  try {
+    await $fetch(`/api/meta/entities/${encodeURIComponent(selectedId.value)}/actions`, {
+      method: 'POST',
+      body: { name: actionForm.name.trim(), label: actionForm.label.trim(), kind: actionForm.kind, config }
+    })
+    actionOpen.value = false
+    await refreshModuleActions()
+    toast.add({ title: 'Action created', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    actionError.value = e?.data?.message || e?.statusMessage || 'Failed to create action'
+  } finally {
+    savingAction.value = false
+  }
+}
+
+function confirmDeleteAction(action: ModuleAction) {
+  actionToDelete.value = action
+  deleteActionOpen.value = true
+}
+
+async function removeAction() {
+  if (!actionToDelete.value) return
+  deletingAction.value = true
+  try {
+    await $fetch(`/api/meta/actions/${encodeURIComponent(actionToDelete.value.id)}`, { method: 'DELETE' })
+    deleteActionOpen.value = false
+    actionToDelete.value = null
+    await refreshModuleActions()
+    toast.add({ title: 'Action deleted', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    toast.add({
+      title: 'Unable to delete action',
+      description: e?.data?.message || e?.statusMessage || 'Delete failed',
+      color: 'error',
+      icon: 'i-lucide-alert-circle'
+    })
+  } finally {
+    deletingAction.value = false
+  }
+}
+
+// --- Automations ---
+const automationOpen = ref(false)
+const automationForm = reactive({ trigger: 'create', action: 'webhook', target_url: '', active: true })
+const automationError = ref('')
+const savingAutomation = ref(false)
+const deleteAutomationOpen = ref(false)
+const automationToDelete = ref<Automation | null>(null)
+const deletingAutomation = ref(false)
+const togglingAutomationId = ref('')
+
+const automationTriggerItems = [
+  { label: 'On create', value: 'create' },
+  { label: 'On update', value: 'update' },
+  { label: 'On delete', value: 'delete' },
+  { label: 'On transition', value: 'transition' }
+]
+
+const automationActionItems = [
+  { label: 'Webhook', value: 'webhook' },
+  { label: 'Notify', value: 'notify' }
+]
+
+function openAddAutomation() {
+  automationForm.trigger = 'create'
+  automationForm.action = 'webhook'
+  automationForm.target_url = ''
+  automationForm.active = true
+  automationError.value = ''
+  automationOpen.value = true
+}
+
+async function saveAutomation() {
+  if (!selectedId.value) return
+  automationError.value = ''
+  if (!automationForm.target_url.trim()) {
+    automationError.value = 'target_url is required'
+    return
+  }
+  savingAutomation.value = true
+  try {
+    await $fetch(`/api/meta/entities/${encodeURIComponent(selectedId.value)}/automations`, {
+      method: 'POST',
+      body: { trigger: automationForm.trigger, action: automationForm.action, target_url: automationForm.target_url.trim(), active: automationForm.active }
+    })
+    automationOpen.value = false
+    await refreshAutomations()
+    toast.add({ title: 'Automation created', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    automationError.value = e?.data?.message || e?.statusMessage || 'Failed to create automation'
+  } finally {
+    savingAutomation.value = false
+  }
+}
+
+async function toggleAutomation(automation: Automation) {
+  togglingAutomationId.value = automation.id
+  try {
+    await $fetch(`/api/meta/automations/${encodeURIComponent(automation.id)}`, {
+      method: 'PUT',
+      body: { active: !automation.active }
+    })
+    await refreshAutomations()
+    toast.add({ title: automation.active ? 'Automation disabled' : 'Automation enabled', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    toast.add({
+      title: 'Unable to update automation',
+      description: e?.data?.message || e?.statusMessage || 'Update failed',
+      color: 'error',
+      icon: 'i-lucide-alert-circle'
+    })
+  } finally {
+    togglingAutomationId.value = ''
+  }
+}
+
+function confirmDeleteAutomation(automation: Automation) {
+  automationToDelete.value = automation
+  deleteAutomationOpen.value = true
+}
+
+async function removeAutomation() {
+  if (!automationToDelete.value) return
+  deletingAutomation.value = true
+  try {
+    await $fetch(`/api/meta/automations/${encodeURIComponent(automationToDelete.value.id)}`, { method: 'DELETE' })
+    deleteAutomationOpen.value = false
+    automationToDelete.value = null
+    await refreshAutomations()
+    toast.add({ title: 'Automation deleted', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    toast.add({
+      title: 'Unable to delete automation',
+      description: e?.data?.message || e?.statusMessage || 'Delete failed',
+      color: 'error',
+      icon: 'i-lucide-alert-circle'
+    })
+  } finally {
+    deletingAutomation.value = false
+  }
+}
+
+async function removeRule() {
+  if (!ruleToDelete.value) return
+  deletingRule.value = true
+  try {
+    await $fetch(`/api/meta/notification-rules/${encodeURIComponent(ruleToDelete.value.id)}`, { method: 'DELETE' })
+    deleteRuleOpen.value = false
+    ruleToDelete.value = null
+    await refreshNotifyRules()
+    toast.add({ title: 'Rule deleted', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    toast.add({
+      title: 'Unable to delete rule',
+      description: e?.data?.message || e?.statusMessage || 'Delete failed',
+      color: 'error',
+      icon: 'i-lucide-alert-circle'
+    })
+  } finally {
+    deletingRule.value = false
+  }
+}
+
 function confirmDeleteView(view: EntityView) {
   viewToDelete.value = view
   deleteViewOpen.value = true
@@ -232,7 +678,7 @@ async function createEntity() {
 
 // --- Edit entity ---
 const editOpen = ref(false)
-const editForm = reactive({ name: '', label: '' })
+const editForm = reactive({ name: '', label: '', module: '', description: '', settingsText: '{}' })
 const editing = ref(false)
 const editError = ref('')
 
@@ -240,6 +686,7 @@ function openEditEntity() {
   if (!detail.value) return
   editForm.name = detail.value.name
   editForm.label = detail.value.label
+  editForm.module = detail.value.module || ''
   editError.value = ''
   editOpen.value = true
 }
@@ -255,7 +702,7 @@ async function saveEntity() {
   try {
     await $fetch(`/api/meta/entities/${encodeURIComponent(detail.value.id)}`, {
       method: 'PUT',
-      body: { ...editForm }
+      body: { name: editForm.name, label: editForm.label, module: editForm.module || null, description: editForm.description || null, settings: JSON.parse(editForm.settingsText || '{}') }
     })
     editOpen.value = false
     await refresh()
@@ -294,9 +741,28 @@ async function removeEntity() {
 }
 
 // --- Field editor ---
+const relationUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/relations` : '')
+const { data: relations, refresh: refreshRelations } = await useFetch<Relation[]>(relationUrl, { immediate: false })
+const relationForm = reactive({ name: '', target_entity_id: '', source_field_id: '', relation_type: 'many_to_one', on_delete: 'restrict' })
+const relationSaving = ref(false)
+async function saveRelation() {
+  if (!selectedId.value || !relationForm.name.trim() || !relationForm.target_entity_id) return
+  relationSaving.value = true
+  try {
+    await $fetch(relationUrl.value, { method: 'POST', body: { ...relationForm, source_field_id: relationForm.source_field_id || null } })
+    relationForm.name = ''; relationForm.source_field_id = ''
+    await refreshRelations()
+    toast.add({ title: 'Relation created', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) { toast.add({ title: 'Unable to create relation', description: e?.data?.message || 'Create failed', color: 'error' }) }
+  finally { relationSaving.value = false }
+}
+async function removeRelation(id: string) {
+  try { await $fetch(`/api/meta/relations/${encodeURIComponent(id)}`, { method: 'DELETE' }); await refreshRelations(); toast.add({ title: 'Relation deleted', color: 'success' }) }
+  catch (e: any) { toast.add({ title: 'Unable to delete relation', description: e?.data?.message || 'Delete failed', color: 'error' }) }
+}
 const fieldOpen = ref(false)
 const editingField = ref<Field | null>(null)
-const fieldForm = reactive({ name: '', type: 'text', required: false, is_status: false })
+const fieldForm = reactive({ name: '', label: '', description: '', type: 'text', required: false, is_status: false, ref_entity: '', computed_expr: '', is_unique: false, min_value: null as number | null, max_value: null as number | null, pattern: '', min_length: null as number | null, max_length: null as number | null, default_value: '', auto_number_prefix: '', auto_number_width: null as number | null, readonly: false, hidden: false, searchable: false, sortable: false, filterable: false, indexed: false, precision: null as number | null, help_text: '' })
 const fieldError = ref('')
 const savingField = ref(false)
 const newOption = reactive({ value: '', label: '' })
@@ -313,6 +779,8 @@ function openAddField() {
   fieldForm.type = 'text'
   fieldForm.required = false
   fieldForm.is_status = false
+  fieldForm.ref_entity = ''
+  fieldForm.computed_expr = ''
   fieldError.value = ''
   optionError.value = ''
   newOption.value = ''
@@ -326,6 +794,8 @@ function openEditField(field: Field) {
   fieldForm.type = field.type
   fieldForm.required = field.required
   fieldForm.is_status = field.is_status
+  fieldForm.ref_entity = field.ref_entity || ''
+  fieldForm.computed_expr = field.computed_expr || ''
   fieldError.value = ''
   optionError.value = ''
   newOption.value = ''
@@ -349,7 +819,7 @@ async function saveField() {
     if (editingField.value) {
       await $fetch(`/api/meta/fields/${encodeURIComponent(editingField.value.id)}`, {
         method: 'PUT',
-        body: { name: fieldForm.name, type: fieldForm.type, required: fieldForm.required, is_status: fieldForm.is_status }
+        body: { name: fieldForm.name, label: fieldForm.label || null, description: fieldForm.description || null, type: fieldForm.type, required: fieldForm.required, is_status: fieldForm.is_status, ref_entity: fieldForm.ref_entity || null, computed_expr: fieldForm.computed_expr || null, is_unique: fieldForm.is_unique, min_value: fieldForm.min_value, max_value: fieldForm.max_value, pattern: fieldForm.pattern || null, min_length: fieldForm.min_length, max_length: fieldForm.max_length, default_value: fieldForm.default_value || null, auto_number_prefix: fieldForm.auto_number_prefix || null, auto_number_width: fieldForm.auto_number_width, readonly: fieldForm.readonly, hidden: fieldForm.hidden, searchable: fieldForm.searchable, sortable: fieldForm.sortable, filterable: fieldForm.filterable, indexed: fieldForm.indexed, precision: fieldForm.precision, help_text: fieldForm.help_text || null }
       })
       fieldOpen.value = false
       await refreshDetail()
@@ -357,7 +827,7 @@ async function saveField() {
     } else {
       const created = await $fetch<Field>(`/api/meta/entities/${encodeURIComponent(detail.value.id)}/fields`, {
         method: 'POST',
-        body: { name: fieldForm.name, type: fieldForm.type, required: fieldForm.required, is_status: fieldForm.is_status }
+        body: { name: fieldForm.name, type: fieldForm.type, required: fieldForm.required, is_status: fieldForm.is_status, ref_entity: fieldForm.ref_entity || null, computed_expr: fieldForm.computed_expr || null }
       })
       await refreshDetail()
       if (created.type === 'select') {
@@ -696,7 +1166,7 @@ const fieldColumns: TableColumn<Field>[] = [
       </UDashboardNavbar>
     </template>
     <template #body>
-      <div class="grid h-full grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
+      <div class="lg:grid h-full lg:grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
         <!-- Left: entity list -->
         <UCard class="h-fit lg:h-full">
           <UInput v-model="search" icon="i-lucide-search" placeholder="Search entities…" class="mb-3 w-full" />
@@ -760,7 +1230,25 @@ const fieldColumns: TableColumn<Field>[] = [
           </div>
 
           <UTabs :items="tabItems" class="w-full">
-            <template #fields>
+                        <template #relations>
+              <div class="space-y-4 py-3">
+                <div class="grid gap-3 md:grid-cols-2">
+                  <UInput v-model="relationForm.name" placeholder="Relation name (e.g. driver)" />
+                  <USelectMenu v-model="relationForm.target_entity_id" :items="(entities || []).filter(e => e.id !== detail?.id).map(e => ({ label: e.label, value: e.id }))" value-key="value" placeholder="Target entity" />
+                  <USelectMenu v-model="relationForm.source_field_id" :items="(detail?.fields || []).map(f => ({ label: `${f.label} (${f.name})`, value: f.id })).filter(f => (detail?.fields || []).find(x => x.id === f.value)?.type === 'reference')" value-key="value" placeholder="Source reference field" />
+                  <USelectMenu v-model="relationForm.relation_type" :items="['one_to_one','one_to_many','many_to_one','many_to_many']" placeholder="Relation type" />
+                  <USelectMenu v-model="relationForm.on_delete" :items="['restrict','set_null','cascade']" placeholder="Delete rule" />
+                </div>
+                <UButton icon="i-lucide-plus" :loading="relationSaving" @click="saveRelation">Add relation</UButton>
+                <div v-if="relations?.length" class="divide-y rounded border">
+                  <div v-for="r in relations" :key="r.id" class="flex items-center justify-between gap-3 p-3 text-sm">
+                    <div><span class="font-medium">{{ r.name }}</span><span class="ml-2 text-muted">{{ r.relation_type }} → {{ r.target_entity_id }}</span><span class="ml-2 text-xs text-muted">{{ r.on_delete }}</span></div>
+                    <UButton size="xs" variant="ghost" color="error" icon="i-lucide-trash" @click="removeRelation(r.id)" />
+                  </div>
+                </div>
+                <p v-else class="text-sm text-muted">No relations defined.</p>
+              </div>
+            </template><template #fields>
               <div class="flex items-center justify-between py-3">
                 <p class="text-sm text-muted">{{ detail.fields.length }} fields</p>
                 <UButton size="sm" icon="i-lucide-plus" @click="openAddField">Add field</UButton>
@@ -911,6 +1399,213 @@ const fieldColumns: TableColumn<Field>[] = [
                 </div>
               </div>
             </template>
+            <template #form-layout>
+              <div v-if="formLayoutStatus === 'pending'" class="py-6">
+                <USkeleton v-for="index in 2" :key="index" class="mb-3 h-8 w-full" />
+              </div>
+              <UAlert
+                v-else-if="formLayoutStatus === 'error'"
+                color="error"
+                title="Cannot load form layout"
+                :description="formLayoutError?.message || 'Check the Rust core connection.'"
+              >
+                <template #actions>
+                  <UButton size="sm" variant="outline" @click="refreshFormLayout()">Retry</UButton>
+                </template>
+              </UAlert>
+              <div v-else class="space-y-4 py-3">
+                <div class="flex items-center justify-between">
+                  <p class="text-sm text-muted">{{ layoutSections.length }} sections · {{ unassignedFields.length }} unassigned fields</p>
+                  <div class="flex gap-2">
+                    <UButton size="sm" variant="outline" icon="i-lucide-plus" @click="openAddSection">Add section</UButton>
+                    <UButton size="sm" :loading="savingLayout" :disabled="!layoutDirty" @click="saveLayout">Save layout</UButton>
+                  </div>
+                </div>
+                <UAlert v-if="layoutError" color="error" :title="layoutError" />
+                <UBadge v-if="layoutDirty" color="warning" variant="subtle">Unsaved changes</UBadge>
+                <div v-if="!layoutSections.length" class="py-8 text-center text-sm text-muted">
+                  No sections yet. Add a section, then assign fields to it. Unassigned fields render under “Other”.
+                </div>
+                <UCard v-for="(section, sectionIndex) in layoutSections" :key="section.id">
+                  <template #header>
+                    <div class="flex items-center justify-between">
+                      <p class="text-sm font-semibold">{{ section.label }} <span class="font-mono text-xs text-muted">{{ section.id }}</span></p>
+                      <div class="flex gap-1">
+                        <UButton size="xs" variant="ghost" icon="i-lucide-arrow-up" :disabled="sectionIndex === 0" @click="moveSection(sectionIndex, -1)" />
+                        <UButton size="xs" variant="ghost" icon="i-lucide-arrow-down" :disabled="sectionIndex === layoutSections.length - 1" @click="moveSection(sectionIndex, 1)" />
+                        <UButton size="xs" variant="ghost" color="error" @click="removeSection(sectionIndex)">Remove</UButton>
+                      </div>
+                    </div>
+                  </template>
+                  <div v-if="!section.fields.length" class="py-2 text-sm text-muted">No fields in this section yet.</div>
+                  <div v-else class="space-y-1">
+                    <div v-for="(fieldId, fieldIndex) in section.fields" :key="fieldId" class="flex items-center justify-between gap-2 rounded border border-default px-3 py-1.5">
+                      <span class="font-mono text-sm">{{ fieldName(fieldId) }}</span>
+                      <div class="flex gap-1">
+                        <UButton size="xs" variant="ghost" icon="i-lucide-arrow-up" :disabled="fieldIndex === 0" @click="moveField(sectionIndex, fieldIndex, -1)" />
+                        <UButton size="xs" variant="ghost" icon="i-lucide-arrow-down" :disabled="fieldIndex === section.fields.length - 1" @click="moveField(sectionIndex, fieldIndex, 1)" />
+                        <USelectMenu
+                          :model-value="String(sectionIndex)"
+                          :items="layoutSections.map((s, i) => ({ label: s.label, value: String(i) }))"
+                          value-key="value"
+                          size="xs"
+                          class="w-28"
+                          aria-label="Move field to section"
+                          @update:model-value="(value: string) => moveFieldToSection(sectionIndex, fieldIndex, Number(value))"
+                        />
+                        <UButton size="xs" variant="ghost" color="error" @click="removeFieldFromLayout(sectionIndex, fieldIndex)">Remove</UButton>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="mt-2 flex items-center gap-2">
+                    <USelectMenu
+                      :model-value="''"
+                      :items="unassignedFields.map(f => ({ label: f.name, value: f.id }))"
+                      value-key="value"
+                      placeholder="Add field…"
+                      size="xs"
+                      class="w-48"
+                      @update:model-value="(value: string) => addFieldToSection(sectionIndex, value)"
+                    />
+                  </div>
+                </UCard>
+                <UCard>
+                  <template #header>
+                    <p class="text-sm font-semibold">Preview</p>
+                  </template>
+                  <div v-if="!layoutPreview.length" class="py-2 text-sm text-muted">Nothing to preview yet.</div>
+                  <div v-else class="space-y-4">
+                    <div v-for="section in layoutPreview" :key="section.id">
+                      <p class="mb-1 text-xs font-semibold uppercase text-muted">{{ section.label }}</p>
+                      <div class="space-y-2 rounded-lg border border-default p-3">
+                        <div v-for="field in section.fields" :key="field.id" class="flex items-center justify-between gap-2 text-sm">
+                          <span class="font-mono">{{ field.name }}</span>
+                          <span class="text-xs text-muted">{{ field.type }}{{ field.required ? ' · required' : '' }}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </UCard>
+              </div>
+            </template>
+            <template #notifications>
+              <div v-if="notifyRulesStatus === 'pending'" class="py-6">
+                <USkeleton v-for="index in 2" :key="index" class="mb-3 h-8 w-full" />
+              </div>
+              <UAlert
+                v-else-if="notifyRulesStatus === 'error'"
+                color="error"
+                title="Cannot load notification rules"
+                :description="notifyRulesError?.message || 'Check the Rust core connection.'"
+              >
+                <template #actions>
+                  <UButton size="sm" variant="outline" @click="refreshNotifyRules()">Retry</UButton>
+                </template>
+              </UAlert>
+              <div v-else class="py-3">
+                <div class="flex items-center justify-between pb-2">
+                  <p class="text-sm text-muted">{{ (notifyRules || []).length }} rules · fires on workflow transition</p>
+                  <UButton size="sm" icon="i-lucide-plus" @click="openAddRule">Add rule</UButton>
+                </div>
+                <div v-if="!(notifyRules || []).length" class="py-8 text-center text-sm text-muted">
+                  No rules yet. Add a webhook URL to notify on every transition.
+                </div>
+                <div v-else class="space-y-2">
+                  <div v-for="rule in notifyRules || []" :key="rule.id" class="flex items-center justify-between gap-4 rounded-lg border border-default px-4 py-3">
+                    <div class="min-w-0">
+                      <p class="truncate font-mono text-sm font-medium">{{ rule.target_url }}</p>
+                      <p class="text-xs text-muted">{{ rule.trigger }} · {{ rule.active ? 'active' : 'disabled' }}</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <USwitch
+                        :model-value="rule.active"
+                        :disabled="togglingRuleId === rule.id"
+                        aria-label="Toggle rule active"
+                        @update:model-value="toggleRule(rule)"
+                      />
+                      <UButton size="xs" variant="ghost" color="error" @click="confirmDeleteRule(rule)">Delete</UButton>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+            <template #actions>
+              <div v-if="moduleActionsStatus === 'pending'" class="py-6">
+                <USkeleton v-for="index in 2" :key="index" class="mb-3 h-8 w-full" />
+              </div>
+              <UAlert
+                v-else-if="moduleActionsStatus === 'error'"
+                color="error"
+                title="Cannot load actions"
+                :description="moduleActionsError?.message || 'Check the Rust core connection.'"
+              >
+                <template #actions>
+                  <UButton size="sm" variant="outline" @click="refreshModuleActions()">Retry</UButton>
+                </template>
+              </UAlert>
+              <div v-else class="py-3">
+                <div class="flex items-center justify-between pb-2">
+                  <p class="text-sm text-muted">{{ (moduleActions || []).length }} actions · reusable operations on records</p>
+                  <UButton size="sm" icon="i-lucide-plus" @click="openAddAction">Add action</UButton>
+                </div>
+                <div v-if="!(moduleActions || []).length" class="py-8 text-center text-sm text-muted">
+                  No actions yet. Actions run on records from the runtime page.
+                </div>
+                <div v-else class="space-y-2">
+                  <div v-for="action in moduleActions || []" :key="action.id" class="flex items-center justify-between gap-4 rounded-lg border border-default px-4 py-3">
+                    <div class="min-w-0">
+                      <p class="truncate text-sm font-medium">{{ action.label }} <span class="font-mono text-xs text-muted">{{ action.name }}</span></p>
+                      <p class="text-xs text-muted">{{ action.kind }} · {{ action.active ? 'active' : 'disabled' }}</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <UBadge :color="action.active ? 'success' : 'neutral'" variant="subtle">{{ action.kind }}</UBadge>
+                      <UButton size="xs" variant="ghost" color="error" @click="confirmDeleteAction(action)">Delete</UButton>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+            <template #automations>
+              <div v-if="automationsStatus === 'pending'" class="py-6">
+                <USkeleton v-for="index in 2" :key="index" class="mb-3 h-8 w-full" />
+              </div>
+              <UAlert
+                v-else-if="automationsStatus === 'error'"
+                color="error"
+                title="Cannot load automations"
+                :description="automationsError?.message || 'Check the Rust core connection.'"
+              >
+                <template #actions>
+                  <UButton size="sm" variant="outline" @click="refreshAutomations()">Retry</UButton>
+                </template>
+              </UAlert>
+              <div v-else class="py-3">
+                <div class="flex items-center justify-between pb-2">
+                  <p class="text-sm text-muted">{{ (automations || []).length }} automations · fire on record events</p>
+                  <UButton size="sm" icon="i-lucide-plus" @click="openAddAutomation">Add automation</UButton>
+                </div>
+                <div v-if="!(automations || []).length" class="py-8 text-center text-sm text-muted">
+                  No automations yet. Automations react to create, update, delete, or transition events.
+                </div>
+                <div v-else class="space-y-2">
+                  <div v-for="automation in automations || []" :key="automation.id" class="flex items-center justify-between gap-4 rounded-lg border border-default px-4 py-3">
+                    <div class="min-w-0">
+                      <p class="truncate font-mono text-sm font-medium">{{ automation.target_url }}</p>
+                      <p class="text-xs text-muted">{{ automation.trigger }} → {{ automation.action }} · {{ automation.active ? 'active' : 'disabled' }}</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <USwitch
+                        :model-value="automation.active"
+                        :disabled="togglingAutomationId === automation.id"
+                        aria-label="Toggle automation active"
+                        @update:model-value="toggleAutomation(automation)"
+                      />
+                      <UButton size="xs" variant="ghost" color="error" @click="confirmDeleteAutomation(automation)">Delete</UButton>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
           </UTabs>
         </UCard>
       </div>
@@ -948,6 +1643,11 @@ const fieldColumns: TableColumn<Field>[] = [
             </UFormField>
             <UFormField label="Label">
               <UInput v-model="editForm.label" />
+            </UFormField>
+            <UFormField label="Description"><UTextarea v-model="editForm.description" placeholder="What this entity represents" /></UFormField>
+            <UFormField label="Settings" hint="JSON object for runtime/entity configuration"><UTextarea v-model="editForm.settingsText" :rows="5" class="font-mono text-xs" /></UFormField>
+            <UFormField label="Module" hint="Groups entities in the sidebar, e.g. Stock">
+              <UInput v-model="editForm.module" placeholder="e.g. Stock" />
             </UFormField>
             <UAlert v-if="editError" color="error" :title="editError" />
           </UForm>
@@ -990,6 +1690,34 @@ const fieldColumns: TableColumn<Field>[] = [
             </UFormField>
             <UFormField v-if="fieldForm.type === 'select'" label="Status field" hint="Drives workflow transitions and status badges">
               <USwitch v-model="fieldForm.is_status" />
+            </UFormField>
+            <UFormField v-if="fieldForm.type === 'reference'" label="Target entity" hint="Documents to pick from">
+              <USelectMenu v-model="fieldForm.ref_entity" :items="(entities || []).map(e => ({ label: e.label, value: e.id }))" value-key="value" placeholder="Select entity…" class="w-full" />
+            </UFormField>
+            <UFormField label="Label"><UInput v-model="fieldForm.label" placeholder="Title" /></UFormField>
+            <UFormField label="Description"><UTextarea v-model="fieldForm.description" placeholder="What this field means" /></UFormField>
+            <div class="grid grid-cols-2 gap-3">
+              <UFormField label="Required"><USwitch v-model="fieldForm.required" /></UFormField>
+              <UFormField label="Readonly"><USwitch v-model="fieldForm.readonly" /></UFormField>
+              <UFormField label="Hidden"><USwitch v-model="fieldForm.hidden" /></UFormField>
+              <UFormField label="Searchable"><USwitch v-model="fieldForm.searchable" /></UFormField>
+              <UFormField label="Sortable"><USwitch v-model="fieldForm.sortable" /></UFormField>
+              <UFormField label="Filterable"><USwitch v-model="fieldForm.filterable" /></UFormField>
+              <UFormField label="Indexed"><USwitch v-model="fieldForm.indexed" /></UFormField>
+              <UFormField label="Unique"><USwitch v-model="fieldForm.is_unique" /></UFormField>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <UFormField label="Precision"><UInput v-model.number="fieldForm.precision" type="number" min="0" /></UFormField>
+              <UFormField label="Default"><UInput v-model="fieldForm.default_value" placeholder="Default value" /></UFormField>
+              <UFormField label="Min"><UInput v-model.number="fieldForm.min_value" type="number" /></UFormField>
+              <UFormField label="Max"><UInput v-model.number="fieldForm.max_value" type="number" /></UFormField>
+              <UFormField label="Min length"><UInput v-model.number="fieldForm.min_length" type="number" min="0" /></UFormField>
+              <UFormField label="Max length"><UInput v-model.number="fieldForm.max_length" type="number" min="0" /></UFormField>
+            </div>
+            <UFormField label="Pattern"><UInput v-model="fieldForm.pattern" placeholder="Regular expression" /></UFormField>
+            <UFormField label="Help text"><UTextarea v-model="fieldForm.help_text" placeholder="Shown to users while editing" /></UFormField>
+            <UFormField v-if="fieldForm.type === 'computed'" label="Expression" hint="Template with {field} placeholders, e.g. {title} - {sku}">
+              <UInput v-model="fieldForm.computed_expr" placeholder="{title} - {sku}" />
             </UFormField>
 
             <div v-if="fieldForm.type === 'select'">
@@ -1151,6 +1879,61 @@ const fieldColumns: TableColumn<Field>[] = [
         </template>
       </UModal>
 
+      <!-- Add section modal -->
+      <UModal v-model:open="sectionOpen" title="Add section">
+        <template #body>
+          <UForm class="space-y-4" @submit="saveSection">
+            <UFormField label="Label" hint="e.g. Main details">
+              <UInput v-model="sectionForm.label" placeholder="Main details" />
+            </UFormField>
+            <UAlert v-if="layoutError" color="error" :title="layoutError" />
+          </UForm>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="sectionOpen = false">Cancel</UButton>
+            <UButton @click="saveSection">Add section</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <!-- Add notification rule modal -->
+      <UModal v-model:open="ruleOpen" title="Add notification rule">
+        <template #body>
+          <UForm class="space-y-4" @submit="saveRule">
+            <UFormField label="Webhook URL" hint="https://… — POSTed on every transition">
+              <UInput v-model="ruleForm.target_url" placeholder="https://example.com/hook" />
+            </UFormField>
+            <UFormField label="Active">
+              <USwitch v-model="ruleForm.active" />
+            </UFormField>
+            <UAlert v-if="ruleError" color="error" :title="ruleError" />
+          </UForm>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="ruleOpen = false">Cancel</UButton>
+            <UButton :loading="savingRule" @click="saveRule">Create rule</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <!-- Delete notification rule modal -->
+      <UModal v-model:open="deleteRuleOpen" title="Delete rule">
+        <template #body>
+          <p class="text-sm text-muted">
+            This will permanently delete the webhook rule
+            <span class="font-mono">{{ ruleToDelete?.target_url }}</span>. This action cannot be undone.
+          </p>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="deleteRuleOpen = false">Cancel</UButton>
+            <UButton color="error" :loading="deletingRule" @click="removeRule">Delete</UButton>
+          </div>
+        </template>
+      </UModal>
+
       <!-- Delete view modal -->
       <UModal v-model:open="deleteViewOpen" title="Delete view">
         <template #body>
@@ -1163,6 +1946,92 @@ const fieldColumns: TableColumn<Field>[] = [
           <div class="flex justify-end gap-2">
             <UButton variant="ghost" @click="deleteViewOpen = false">Cancel</UButton>
             <UButton color="error" :loading="deletingView" @click="removeView">Delete</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <!-- Add action modal -->
+      <UModal v-model:open="actionOpen" title="Add action">
+        <template #body>
+          <UForm class="space-y-4" @submit="saveAction">
+            <UFormField label="Name" hint="lowercase, no spaces (e.g. approve)">
+              <UInput v-model="actionForm.name" placeholder="e.g. approve" />
+            </UFormField>
+            <UFormField label="Label">
+              <UInput v-model="actionForm.label" placeholder="e.g. Approve" />
+            </UFormField>
+            <UFormField label="Kind">
+              <USelect v-model="actionForm.kind" :items="actionKindItems" />
+            </UFormField>
+            <UFormField label="Config" hint="JSON object passed to the action">
+              <UTextarea v-model="actionForm.config" :rows="4" placeholder="{}" class="font-mono" />
+            </UFormField>
+            <UAlert v-if="actionError" color="error" :title="actionError" />
+          </UForm>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="actionOpen = false">Cancel</UButton>
+            <UButton :loading="savingAction" @click="saveAction">Create action</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <!-- Delete action modal -->
+      <UModal v-model:open="deleteActionOpen" title="Delete action">
+        <template #body>
+          <p class="text-sm text-muted">
+            This will permanently delete the action
+            <span class="font-mono">{{ actionToDelete?.name }}</span>. This action cannot be undone.
+          </p>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="deleteActionOpen = false">Cancel</UButton>
+            <UButton color="error" :loading="deletingAction" @click="removeAction">Delete</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <!-- Add automation modal -->
+      <UModal v-model:open="automationOpen" title="Add automation">
+        <template #body>
+          <UForm class="space-y-4" @submit="saveAutomation">
+            <UFormField label="Trigger">
+              <USelect v-model="automationForm.trigger" :items="automationTriggerItems" />
+            </UFormField>
+            <UFormField label="Action">
+              <USelect v-model="automationForm.action" :items="automationActionItems" />
+            </UFormField>
+            <UFormField label="Target URL" hint="https://… — called when the trigger fires">
+              <UInput v-model="automationForm.target_url" placeholder="https://example.com/hook" />
+            </UFormField>
+            <UFormField label="Active">
+              <USwitch v-model="automationForm.active" />
+            </UFormField>
+            <UAlert v-if="automationError" color="error" :title="automationError" />
+          </UForm>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="automationOpen = false">Cancel</UButton>
+            <UButton :loading="savingAutomation" @click="saveAutomation">Create automation</UButton>
+          </div>
+        </template>
+      </UModal>
+
+      <!-- Delete automation modal -->
+      <UModal v-model:open="deleteAutomationOpen" title="Delete automation">
+        <template #body>
+          <p class="text-sm text-muted">
+            This will permanently delete the automation
+            <span class="font-mono">{{ automationToDelete?.target_url }}</span>. This action cannot be undone.
+          </p>
+        </template>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" @click="deleteAutomationOpen = false">Cancel</UButton>
+            <UButton color="error" :loading="deletingAutomation" @click="removeAutomation">Delete</UButton>
           </div>
         </template>
       </UModal>

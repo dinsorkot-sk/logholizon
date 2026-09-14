@@ -5,10 +5,12 @@ type Count = { status: string; count: number }
 type Entity = { id: string; label: string }
 
 const { data: entities } = await useFetch<Entity[]>('/api/entities')
-const entityId = ref('work_order')
+const entityId = ref('')
 watch(entities, (list) => {
   const first = list?.[0]
-  if (list?.length && first && !list.some(e => e.id === entityId.value)) {
+  if (!entityId.value && first) {
+    entityId.value = first.id
+  } else if (list?.length && first && !list.some(e => e.id === entityId.value)) {
     entityId.value = first.id
   }
 }, { immediate: true })

@@ -61,6 +61,127 @@ async fn invalid_transition_is_rejected() {
 }
 
 #[tokio::test]
+async fn notification_rule_crud() {
+    let pool = db::connect("sqlite::memory:").await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    seed::seed(&pool).await.unwrap();
+
+    let rule = repository::create_notification_rule(
+        &pool,
+        "work_order",
+        "transition",
+        "https://example.com/hook",
+        true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(rule.entity_id, "work_order");
+    assert!(rule.active);
+
+    // Invalid trigger rejected.
+    assert!(repository::create_notification_rule(
+        &pool,
+        "work_order",
+        "create",
+        "https://example.com/hook",
+        true,
+    )
+    .await
+    .is_err());
+
+    // Non-http(s) URL rejected.
+    assert!(repository::create_notification_rule(
+        &pool,
+        "work_order",
+        "transition",
+        "ftp://example.com/hook",
+        true,
+    )
+    .await
+    .is_err());
+
+    // Missing entity rejected.
+    assert!(repository::create_notification_rule(
+        &pool,
+        "missing",
+        "transition",
+        "https://example.com/hook",
+        true,
+    )
+    .await
+    .is_err());
+
+    let rules = repository::list_notification_rules(&pool, "work_order")
+        .await
+        .unwrap();
+    assert_eq!(rules.len(), 1);
+
+    let updated = repository::update_notification_rule(&pool, &rule.id, None, None, Some(false))
+        .await
+        .unwrap();
+    assert!(!updated.active);
+
+    repository::delete_notification_rule(&pool, &rule.id)
+        .await
+        .unwrap();
+    assert!(repository::delete_notification_rule(&pool, &rule.id)
+        .await
+        .is_err());
+    let rules = repository::list_notification_rules(&pool, "work_order")
+        .await
+        .unwrap();
+    assert!(rules.is_empty());
+}
+
+#[tokio::test]
+async fn transition_creates_delivery() {
+    let pool = db::connect("sqlite::memory:").await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    seed::seed(&pool).await.unwrap();
+    repository::create_notification_rule(
+        &pool,
+        "work_order",
+        "transition",
+        "https://example.com/hook",
+        true,
+    )
+    .await
+    .unwrap();
+    // Inactive rules do not enqueue.
+    repository::create_notification_rule(
+        &pool,
+        "work_order",
+        "transition",
+        "https://example.com/off",
+        false,
+    )
+    .await
+    .unwrap();
+    repository::create_document(
+        &pool,
+        "wo-notify",
+        "work_order",
+        &json!({"title": "Notify me", "status": "draft", "priority": "low"}),
+        Some("alice"),
+    )
+    .await
+    .unwrap();
+    repository::transition_document(&pool, "wo-notify", "submit", Some("alice"), None)
+        .await
+        .unwrap();
+    let deliveries = repository::list_notification_deliveries(&pool, 10, 0)
+        .await
+        .unwrap();
+    assert_eq!(deliveries.total, 1);
+    let delivery = &deliveries.items[0];
+    assert_eq!(delivery.document_id, "wo-notify");
+    assert_eq!(delivery.action, "submit");
+    assert_eq!(delivery.status, "pending");
+    assert_eq!(delivery.payload["to_state"], "open");
+    assert_eq!(delivery.payload["actor"], "alice");
+}
+
+#[tokio::test]
 async fn dashboard_counts_group_by_status() {
     let pool = db::connect("sqlite::memory:").await.unwrap();
     db::migrate(&pool).await.unwrap();
@@ -100,12 +221,13 @@ async fn status_field_name_is_metadata_driven() {
     repository::create_entity(&pool, "ticket", "ticket", "Ticket")
         .await
         .unwrap();
-    repository::create_field(&pool, "ticket", "title", "text", true, false)
+    repository::create_field(&pool, "ticket", "title", "text", true, false, None, None)
         .await
         .unwrap();
-    let state = repository::create_field(&pool, "ticket", "state", "select", true, true)
-        .await
-        .unwrap();
+    let state =
+        repository::create_field(&pool, "ticket", "state", "select", true, true, None, None)
+            .await
+            .unwrap();
     assert!(state.is_status);
     for (value, label) in [("new", "New"), ("open", "Open"), ("closed", "Closed")] {
         repository::create_field_option(&pool, &state.id, value, label)
@@ -323,7 +445,7 @@ async fn entity_without_status_field_rejects_transition() {
     repository::create_entity(&pool, "note", "note", "Note")
         .await
         .unwrap();
-    repository::create_field(&pool, "note", "body", "text", false, false)
+    repository::create_field(&pool, "note", "body", "text", false, false, None, None)
         .await
         .unwrap();
     repository::create_document(&pool, "n-1", "note", &json!({"body": "hello"}), None)
@@ -338,4 +460,166 @@ async fn entity_without_status_field_rejects_transition() {
         .await
         .unwrap();
     assert!(counts.is_empty());
+}
+
+#[tokio::test]
+async fn guarded_transition_checks_condition_role_history_and_event() {
+    let pool = db::connect("sqlite::memory:").await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    repository::create_entity(&pool, "ticket", "ticket", "Ticket")
+        .await
+        .unwrap();
+    repository::create_field(&pool, "ticket", "amount", "number", true, false, None, None)
+        .await
+        .unwrap();
+    let ticket_status =
+        repository::create_field(&pool, "ticket", "status", "select", true, true, None, None)
+            .await
+            .unwrap();
+    for (value, label) in [
+        ("draft", "Draft"),
+        ("approved", "Approved"),
+        ("rejected", "Rejected"),
+    ] {
+        repository::create_field_option(&pool, &ticket_status.id, value, label)
+            .await
+            .unwrap();
+    }
+    for (name, label) in [
+        ("draft", "Draft"),
+        ("approved", "Approved"),
+        ("rejected", "Rejected"),
+    ] {
+        repository::create_workflow_state(&pool, "ticket", name, label)
+            .await
+            .unwrap();
+    }
+    repository::create_workflow_transition_with_options(
+        &pool,
+        "ticket",
+        "draft",
+        "approved",
+        "approve",
+        "{amount} >= 100",
+        "manager",
+    )
+    .await
+    .unwrap();
+    repository::create_workflow_transition_with_options(
+        &pool, "ticket", "draft", "rejected", "reject", "", "manager",
+    )
+    .await
+    .unwrap();
+    repository::create_document(
+        &pool,
+        "t-guard",
+        "ticket",
+        &json!({"amount": 150, "status": "draft"}),
+        Some("bob"),
+    )
+    .await
+    .unwrap();
+
+    let forbidden = repository::transition_document_as_role(
+        &pool,
+        "t-guard",
+        "approve",
+        Some("bob"),
+        None,
+        "user",
+    )
+    .await
+    .unwrap_err();
+    assert!(forbidden.to_string().contains("requires role"));
+
+    let approved = repository::transition_document_as_role(
+        &pool,
+        "t-guard",
+        "approve",
+        Some("manager-1"),
+        None,
+        "manager",
+    )
+    .await
+    .unwrap();
+    assert_eq!(approved.payload["status"], "approved");
+
+    let history = repository::list_workflow_history(&pool, "t-guard", 10, 0)
+        .await
+        .unwrap();
+    assert_eq!(history.total, 1);
+    assert_eq!(history.items[0].action, "approve");
+    assert_eq!(history.items[0].from_state, "draft");
+    assert_eq!(history.items[0].to_state, "approved");
+
+    let event: (String, String, String) = sqlx::query_as(
+        "SELECT event_type, action, actor FROM _workflow_event WHERE document_id = ?",
+    )
+    .bind("t-guard")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(event.0, "transition");
+    assert_eq!(event.1, "approve");
+    assert_eq!(event.2, "manager-1");
+}
+
+#[tokio::test]
+async fn workflow_condition_rejects_unsatisfied_guard() {
+    let pool = db::connect("sqlite::memory:").await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    repository::create_entity(&pool, "request", "request", "Request")
+        .await
+        .unwrap();
+    repository::create_field(
+        &pool, "request", "amount", "number", true, false, None, None,
+    )
+    .await
+    .unwrap();
+    let request_status =
+        repository::create_field(&pool, "request", "status", "select", true, true, None, None)
+            .await
+            .unwrap();
+    for (value, label) in [("draft", "Draft"), ("approved", "Approved")] {
+        repository::create_field_option(&pool, &request_status.id, value, label)
+            .await
+            .unwrap();
+    }
+    repository::create_workflow_state(&pool, "request", "draft", "Draft")
+        .await
+        .unwrap();
+    repository::create_workflow_state(&pool, "request", "approved", "Approved")
+        .await
+        .unwrap();
+    repository::create_workflow_transition_with_options(
+        &pool,
+        "request",
+        "draft",
+        "approved",
+        "approve",
+        "{amount} >= 100",
+        "",
+    )
+    .await
+    .unwrap();
+    repository::create_document(
+        &pool,
+        "r-1",
+        "request",
+        &json!({"amount": 50, "status": "draft"}),
+        None,
+    )
+    .await
+    .unwrap();
+    let err = repository::transition_document(&pool, "r-1", "approve", None, None)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("condition is not satisfied"));
+    assert_eq!(
+        repository::get_document(&pool, "r-1")
+            .await
+            .unwrap()
+            .payload["status"],
+        "draft"
+    );
 }

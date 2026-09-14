@@ -24,6 +24,63 @@ async fn seeded_pool() -> sqlx::SqlitePool {
 }
 
 #[tokio::test]
+async fn computed_field_interpolates_on_read() {
+    use logholizon_core::seed;
+    let pool = db::connect("sqlite::memory:").await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    seed::seed(&pool).await.unwrap();
+    repository::create_field(
+        &pool,
+        "work_order",
+        "summary",
+        "computed",
+        false,
+        false,
+        None,
+        Some("{title} [{status}]"),
+    )
+    .await
+    .unwrap();
+
+    // Incoming computed keys are rejected.
+    assert!(repository::create_document(
+        &pool,
+        "w1",
+        "work_order",
+        &json!({"title": "Pump", "status": "draft", "summary": "x"}),
+        None,
+    )
+    .await
+    .is_err());
+
+    repository::create_document(
+        &pool,
+        "w1",
+        "work_order",
+        &json!({"title": "Pump", "status": "draft"}),
+        None,
+    )
+    .await
+    .unwrap();
+    let doc = repository::get_document(&pool, "w1").await.unwrap();
+    assert_eq!(doc.payload["summary"], "Pump [draft]");
+
+    // Computed without expr rejected.
+    assert!(repository::create_field(
+        &pool,
+        "work_order",
+        "bad",
+        "computed",
+        false,
+        false,
+        None,
+        None
+    )
+    .await
+    .is_err());
+}
+
+#[tokio::test]
 async fn document_crud_validates_payload() {
     let pool = seeded_pool().await;
     let doc =
@@ -77,6 +134,112 @@ async fn document_crud_validates_payload() {
         .await
         .unwrap();
     assert!(repository::get_document(&pool, "d1").await.is_err());
+}
+
+#[tokio::test]
+async fn doc_comments_create_list_and_validate() {
+    let pool = seeded_pool().await;
+    repository::create_document(&pool, "d1", "ticket", &json!({"title": "Fix pump"}), None)
+        .await
+        .unwrap();
+
+    let comment = repository::create_doc_comment_as_role(
+        &pool,
+        "d1",
+        "  Check the seal  ",
+        "user",
+        Some("demo"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(comment.body, "Check the seal");
+    assert_eq!(comment.actor.as_deref(), Some("demo"));
+
+    let list = repository::list_doc_comments_as_role(&pool, "d1", 10, 0, "user")
+        .await
+        .unwrap();
+    assert_eq!(list.total, 1);
+    assert_eq!(list.items[0].id, comment.id);
+
+    // Empty body rejected.
+    assert!(
+        repository::create_doc_comment_as_role(&pool, "d1", "   ", "user", None)
+            .await
+            .is_err()
+    );
+    // Unknown document rejected.
+    assert!(
+        repository::create_doc_comment_as_role(&pool, "missing", "hi", "admin", None)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn doc_attachments_upload_list_download_delete() {
+    let pool = seeded_pool().await;
+    repository::create_document(&pool, "d1", "ticket", &json!({"title": "Fix pump"}), None)
+        .await
+        .unwrap();
+
+    let data = b"%PDF-1.4 test".to_vec();
+    let attachment = repository::upload_doc_attachment_as_role(
+        &pool,
+        "d1",
+        "report.pdf",
+        "application/pdf",
+        &data,
+        "user",
+        Some("demo"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(attachment.filename, "report.pdf");
+    assert_eq!(attachment.size, data.len() as i64);
+
+    let list = repository::list_doc_attachments_as_role(&pool, "d1", "user")
+        .await
+        .unwrap();
+    assert_eq!(list.total, 1);
+
+    let downloaded = repository::get_doc_attachment_data_as_role(&pool, &attachment.id, "user")
+        .await
+        .unwrap();
+    assert_eq!(downloaded.data, data);
+
+    // Oversize rejected before write.
+    let big = vec![0u8; repository::ATTACHMENT_MAX_BYTES + 1];
+    assert!(repository::upload_doc_attachment_as_role(
+        &pool,
+        "d1",
+        "big.pdf",
+        "application/pdf",
+        &big,
+        "user",
+        None,
+    )
+    .await
+    .is_err());
+    // Executable type rejected.
+    assert!(repository::upload_doc_attachment_as_role(
+        &pool,
+        "d1",
+        "run.exe",
+        "application/x-msdownload",
+        b"x",
+        "user",
+        None,
+    )
+    .await
+    .is_err());
+
+    repository::delete_doc_attachment_as_role(&pool, &attachment.id, "user")
+        .await
+        .unwrap();
+    let list = repository::list_doc_attachments_as_role(&pool, "d1", "user")
+        .await
+        .unwrap();
+    assert_eq!(list.total, 0);
 }
 
 #[tokio::test]
@@ -383,6 +546,89 @@ async fn audit_records_actor_per_user() {
         .await
         .unwrap();
     assert!(global.items.iter().all(|e| e.actor.is_some()));
+}
+
+#[tokio::test]
+async fn report_crud_and_aggregation() {
+    use logholizon_core::seed;
+    let pool = db::connect("sqlite::memory:").await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    seed::seed(&pool).await.unwrap();
+    for (id, status) in [("r1", "draft"), ("r2", "draft"), ("r3", "open")] {
+        repository::create_document(
+            &pool,
+            id,
+            "work_order",
+            &json!({"title": id, "status": status, "priority": "low"}),
+            None,
+        )
+        .await
+        .unwrap();
+    }
+
+    // Aggregation groups by select field.
+    let buckets = repository::report_aggregate_as_role(&pool, "work_order", "status", "admin")
+        .await
+        .unwrap();
+    let by_status: std::collections::HashMap<&str, i64> = buckets
+        .iter()
+        .map(|b| (b.status.as_str(), b.count))
+        .collect();
+    assert_eq!(by_status.get("draft"), Some(&2));
+    assert_eq!(by_status.get("open"), Some(&1));
+
+    // Non-select field rejected.
+    assert!(
+        repository::report_aggregate_as_role(&pool, "work_order", "title", "admin")
+            .await
+            .is_err()
+    );
+    // Unknown field rejected.
+    assert!(
+        repository::report_aggregate_as_role(&pool, "work_order", "nope", "admin")
+            .await
+            .is_err()
+    );
+
+    // Report CRUD.
+    let report = repository::create_report(
+        &pool,
+        "work_order",
+        "By status",
+        &json!({"group_by": "status", "chart_type": "bar"}),
+        Some("admin"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.name, "By status");
+    assert_eq!(report.config["group_by"], "status");
+
+    // Invalid config rejected.
+    assert!(repository::create_report(
+        &pool,
+        "work_order",
+        "Bad",
+        &json!({"chart_type": "bar"}),
+        None,
+    )
+    .await
+    .is_err());
+    assert!(repository::create_report(
+        &pool,
+        "work_order",
+        "Bad chart",
+        &json!({"group_by": "status", "chart_type": "3d"}),
+        None,
+    )
+    .await
+    .is_err());
+
+    let reports = repository::list_reports(&pool, "work_order").await.unwrap();
+    assert_eq!(reports.len(), 1);
+    repository::delete_report(&pool, &report.id).await.unwrap();
+    assert!(repository::delete_report(&pool, &report.id).await.is_err());
+    let reports = repository::list_reports(&pool, "work_order").await.unwrap();
+    assert!(reports.is_empty());
 }
 
 #[tokio::test]
