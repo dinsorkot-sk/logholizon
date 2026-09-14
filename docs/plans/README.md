@@ -377,6 +377,68 @@ All gates green on `v0.0.29`: `cargo fmt --check`,
 - Tests prove the complete flow.
 - No normal no-code module creation requires a Rust Core change.
 
+## Ready-Made ERP — SHIPPED (100%)
+
+Ready-made ERP solutions ship as **module packages** (metadata JSON), never
+as hardcoded Rust — the Working Rule above still holds. Each package installs
+through the same Module Runtime, lifecycle, and permission contracts as
+user-created modules.
+
+Shipped packages (`packages/erp/`, schema v2 — v1 still accepted):
+
+- `accounting` — chart of accounts, journal entries + lines, post/void
+  workflow, trial-totals report, Accounting Overview dashboard.
+- `inventory` — products, warehouses, stock moves, confirm/cancel workflow,
+  moves-by-type report, Inventory Overview dashboard.
+- `sales` — customers, orders + lines (formula line totals), quote-to-cash
+  workflow, revenue report, Sales Overview dashboard.
+- `hr` — employees, leave requests (approve/reject), payroll runs
+  (process/pay), headcount report, HR Overview dashboard.
+- `pos` — stores, terminals, sale tickets + lines, pay/void workflow,
+  sales-by-tender report, POS Overview dashboard.
+- `manufacturing` — BOMs + lines, production runs (start/complete),
+  output report, Manufacturing Overview dashboard.
+- `dormitory` — buildings, rooms, residents, bookings (check-in/out),
+  bookings report, Dormitory Overview dashboard.
+- `vehicle` — fleet, drivers, rentals, maintenance (Phase 20 reference
+  domain, also installable as a package).
+
+Install and operate:
+
+```bash
+cargo run -p logholizon-cli -- install-module packages/erp/<name>.module.json
+cargo run -p logholizon-cli -- list-modules --admin
+```
+
+or browse, preview (migration plan, conflicts, dependencies), and install
+from the admin Solution Library (`/admin/solutions`, backed by
+`GET /api/solutions` + `GET /api/solutions/:name`, JSON bundled at build
+time). Package format and authoring conventions: `packages/erp/README.md`.
+
+Platform capabilities added to support the suite (all generic, no domain
+hardcode):
+
+- Package schema v2: optional `relations`/`actions`/`automations`/
+  `dashboards` sections with definition-level names, validated and
+  materialized post-publish (`module_package.rs`).
+- `transition`-trigger automations fire from `_workflow_event` rows
+  (`automation::enqueue_events`).
+- Entity short-name uniqueness scoped per module (`UNIQUE(module_id,
+  name)`, migration `0043`) so independent modules share common names.
+- Document writes accept every canonical field type; only server-computed
+  `computed`/`formula` reject writes (`validate_field_value`).
+- Admin Entity Manager gained Actions and Automations tabs; Observability
+  records workflow/automation/webhook/report events.
+
+Verification (v0.0.37, Phase I): fresh DB → migrate → seed → check →
+install all 8 via CLI (all `enabled`) → live HTTP drill per module (CRUD +
+workflow transition) → report aggregation → all 8 dashboards listed →
+observability metrics/logs recording. Covered by
+`packages/core/tests/erp_packages.rs` (10 tests: install + operate per
+package, validation negative, name-scoping coexistence),
+`packages/core/tests/fields.rs` (canonical write acceptance), and
+`packages/app/tests/solutions.test.ts` (catalog shape).
+
 ## Working Rule
 
 Do not increase the percentage by adding more built-in ERP features. Increase the percentage by making the runtime capable of representing those features as user-defined metadata.
