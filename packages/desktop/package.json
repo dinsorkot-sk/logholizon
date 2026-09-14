@@ -1,0 +1,13 @@
+{
+  "name": "@logholizon/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "build": "pnpm --dir ../app run build:desktop",
+    "dev": "cargo tauri dev",
+    "test": "cargo test -p logholizon-desktop --no-default-features",
+    "check": "cargo clippy -p logholizon-desktop --no-default-features --all-targets -- -D warnings"
+  }
+}

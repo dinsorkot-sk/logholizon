@@ -11,6 +11,7 @@ Nuxt 4 + Nuxt UI 4 ERP gateway. Rust core owns SQLite. Follow the plan in [`../.
 - Build: `pnpm run build`
 - Preview: `pnpm run preview`
 - Test: `pnpm run test`
+- Desktop static SPA: `pnpm run build:desktop` (`LOGHOLIZON_DESKTOP=1`)
 - Rust core: `cargo run -p logholizon-cli -- migrate`, `cargo run -p logholizon-cli -- seed`
 
 Use pnpm only. `package.json` pins `pnpm@11.9.0`.
@@ -28,6 +29,11 @@ Use pnpm only. `package.json` pins `pnpm@11.9.0`.
 
 - TypeScript in app, Rust in core. No domain SQL in Nitro handlers.
 - Preserve metadata-driven design; avoid hardcoded ERP entities.
+- Desktop (`LOGHOLIZON_DESKTOP=1`): static SPA, no Nitro server. The
+  `modules/desktop.ts` module rewrites the global `$fetch` so `/api/*`
+  calls hit the sidecar core `/v1/*` directly; keep the route map in
+  `app/utils/desktop-routes.ts` in sync with `server/api/**`. Web builds
+  must stay desktop-free.
 - Use Nuxt UI components where specified by `design.md`; use `UTable` for dynamic entity tables.
 - Use `USlideover` for contextual editing; avoid unnecessary modal/page navigation.
 - Keep workflow linear and list-based; no drag-and-drop/canvas.

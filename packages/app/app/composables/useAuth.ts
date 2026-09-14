@@ -7,7 +7,9 @@ export const useAuth = () => {
   async function fetchMe() {
     try {
       // useRequestFetch forwards the browser cookie to internal API routes
-      // during SSR; on the client it behaves like $fetch.
+      // during SSR; on the client it behaves like $fetch. On desktop the
+      // fetch layer rewrites /api/* to the sidecar core with the stored
+      // Bearer token, so this call works unchanged in both modes.
       const requestFetch = useRequestFetch()
       const me = await requestFetch<AuthUser>('/api/auth/me')
       user.value = me
@@ -23,6 +25,17 @@ export const useAuth = () => {
       method: 'POST',
       body: { username, password }
     })
+    // Desktop has no httpOnly cookie: persist the token in the desktop
+    // store so subsequent /api/* calls attach it as a Bearer token.
+    // On web this is a harmless no-op (the gateway sets lh_session).
+    if (import.meta.client) {
+      try {
+        const { writeDesktopToken } = await import('~/utils/desktop-fetch')
+        if (session?.token) writeDesktopToken(session.token)
+      } catch {
+        // web build without desktop utils: ignore
+      }
+    }
     user.value = session.user
     return session.user
   }
@@ -31,6 +44,14 @@ export const useAuth = () => {
     try {
       await $fetch('/api/auth/logout', { method: 'POST' })
     } finally {
+      if (import.meta.client) {
+        try {
+          const { writeDesktopToken } = await import('~/utils/desktop-fetch')
+          writeDesktopToken(null)
+        } catch {
+          // web build without desktop utils: ignore
+        }
+      }
       user.value = null
     }
   }

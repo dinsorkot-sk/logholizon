@@ -5,6 +5,7 @@
 - `packages/core`: Rust library + Axum wrapper. Owns domain rules, SQLite, migrations, seed, backup, restore, repositories.
 - `packages/cli`: Rust CLI. Calls core in-process for `migrate`, `seed`, `backup`, `restore`, `check`.
 - `packages/app`: Nuxt 4 + Nuxt UI. UI and thin Nitro gateway only; calls Rust over HTTP.
+- `packages/desktop`: Tauri shell. Boots core in-process on a loopback port; static SPA calls `/v1` directly. See `packages/desktop/README.md`.
 - Root `Cargo.toml`: Rust workspace. Root `package.json` + `turbo.json`: JS task orchestration.
 - Roadmap: [`docs/plans/2026-09-06-next-roadmap.md`](docs/plans/2026-09-06-next-roadmap.md) (active). Completed: [`2026-09-05-rust-core-erp.md`](docs/plans/2026-09-05-rust-core-erp.md), [`2026-09-05-ux-ui-fixes.md`](docs/plans/2026-09-05-ux-ui-fixes.md), [`2026-09-05-product-hardening.md`](docs/plans/2026-09-05-product-hardening.md).
 

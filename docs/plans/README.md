@@ -453,6 +453,35 @@ Scope (stabilization only, no new runtime features):
   `cargo test --workspace -- --test-threads=1`, `pnpm app test` (23/23),
   `pnpm app check`, `pnpm app build` all green on this branch.
 
+## v0.1.1 — Tauri Desktop (offline) — IN PROGRESS
+
+Goal: LOGHOLIZON runs as an offline desktop app. The Tauri shell boots
+`logholizon-core` in-process on an ephemeral loopback port; the Nuxt
+frontend ships as a static SPA calling `/v1` directly with a stored Bearer
+token; SQLite lives under the OS app-data directory.
+
+Scope (no Core domain changes, no SQL outside core, no new `/v1` routes):
+
+- `packages/core/src/desktop.rs`: app-data DB URL, desktop `Config`
+  (Tauri origins, background loops off by default), `boot_desktop_pool`,
+  `ensure_first_run` (admin + demo seed). Test: `tests/desktop.rs`.
+- `packages/desktop/src-tauri`: shell crate (`logholizon-desktop`,
+  `ui` feature gates the `tauri` dep so gates run without WebKit),
+  sidecar lifecycle (`boot`/`wait_for_health`/`shutdown`/`probe_runtime`),
+  `tauri.conf.json` (nsis/dmg/appimage), placeholder PNG icons.
+  Test: `tests/sidecar.rs` (boot + `/health` + `/v1` login + shutdown).
+- `packages/app/modules/desktop.ts`: build-time module (only with
+  `LOGHOLIZON_DESKTOP=1`) replacing `#build/fetch.mjs` so every
+  `useFetch`/`$fetch` `/api/*` call targets the sidecar core; web output
+  stays byte-identical (verified: no desktop code in web server bundle).
+- `packages/app/app/utils/desktop-routes.ts` + `desktop-fetch.ts`:
+  gateway→core route map, fetch wrapper, token store; `useAuth` persists
+  the token on desktop. Test: `tests/desktop-routes.test.ts`.
+- Docs: `packages/desktop/README.md`, app + root `AGENTS.md` updates.
+
+Deferred to v0.1.2+: auto-updater + signing, tray, multi-window, file
+associations, `.icns`/`.ico` packaging.
+
 ## Working Rule
 
 Do not increase the percentage by adding more built-in ERP features. Increase the percentage by making the runtime capable of representing those features as user-defined metadata.

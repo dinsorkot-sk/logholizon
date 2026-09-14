@@ -5,7 +5,9 @@
   "packageManager": "pnpm@11.9.0",
   "scripts": {
     "build": "nuxt build",
+    "build:desktop": "LOGHOLIZON_DESKTOP=1 nuxt generate",
     "dev": "nuxt dev",
+    "dev:desktop": "LOGHOLIZON_DESKTOP=1 nuxt dev",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "test": "vitest run",

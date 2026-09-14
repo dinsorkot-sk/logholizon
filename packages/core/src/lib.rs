@@ -3,6 +3,7 @@ pub mod backup;
 pub mod config;
 pub mod dashboard;
 pub mod db;
+pub mod desktop;
 pub mod error;
 pub mod formula;
 pub mod http;
