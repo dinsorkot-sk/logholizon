@@ -439,6 +439,20 @@ package, validation negative, name-scoping coexistence),
 `packages/core/tests/fields.rs` (canonical write acceptance), and
 `packages/app/tests/solutions.test.ts` (catalog shape).
 
+## v0.1.0 — Stabilization Release — COMPLETE (100%)
+
+Base: `origin/dev` at `d2128f5` (merge of `v0.0.37` Phase I + cross-platform
+e2e runner fix). Cargo workspace already at `0.1.0`, matching the branch.
+
+Scope (stabilization only, no new runtime features):
+
+- Cross-platform `packages/app/tests/e2e/run.cjs`: detect `win32`, use
+  `cargo` from `PATH` and spawn the `nuxt` binary directly on POSIX.
+  Fixes CI `E2E (playwright)` timing out on `http://127.0.0.1:8788/health`.
+- Release readiness: `cargo fmt --check`, `cargo clippy -D warnings`,
+  `cargo test --workspace -- --test-threads=1`, `pnpm app test` (23/23),
+  `pnpm app check`, `pnpm app build` all green on this branch.
+
 ## Working Rule
 
 Do not increase the percentage by adding more built-in ERP features. Increase the percentage by making the runtime capable of representing those features as user-defined metadata.
