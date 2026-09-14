@@ -6,6 +6,12 @@ fn package_path(name: &str) -> std::path::PathBuf {
         .join(format!("../../packages/erp/{name}.module.json"))
 }
 
+async fn setup() -> sqlx::SqlitePool {
+    let pool = db::connect("sqlite::memory:").await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    pool
+}
+
 async fn install_package(
     pool: &sqlx::SqlitePool,
     name: &str,
@@ -27,12 +33,6 @@ async fn install_package(
     assert_eq!(installed.status, "enabled");
     assert_eq!(installed.name, name);
     installed
-}
-
-async fn setup() -> sqlx::SqlitePool {
-    let pool = db::connect("sqlite::memory:").await.unwrap();
-    db::migrate(&pool).await.unwrap();
-    pool
 }
 
 #[tokio::test]
@@ -252,9 +252,11 @@ async fn erp_accounting_package_installs_and_operates() {
         .unwrap();
     assert_eq!(posted.payload["status"], "posted");
 
+    // Packaged automation (posted → webhook) fires.
     assert!(automation::enqueue_events(&pool).await.unwrap() >= 1);
     assert!(automation::process_pending(&pool).await.unwrap() >= 1);
 
+    // Trial totals report balances.
     let reports = repository::list_reports(&pool, &line).await.unwrap();
     let trial = reports.iter().find(|r| r.name == "Trial totals").unwrap();
     let result = logholizon_core::report::run(
@@ -267,6 +269,7 @@ async fn erp_accounting_package_installs_and_operates() {
     .unwrap();
     assert_eq!(result.total, 1);
 
+    // Dashboard renders all widgets.
     let dashboards = dashboard::list(&pool).await.unwrap();
     let overview = dashboards
         .iter()
@@ -375,6 +378,7 @@ async fn erp_sales_package_installs_and_operates() {
     )
     .await
     .unwrap();
+    // Formula line_total = quantity * unit_price.
     assert_eq!(line.payload["line_total"], json!(500.0));
     let confirmed = repository::transition_document(&pool, "ord-1", "confirm", Some("cli"), None)
         .await
@@ -478,6 +482,242 @@ async fn erp_hr_package_installs_and_operates() {
 }
 
 #[tokio::test]
+async fn erp_pos_package_installs_and_operates() {
+    let pool = setup().await;
+    let installed = install_package(&pool, "pos").await;
+    let store = format!("{}_store", installed.id);
+    let terminal = format!("{}_terminal", installed.id);
+    let ticket = format!("{}_sale_ticket", installed.id);
+    let ticket_line = format!("{}_ticket_line", installed.id);
+
+    let main = repository::create_document(
+        &pool,
+        "pos-store",
+        &store,
+        &json!({"code": "S-01", "name": "Siam", "location": "Bangkok"}),
+        Some("cli"),
+    )
+    .await
+    .unwrap();
+    let till = repository::create_document(
+        &pool,
+        "pos-till",
+        &terminal,
+        &json!({"code": "T-01", "store": main.id, "status": "active"}),
+        Some("cli"),
+    )
+    .await
+    .unwrap();
+    repository::create_document(
+        &pool,
+        "pos-t1",
+        &ticket,
+        &json!({"number": "T-0001", "terminal": till.id, "sold_at": "2026-09-14T10:00:00", "tender": "card", "total": 300.0, "status": "open"}),
+        Some("cli"),
+    )
+    .await
+    .unwrap();
+    let line = repository::create_document(
+        &pool,
+        "pos-l1",
+        &ticket_line,
+        &json!({"ticket": "pos-t1", "item": "Coffee", "quantity": 3, "unit_price": 100.0}),
+        Some("cli"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(line.payload["line_total"], json!(300.0));
+    let paid = repository::transition_document(&pool, "pos-t1", "pay", Some("cli"), None)
+        .await
+        .unwrap();
+    assert_eq!(paid.payload["status"], "paid");
+
+    assert!(automation::enqueue_events(&pool).await.unwrap() >= 1);
+    assert!(automation::process_pending(&pool).await.unwrap() >= 1);
+
+    let reports = repository::list_reports(&pool, &ticket).await.unwrap();
+    let sales = reports
+        .iter()
+        .find(|r| r.name == "Sales by tender")
+        .unwrap();
+    let result = logholizon_core::report::run(
+        &pool,
+        &ticket,
+        &serde_json::from_value(sales.config.clone()).unwrap(),
+        "user",
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.total, 1);
+
+    let dashboards = dashboard::list(&pool).await.unwrap();
+    let overview = dashboards
+        .iter()
+        .find(|d| d.name == "POS Overview")
+        .unwrap();
+    let rendered = dashboard::run(&pool, overview, "user").await.unwrap();
+    assert_eq!(rendered.as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn erp_manufacturing_package_installs_and_operates() {
+    let pool = setup().await;
+    let installed = install_package(&pool, "manufacturing").await;
+    let bom = format!("{}_bom", installed.id);
+    let bom_line = format!("{}_bom_line", installed.id);
+    let run = format!("{}_production_run", installed.id);
+
+    let widget_bom = repository::create_document(
+        &pool,
+        "mfg-bom",
+        &bom,
+        &json!({"code": "BOM-001", "product": "Widget", "revision": "A"}),
+        Some("cli"),
+    )
+    .await
+    .unwrap();
+    repository::create_document(
+        &pool,
+        "mfg-bl",
+        &bom_line,
+        &json!({"bom": widget_bom.id, "component": "Screw", "quantity": 4}),
+        Some("cli"),
+    )
+    .await
+    .unwrap();
+    repository::create_document(
+        &pool,
+        "mfg-run",
+        &run,
+        &json!({"number": "PR-0001", "bom": widget_bom.id, "planned_quantity": 100, "produced_quantity": 0, "started_at": "2026-09-14", "status": "planned"}),
+        Some("cli"),
+    )
+    .await
+    .unwrap();
+    let running = repository::transition_document(&pool, "mfg-run", "start", Some("cli"), None)
+        .await
+        .unwrap();
+    assert_eq!(running.payload["status"], "running");
+    repository::update_document(
+        &pool,
+        "mfg-run",
+        &json!({"produced_quantity": 100}),
+        Some("cli"),
+        None,
+    )
+    .await
+    .unwrap();
+    let done = repository::transition_document(&pool, "mfg-run", "complete", Some("cli"), None)
+        .await
+        .unwrap();
+    assert_eq!(done.payload["status"], "completed");
+
+    assert!(automation::enqueue_events(&pool).await.unwrap() >= 1);
+    assert!(automation::process_pending(&pool).await.unwrap() >= 1);
+
+    let reports = repository::list_reports(&pool, &run).await.unwrap();
+    let output = reports
+        .iter()
+        .find(|r| r.name == "Output by status")
+        .unwrap();
+    let result = logholizon_core::report::run(
+        &pool,
+        &run,
+        &serde_json::from_value(output.config.clone()).unwrap(),
+        "user",
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.total, 1);
+
+    let dashboards = dashboard::list(&pool).await.unwrap();
+    let overview = dashboards
+        .iter()
+        .find(|d| d.name == "Manufacturing Overview")
+        .unwrap();
+    let rendered = dashboard::run(&pool, overview, "user").await.unwrap();
+    assert_eq!(rendered.as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn erp_dormitory_package_installs_and_operates() {
+    let pool = setup().await;
+    let installed = install_package(&pool, "dormitory").await;
+    let building = format!("{}_building", installed.id);
+    let room = format!("{}_room", installed.id);
+    let resident = format!("{}_resident", installed.id);
+    let booking = format!("{}_booking", installed.id);
+
+    let tower = repository::create_document(
+        &pool,
+        "drm-bld",
+        &building,
+        &json!({"code": "B-01", "name": "North Tower", "address": "Bangkok"}),
+        Some("cli"),
+    )
+    .await
+    .unwrap();
+    let room101 = repository::create_document(
+        &pool,
+        "drm-room",
+        &room,
+        &json!({"building": tower.id, "number": "101", "capacity": 2, "monthly_rate": 5000.0, "status": "vacant"}),
+        Some("cli"),
+    )
+    .await
+    .unwrap();
+    let bob = repository::create_document(
+        &pool,
+        "drm-bob",
+        &resident,
+        &json!({"code": "R-001", "name": "Bob", "phone": "+669876543", "email": "bob@example.test"}),
+        Some("cli"),
+    )
+    .await
+    .unwrap();
+    repository::create_document(
+        &pool,
+        "drm-bk",
+        &booking,
+        &json!({"room": room101.id, "resident": bob.id, "check_in": "2026-10-01", "check_out": "2027-03-31", "status": "reserved"}),
+        Some("cli"),
+    )
+    .await
+    .unwrap();
+    let checked_in =
+        repository::transition_document(&pool, "drm-bk", "check_in", Some("cli"), None)
+            .await
+            .unwrap();
+    assert_eq!(checked_in.payload["status"], "checked_in");
+
+    assert!(automation::enqueue_events(&pool).await.unwrap() >= 1);
+    assert!(automation::process_pending(&pool).await.unwrap() >= 1);
+
+    let reports = repository::list_reports(&pool, &booking).await.unwrap();
+    let by_status = reports
+        .iter()
+        .find(|r| r.name == "Bookings by status")
+        .unwrap();
+    let result = logholizon_core::report::run(
+        &pool,
+        &booking,
+        &serde_json::from_value(by_status.config.clone()).unwrap(),
+        "user",
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.total, 1);
+
+    let dashboards = dashboard::list(&pool).await.unwrap();
+    let overview = dashboards
+        .iter()
+        .find(|d| d.name == "Dormitory Overview")
+        .unwrap();
+    let rendered = dashboard::run(&pool, overview, "user").await.unwrap();
+    assert_eq!(rendered.as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
 async fn erp_entity_names_are_scoped_per_module() {
     // Independent modules (and seed demo data) may reuse common entity
     // names; uniqueness is per (module_id, name), not global.
@@ -490,12 +730,12 @@ async fn erp_entity_names_are_scoped_per_module() {
             .unwrap();
     assert!(seed_product);
     let installed = install_package(&pool, "inventory").await;
-    let names: Vec<String> =
+    let ids: Vec<String> =
         sqlx::query_scalar("SELECT id FROM _meta_entity WHERE name = 'product' ORDER BY id")
             .fetch_all(&pool)
             .await
             .unwrap();
-    assert_eq!(names.len(), 2);
-    assert!(names.contains(&"product".to_string()));
-    assert!(names.contains(&format!("{}_product", installed.id)));
+    assert_eq!(ids.len(), 2);
+    assert!(ids.contains(&"product".to_string()));
+    assert!(ids.contains(&format!("{}_product", installed.id)));
 }
