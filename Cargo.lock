@@ -1063,6 +1063,7 @@ dependencies = [
  "anyhow",
  "clap",
  "logholizon-core",
+ "serde_json",
  "sqlx",
  "tokio",
 ]

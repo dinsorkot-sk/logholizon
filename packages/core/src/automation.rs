@@ -55,37 +55,80 @@ pub async fn enqueue_events(pool: &SqlitePool) -> Result<usize> {
             "record.deleted" => "delete",
             _ => continue,
         };
-        let automations: Vec<(String, String)> = sqlx::query_as(
-            "SELECT id, condition FROM _automation WHERE entity_id=? AND trigger=? AND active!=0",
+        n += enqueue_for_trigger(
+            pool,
+            &entity_id,
+            document_id.as_deref(),
+            &event_id,
+            trigger,
+            &payload,
         )
-        .bind(&entity_id)
-        .bind(trigger)
-        .fetch_all(pool)
         .await?;
-        for (automation_id, condition) in automations {
-            if !condition.trim().is_empty() {
-                let vars: HashMap<String, Value> = serde_json::from_str::<Value>(&payload)?
-                    .as_object()
-                    .cloned()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .collect();
-                if crate::formula::evaluate(&condition, &vars)? != Value::Bool(true) {
-                    continue;
-                }
+    }
+    // Workflow transitions emit `_workflow_event` rows (not `_event` rows),
+    // so `transition`-trigger automations consume them here. The workflow
+    // event ID doubles as the execution dedup key, exactly like `_event` IDs.
+    let transitions: Vec<(String, String, String, String)> = sqlx::query_as(
+        "SELECT id, entity_id, document_id, payload FROM _workflow_event WHERE event_type = 'transition' AND created_at >= datetime('now','-1 minute') ORDER BY created_at",
+    )
+    .fetch_all(pool)
+    .await?;
+    for (event_id, entity_id, document_id, payload) in transitions {
+        n += enqueue_for_trigger(
+            pool,
+            &entity_id,
+            Some(document_id.as_str()),
+            &event_id,
+            "transition",
+            &payload,
+        )
+        .await?;
+    }
+    Ok(n)
+}
+
+/// Enqueue pending executions for every active automation matching
+/// (`entity_id`, `trigger`), honoring per-automation conditions and
+/// skipping already-enqueued (`automation_id`, `event_id`) pairs.
+async fn enqueue_for_trigger(
+    pool: &SqlitePool,
+    entity_id: &str,
+    document_id: Option<&str>,
+    event_id: &str,
+    trigger: &str,
+    payload: &str,
+) -> Result<usize> {
+    let mut n = 0;
+    let automations: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, condition FROM _automation WHERE entity_id=? AND trigger=? AND active!=0",
+    )
+    .bind(entity_id)
+    .bind(trigger)
+    .fetch_all(pool)
+    .await?;
+    for (automation_id, condition) in automations {
+        if !condition.trim().is_empty() {
+            let vars: HashMap<String, Value> = serde_json::from_str::<Value>(payload)?
+                .as_object()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+            if crate::formula::evaluate(&condition, &vars)? != Value::Bool(true) {
+                continue;
             }
-            let exists: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM _automation_execution WHERE automation_id=? AND event_id=?",
-            )
-            .bind(&automation_id)
-            .bind(&event_id)
-            .fetch_one(pool)
-            .await?;
-            if exists == 0 {
-                let id = format!("{automation_id}-{event_id}");
-                sqlx::query("INSERT INTO _automation_execution (id,automation_id,event_id,document_id,result) VALUES (?,?,?,?,?)").bind(id).bind(&automation_id).bind(&event_id).bind(&document_id) .bind(&payload).execute(pool).await?;
-                n += 1;
-            }
+        }
+        let exists: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM _automation_execution WHERE automation_id=? AND event_id=?",
+        )
+        .bind(&automation_id)
+        .bind(event_id)
+        .fetch_one(pool)
+        .await?;
+        if exists == 0 {
+            let id = format!("{automation_id}-{event_id}");
+            sqlx::query("INSERT INTO _automation_execution (id,automation_id,event_id,document_id,result) VALUES (?,?,?,?,?)").bind(id).bind(&automation_id).bind(event_id).bind(document_id).bind(payload).execute(pool).await?;
+            n += 1;
         }
     }
     Ok(n)

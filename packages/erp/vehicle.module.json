@@ -1,0 +1,207 @@
+{
+  "schema_version": 2,
+  "kind": "logholizon.module",
+  "manifest": {
+    "name": "vehicle",
+    "version": "1.0.0",
+    "dependencies": []
+  },
+  "module": {
+    "name": "vehicle",
+    "label": "Vehicle Management",
+    "description": "Sample ready-made ERP package: fleet, drivers, rentals, and maintenance.",
+    "icon": "i-lucide-truck",
+    "color": "blue",
+    "definition": {
+      "entities": [
+        {
+          "name": "vehicle",
+          "label": "Vehicle",
+          "fields": [
+            { "name": "code", "label": "Code", "type": "text", "required": true },
+            { "name": "plate_number", "label": "Plate Number", "type": "text", "required": true },
+            {
+              "name": "status",
+              "label": "Status",
+              "type": "select",
+              "required": true,
+              "is_status": true,
+              "options": [
+                { "value": "available", "label": "Available" },
+                { "value": "rented", "label": "Rented" },
+                { "value": "maintenance", "label": "Maintenance" }
+              ]
+            }
+          ],
+          "views": [{ "name": "Available vehicles", "config": {} }],
+          "form_layout": {
+            "config": {
+              "sections": [{ "id": "main", "label": "Main", "fields": ["code", "plate_number", "status"] }]
+            }
+          },
+          "reports": [
+            {
+              "name": "Fleet by status",
+              "config": {
+                "fields": ["status"],
+                "group_by": ["status"],
+                "aggregates": [{ "field": "code", "op": "count", "alias": "vehicle_count" }]
+              }
+            }
+          ]
+        },
+        {
+          "name": "driver",
+          "label": "Driver",
+          "fields": [
+            { "name": "code", "label": "Code", "type": "text", "required": true },
+            { "name": "name", "label": "Name", "type": "text", "required": true }
+          ]
+        },
+        {
+          "name": "maintenance",
+          "label": "Maintenance",
+          "fields": [
+            { "name": "vehicle", "label": "Vehicle", "type": "reference", "ref_entity": "vehicle", "required": true },
+            { "name": "cost", "label": "Cost", "type": "number", "required": true },
+            { "name": "completed_at", "label": "Completed At", "type": "date" }
+          ],
+          "reports": [
+            {
+              "name": "Maintenance cost",
+              "config": {
+                "fields": ["cost"],
+                "aggregates": [{ "field": "cost", "op": "sum", "alias": "maintenance_cost" }]
+              }
+            }
+          ]
+        },
+        {
+          "name": "rental",
+          "label": "Rental",
+          "fields": [
+            { "name": "vehicle", "label": "Vehicle", "type": "reference", "ref_entity": "vehicle", "required": true },
+            { "name": "driver", "label": "Driver", "type": "reference", "ref_entity": "driver", "required": true },
+            {
+              "name": "status",
+              "label": "Status",
+              "type": "select",
+              "required": true,
+              "is_status": true,
+              "options": [
+                { "value": "available", "label": "Available" },
+                { "value": "rented", "label": "Rented" },
+                { "value": "returned", "label": "Returned" }
+              ]
+            },
+            { "name": "revenue", "label": "Revenue", "type": "number", "required": true },
+            { "name": "rented_at", "label": "Rented At", "type": "date" }
+          ],
+          "workflow": {
+            "states": [
+              { "name": "available", "label": "Available" },
+              { "name": "rented", "label": "Rented" },
+              { "name": "returned", "label": "Returned" }
+            ],
+            "transitions": [
+              { "from_state": "available", "to_state": "rented", "action": "rent" },
+              { "from_state": "rented", "to_state": "returned", "action": "return" }
+            ]
+          },
+          "reports": [
+            {
+              "name": "Rental revenue",
+              "config": {
+                "fields": ["status"],
+                "aggregates": [{ "field": "revenue", "op": "sum", "alias": "revenue_total" }]
+              }
+            }
+          ],
+          "notifications": [
+            { "trigger": "transition", "target_url": "https://example.test/rental-transition", "active": true }
+          ]
+        }
+      ]
+    },
+    "relations": [
+      {
+        "source": "rental",
+        "target": "vehicle",
+        "source_field": "vehicle",
+        "name": "rental_vehicle",
+        "relation_type": "many_to_one",
+        "on_delete": "restrict"
+      },
+      {
+        "source": "rental",
+        "target": "driver",
+        "source_field": "driver",
+        "name": "rental_driver",
+        "relation_type": "many_to_one",
+        "on_delete": "restrict"
+      },
+      {
+        "source": "maintenance",
+        "target": "vehicle",
+        "source_field": "vehicle",
+        "name": "maintenance_vehicle",
+        "relation_type": "many_to_one",
+        "on_delete": "restrict"
+      }
+    ],
+    "actions": [
+      {
+        "entity": "rental",
+        "name": "send_receipt",
+        "label": "Send Receipt",
+        "kind": "notify",
+        "config": {}
+      }
+    ],
+    "automations": [
+      {
+        "entity": "rental",
+        "trigger": "transition",
+        "action": "webhook",
+        "target_url": "https://example.test/maintenance-check",
+        "active": true,
+        "condition": "{status} == \"returned\"",
+        "schedule": "",
+        "max_attempts": 3
+      }
+    ],
+    "dashboards": [
+      {
+        "name": "Fleet Overview",
+        "description": "Sample fleet dashboard: totals and revenue.",
+        "layout": [
+          {
+            "id": "total",
+            "kind": "kpi",
+            "title": "Total vehicles",
+            "entity_id": "vehicle",
+            "config": { "aggregates": [{ "field": "code", "op": "count", "alias": "total" }] },
+            "x": 0,
+            "y": 0,
+            "w": 3,
+            "h": 2
+          },
+          {
+            "id": "revenue",
+            "kind": "kpi",
+            "title": "Rental revenue",
+            "entity_id": "rental",
+            "config": { "aggregates": [{ "field": "revenue", "op": "sum", "alias": "revenue" }] },
+            "x": 3,
+            "y": 0,
+            "w": 3,
+            "h": 2
+          }
+        ],
+        "filters": {},
+        "roles": [],
+        "users": []
+      }
+    ]
+  }
+}
