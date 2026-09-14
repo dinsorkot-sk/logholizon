@@ -17,6 +17,7 @@ const mainLinks = computed<NavigationMenuItem[]>(() => {
   if (isAdmin.value) {
     links.push(
       { label: 'Module Builder', icon: 'i-lucide-box', to: '/admin/modules' },
+      { label: 'Solution Library', icon: 'i-lucide-package-open', to: '/admin/solutions' },
       { label: 'Entity Manager', icon: 'i-lucide-layout-grid', to: '/admin/meta/entity' },
       { label: 'Workflow Builder', icon: 'i-lucide-git-branch', to: '/admin/meta/workflow' },
       { label: 'Users', icon: 'i-lucide-users', to: '/admin/users' },
@@ -71,6 +72,7 @@ const commandGroups = computed<CommandPaletteGroup[]>(() => {
   if (isAdmin.value) {
     nav.push(
       { label: 'Module Builder', icon: 'i-lucide-box', to: '/admin/modules', kbds: ['g', 'm'] },
+      { label: 'Solution Library', icon: 'i-lucide-package-open', to: '/admin/solutions', kbds: ['g', 'l'] },
       { label: 'Entity Manager', icon: 'i-lucide-layout-grid', to: '/admin/meta/entity', kbds: ['g', 'e'] },
       { label: 'Workflow Builder', icon: 'i-lucide-git-branch', to: '/admin/meta/workflow', kbds: ['g', 'w'] },
       { label: 'Users', icon: 'i-lucide-users', to: '/admin/users', kbds: ['g', 'u'] },
