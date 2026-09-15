@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../../app/.output/public",
     "devUrl": "http://localhost:3000",
-    "beforeDevCommand": "pnpm --dir ../../app run dev:desktop",
-    "beforeBuildCommand": "pnpm --dir ../../app run build:desktop"
+    "beforeDevCommand": "pnpm --filter nexa run dev:desktop",
+    "beforeBuildCommand": "pnpm --filter nexa run build:desktop"
   },
   "app": {
     "windows": [
@@ -25,8 +25,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "dmg", "appimage"],
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png"],
     "category": "Business",
     "shortDescription": "LOGHOLIZON offline business application platform",
     "longDescription": "Metadata-driven business apps (Accounting, Inventory, Sales, HR, POS, Manufacturing, Dormitory, Vehicle) running fully offline with a local SQLite database."

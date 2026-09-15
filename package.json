@@ -10,8 +10,9 @@
     "setup": "pnpm install && cargo run -p logholizon-cli -- migrate && cargo run -p logholizon-cli -- seed --demo",
     "setup:db": "cargo run -p logholizon-cli -- migrate && cargo run -p logholizon-cli -- seed --demo",
     "desktop:build": "pnpm --dir packages/app run build:desktop",
-    "desktop:dev": "pnpm --dir packages/desktop run dev:native",
+    "desktop:dev": "pnpm --dir packages/desktop run dev",
     "desktop:bundle": "pnpm --dir packages/desktop run bundle",
+    "desktop:setup": "pnpm --dir packages/desktop run setup",
     "desktop:test": "cargo test -p logholizon-desktop --no-default-features",
     "desktop:check": "cargo clippy -p logholizon-desktop --no-default-features --all-targets -- -D warnings"
   },
