@@ -48,6 +48,8 @@ importers:
 
   packages/core: {}
 
+  packages/desktop: {}
+
 packages:
 
   '@alloc/quick-lru@5.3.0':

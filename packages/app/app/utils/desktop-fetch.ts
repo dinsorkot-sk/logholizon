@@ -22,13 +22,25 @@ type FetchOptions = Record<string, any>
 function isDesktop(): boolean {
   if (typeof window === 'undefined') return false
   const w = window as any
-  return !!(w.__TAURI__ || w.__TAURI_INTERNALS__ || (window as any).__LOGHOLIZON_DESKTOP__)
+  return !!(
+    w.__TAURI__ ||
+    w.__TAURI_INTERNALS__ ||
+    (window as any).__LOGHOLIZON_DESKTOP__ ||
+    // Tauri devUrl mode: plain browser pointed at the desktop Nuxt dev
+    // server (LOGHOLIZON_DESKTOP=1). The sidecar port comes from
+    // NUXT_PUBLIC_DESKTOP_CORE_URL (see nuxt.config.ts).
+    (window as any).__NUXT__?.config?.public?.desktop
+  )
 }
 
 function desktopContext(): DesktopContext | null {
   if (!isDesktop()) return null
   const w = window as any
-  const baseUrl = w.__LOGHOLIZON_CORE_URL__ || 'http://127.0.0.1:8787'
+  const publicConfig = (w.__NUXT__?.config?.public || {}) as Record<string, unknown>
+  const baseUrl =
+    w.__LOGHOLIZON_CORE_URL__ ||
+    (typeof publicConfig.desktopCoreUrl === 'string' && publicConfig.desktopCoreUrl) ||
+    'http://127.0.0.1:8787'
   const token = w.__LOGHOLIZON_TOKEN__ || localStorage.getItem('lh_desktop_token')
   return { baseUrl: String(baseUrl).replace(/\/$/, ''), token }
 }

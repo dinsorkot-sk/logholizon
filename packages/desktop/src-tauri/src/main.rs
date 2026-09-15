@@ -18,6 +18,14 @@ async fn main() -> anyhow::Result<()> {
     wait_for_health(&base_url, std::time::Duration::from_secs(30)).await?;
     tracing::info!("logholizon-desktop ready at {base_url}");
 
+    // Publish the sidecar URL where the frontend can read it: the Tauri
+    // `ui` build forwards it via event, and every build (including plain
+    // `cargo run` dev) writes it next to the database so the SPA can pick
+    // it up without hardcoding the ephemeral port.
+    if let Err(error) = write_core_url_file(&data_dir, &base_url) {
+        tracing::warn!("could not write core-url file: {error:#}");
+    }
+
     #[cfg(feature = "ui")]
     {
         run_window(&base_url).await?;
@@ -46,5 +54,16 @@ async fn run_window(base_url: &str) -> anyhow::Result<()> {
         })
         .run(tauri::generate_context!())
         .map_err(|error| anyhow::anyhow!("tauri runtime failed: {error}"))?;
+    Ok(())
+}
+
+/// Write the sidecar base URL next to the database so tooling and the
+/// dev-mode SPA can discover the ephemeral port without hardcoding it.
+fn write_core_url_file(data_dir: &std::path::Path, base_url: &str) -> anyhow::Result<()> {
+    let path = data_dir.join("logholizon").join("core-url.txt");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, base_url)?;
     Ok(())
 }

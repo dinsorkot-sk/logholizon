@@ -10,7 +10,10 @@ export default defineNuxtConfig({
   runtimeConfig: {
     coreUrl: process.env.CORE_URL || 'http://127.0.0.1:8787',
     public: {
-      desktop: process.env.LOGHOLIZON_DESKTOP === '1'
+      desktop: process.env.LOGHOLIZON_DESKTOP === '1',
+      // Sidecar URL for desktop devUrl/static SPA (ephemeral port).
+      // Tauri dev sets this per-run; default matches `cargo run` sidecar.
+      desktopCoreUrl: process.env.DESKTOP_CORE_URL || 'http://127.0.0.1:8787'
     }
   },
   devtools: { enabled: process.env.NODE_ENV !== 'production' }

@@ -7,7 +7,8 @@
     "frontendDist": "../../app/.output/public",
     "devUrl": "http://localhost:3000",
     "beforeDevCommand": "pnpm --filter nexa run dev:desktop",
-    "beforeBuildCommand": "pnpm --filter nexa run build:desktop"
+    "beforeBuildCommand": "pnpm --filter nexa run build:desktop",
+    "features": ["ui"]
   },
   "app": {
     "windows": [
