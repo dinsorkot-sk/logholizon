@@ -31,6 +31,9 @@ playwright-report/
 playwright/.cache/
 **/playwright/.cache/
 
+# Tauri (auto-generated capability/schema files)
+packages/desktop/src-tauri/gen/
+
 # Environment files
 .env
 .env.*

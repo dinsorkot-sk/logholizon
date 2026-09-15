@@ -21,7 +21,7 @@ export default function desktopModule(_options: Record<string, unknown>, nuxt: a
       "import { $fetch as _$fetch } from 'ofetch'",
       "import { baseURL } from '#internal/nuxt/paths'",
       "import { createDesktopFetch } from '../app/utils/desktop-fetch'",
-      "import { solutionCatalog, solutionPackage } from '../server/api/solutions/catalog'",
+      "import { solutionCatalog, solutionPackage } from '#shared/utils/solution-catalog'",
       'const __baseFetch = _$fetch.create({',
       '  baseURL: baseURL()',
       '})',

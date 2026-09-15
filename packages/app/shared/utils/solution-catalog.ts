@@ -1,14 +1,20 @@
 // Solution Library catalog: the ready-made ERP module packages shipped
 // in `packages/erp/`. Imported as JSON so the catalog is bundled at build
 // time and works identically in dev and production (no runtime file reads).
-import accounting from '../../../../erp/accounting.module.json'
-import dormitory from '../../../../erp/dormitory.module.json'
-import hr from '../../../../erp/hr.module.json'
-import inventory from '../../../../erp/inventory.module.json'
-import manufacturing from '../../../../erp/manufacturing.module.json'
-import pos from '../../../../erp/pos.module.json'
-import sales from '../../../../erp/sales.module.json'
-import vehicle from '../../../../erp/vehicle.module.json'
+//
+// Lives in `shared/` (not `server/`) on purpose: the desktop build's
+// `modules/desktop.ts` imports this from client-side code (the generated
+// `#build/fetch.mjs`), and Nuxt's server/client bundle isolation
+// (`impound`) blocks client code from importing anything under `server/`.
+// This file has no Vue or Nitro dependencies, so it is safe to share.
+import accounting from '../../../erp/accounting.module.json'
+import dormitory from '../../../erp/dormitory.module.json'
+import hr from '../../../erp/hr.module.json'
+import inventory from '../../../erp/inventory.module.json'
+import manufacturing from '../../../erp/manufacturing.module.json'
+import pos from '../../../erp/pos.module.json'
+import sales from '../../../erp/sales.module.json'
+import vehicle from '../../../erp/vehicle.module.json'
 
 type PackageEntity = { name?: string; label?: string; fields?: unknown[] }
 export type ShippedPackage = {

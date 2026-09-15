@@ -49,6 +49,29 @@ cargo tauri dev
 cargo tauri build
 ```
 
+## Linux prerequisites (Debian/Ubuntu/WSL)
+
+The `ui` feature links GTK/WebKit/AppIndicator natively, so `cargo tauri
+dev` fails with `pkg-config` / `glib-sys` / `gobject-sys` errors until the
+system dev packages are installed (one-time, requires sudo):
+
+```bash
+sudo apt update
+sudo apt install -y build-essential curl wget file pkg-config libssl-dev \
+  libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+  librsvg2-dev libxdo-dev
+```
+
+Notes:
+
+- `libayatana-appindicator3-dev` is required because the `tauri` dependency
+  enables the `tray-icon` feature (`src-tauri/Cargo.toml`).
+- Ubuntu 22.04 ships `libwebkit2gtk-4.0-dev` instead of `-4.1-dev`; run
+  `apt-cache search libwebkit2gtk` and install whichever variant exists.
+- Verify with `pkg-config --exists glib-2.0 gtk+-3.0 webkit2gtk-4.1 && echo OK`.
+- WSL also needs WSLg for the GUI window to display; without it, use the
+  web-only fallback (`pnpm --dir ../app run dev`) for interactive UI work.
+
 Database: `$XDG_DATA_HOME/logholizon-desktop/logholizon/core.db` on Linux
 (`%APPDATA%` on Windows, `~/Library/Application Support` on macOS).
 Backups (`VACUUM INTO`) go next to it; restore still stages

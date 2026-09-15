@@ -1,4 +1,4 @@
-import { solutionPackage } from './catalog'
+import { solutionPackage } from '#shared/utils/solution-catalog'
 
 export default defineEventHandler((event) => {
   const name = getRouterParam(event, 'name') || ''

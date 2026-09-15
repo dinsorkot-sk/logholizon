@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { solutionCatalog, solutionPackage } from '../server/api/solutions/catalog'
+import { solutionCatalog, solutionPackage } from '../shared/utils/solution-catalog'
 
 describe('solutionCatalog', () => {
   it('lists all eight shipped ERP solutions', () => {

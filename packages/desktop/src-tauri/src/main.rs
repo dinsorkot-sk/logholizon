@@ -41,6 +41,8 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(feature = "ui")]
 async fn run_window(base_url: &str) -> anyhow::Result<()> {
+    use tauri::Emitter;
+
     // The window frontend is the Nuxt static SPA built into the bundle.
     // The base URL is exposed to the frontend via a Tauri event/asset so
     // direct `/v1` calls target the ephemeral sidecar port.

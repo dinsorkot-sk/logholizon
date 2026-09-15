@@ -66,7 +66,14 @@ pub async fn boot(data_dir: &std::path::Path) -> anyhow::Result<DesktopRuntime> 
     let database_url = desktop::desktop_database_url(data_dir).await?;
     let mut config = desktop::desktop_config(&database_url);
     config.host = "127.0.0.1".to_string();
-    config.port = 0;
+    // Ephemeral by default (real desktop shell reads the bound port back via
+    // `DesktopRuntime::base_url`). Set `CORE_PORT` to pin a fixed port when
+    // exercising the sidecar from a plain browser tab in dev (no Tauri
+    // window to receive the `logholizon:core-url` event), so it matches
+    // `DESKTOP_CORE_URL`/`NUXT_PUBLIC_DESKTOP_CORE_URL` on the Nuxt side.
+    if std::env::var("CORE_PORT").is_err() {
+        config.port = 0;
+    }
 
     let pool = desktop::boot_desktop_pool(&config.database_url).await?;
     let first_run = desktop::ensure_first_run(&pool).await?;
@@ -77,7 +84,7 @@ pub async fn boot(data_dir: &std::path::Path) -> anyhow::Result<DesktopRuntime> 
     spawn_background_loops(&config, &pool);
 
     let app = http::router(&config, pool.clone());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let listener = tokio::net::TcpListener::bind((config.host.as_str(), config.port)).await?;
     let addr = listener.local_addr()?;
     tracing::info!("logholizon-desktop core listening on {addr}");
     tokio::spawn(async move {
