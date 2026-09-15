@@ -7,6 +7,8 @@
     "dev": "turbo run dev --parallel",
     "test": "turbo run test",
     "check": "turbo run check",
+    "setup": "pnpm install && cargo run -p logholizon-cli -- migrate && cargo run -p logholizon-cli -- seed --demo",
+    "setup:db": "cargo run -p logholizon-cli -- migrate && cargo run -p logholizon-cli -- seed --demo",
     "desktop:build": "pnpm --dir packages/app run build:desktop",
     "desktop:dev": "pnpm --dir packages/desktop run dev:native",
     "desktop:bundle": "pnpm --dir packages/desktop run bundle",
