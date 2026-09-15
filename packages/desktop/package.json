@@ -8,7 +8,7 @@
     "build": "pnpm --dir ../app run build:desktop",
     "dev": "cargo tauri dev",
     "bundle": "cargo tauri build",
-    "setup": "cargo tauri --version >/dev/null 2>&1 || cargo install tauri-cli --version '=2.11.5' --locked",
+    "setup": "cargo tauri --version >/dev/null 2>&1 || cargo install tauri-cli --version '^2' --locked",
     "test": "cargo test -p logholizon-desktop --no-default-features",
     "check": "cargo clippy -p logholizon-desktop --no-default-features --all-targets -- -D warnings"
   }
