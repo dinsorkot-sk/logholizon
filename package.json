@@ -6,7 +6,12 @@
     "build": "turbo run build",
     "dev": "turbo run dev --parallel",
     "test": "turbo run test",
-    "check": "turbo run check"
+    "check": "turbo run check",
+    "desktop:build": "pnpm --dir packages/app run build:desktop",
+    "desktop:dev": "pnpm --dir packages/desktop run dev:native",
+    "desktop:bundle": "pnpm --dir packages/desktop run bundle",
+    "desktop:test": "cargo test -p logholizon-desktop --no-default-features",
+    "desktop:check": "cargo clippy -p logholizon-desktop --no-default-features --all-targets -- -D warnings"
   },
   "devDependencies": {
     "turbo": "^2.5.6"
