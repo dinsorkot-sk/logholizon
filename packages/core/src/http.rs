@@ -526,6 +526,10 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
         .route("/v1/dashboard/pm", get(dashboard_pm))
         .route("/v1/reports/aggregate", get(report_aggregate))
         .route(
+            "/v1/entities/{id}/reports/preview",
+            axum::routing::post(preview_report),
+        )
+        .route(
             "/v1/entities/{id}/actions/{action_id}",
             axum::routing::post(execute_module_action),
         )
@@ -2405,6 +2409,32 @@ async fn dashboard_pm(
 pub struct ReportAggregateQuery {
     pub entity_id: String,
     pub group_by: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PreviewReportRequest {
+    #[serde(default)]
+    pub config: serde_json::Value,
+}
+
+/// Stateless ad-hoc report preview: runs an unsaved `ReportConfig` against
+/// an entity without persisting anything. Used by the visual Dashboard
+/// Builder to preview widgets before the dashboard is saved.
+async fn preview_report(
+    State(state): State<AppState>,
+    user: Option<axum::extract::Extension<auth::User>>,
+    Path(id): Path<String>,
+    Json(input): Json<PreviewReportRequest>,
+) -> Result<Json<crate::report::ReportResult>, AppError> {
+    repository::check_permission(&state.pool, &id, &current_role(&user), false)
+        .await
+        .map_err(map_db_error)?;
+    let config: crate::report::ReportConfig =
+        serde_json::from_value(input.config).map_err(|e| AppError::BadRequest(e.to_string()))?;
+    crate::report::run(&state.pool, &id, &config, &current_role(&user))
+        .await
+        .map(Json)
+        .map_err(map_db_error)
 }
 
 async fn report_aggregate(

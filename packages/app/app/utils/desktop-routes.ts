@@ -75,6 +75,7 @@ const DYNAMIC: { pattern: RegExp; keys: string[]; core: string; method?: string 
   { pattern: /^\/api\/entities\/([^/]+)\/import-preview$/, keys: ['id'], core: '/v1/entities/:id/import/preview', method: 'POST' },
   { pattern: /^\/api\/entities\/([^/]+)\/options$/, keys: ['id'], core: '/v1/entities/:id/options' },
   { pattern: /^\/api\/entities\/([^/]+)\/reports$/, keys: ['id'], core: '/v1/entities/:id/reports' },
+  { pattern: /^\/api\/entities\/([^/]+)\/reports\/preview$/, keys: ['id'], core: '/v1/entities/:id/reports/preview', method: 'POST' },
   { pattern: /^\/api\/entities\/([^/]+)\/views$/, keys: ['id'], core: '/v1/entities/:id/views' },
   { pattern: /^\/api\/entities\/([^/]+)\/workflow$/, keys: ['id'], core: '/v1/entities/:id/workflow' },
   { pattern: /^\/api\/entities\/([^/]+)$/, keys: ['id'], core: '/v1/entities/:id' },

@@ -702,6 +702,14 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       request<CoreReportBucket[]>('/v1/reports/aggregate', {
         query: { entity_id: entityId, group_by: groupBy }
       }),
+    previewReport: (
+      entityId: string,
+      input: { config: Record<string, unknown> }
+    ): Promise<{ columns: string[]; rows: Record<string, unknown>[]; total: number }> =>
+      request<{ columns: string[]; rows: Record<string, unknown>[]; total: number }>(
+        `/v1/entities/${encodeURIComponent(entityId)}/reports/preview`,
+        { method: 'POST', body: input }
+      ),
     listReports: (entityId: string): Promise<CoreReport[]> =>
       request<CoreReport[]>(`/v1/meta/entities/${encodeURIComponent(entityId)}/reports`),
     createReport: (
