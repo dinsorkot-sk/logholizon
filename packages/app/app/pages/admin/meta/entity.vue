@@ -444,12 +444,22 @@ function confirmDeleteRule(rule: NotificationRule) {
 
 // --- Module actions ---
 const actionOpen = ref(false)
-const actionForm = reactive({ name: '', label: '', kind: 'webhook', config: '{}' })
+// Per-kind scratch fields so switching `kind` doesn't lose typed data:
+// `config` (JSON string) is only used by notify/webhook/generate;
+// `changeStatusState` feeds change_status; `formulaExpression` feeds formula.
+const actionForm = reactive({ name: '', label: '', kind: 'webhook', config: '{}', changeStatusState: '', formulaExpression: '' })
 const actionError = ref('')
 const savingAction = ref(false)
 const deleteActionOpen = ref(false)
 const actionToDelete = ref<ModuleAction | null>(null)
 const deletingAction = ref(false)
+
+// Status-field options of the currently selected entity, for the
+// change_status action kind. Empty when the entity has no status field.
+const actionStatusOptions = computed(() => {
+  const statusField = (detail.value?.fields || []).find(f => f.is_status)
+  return (statusField?.options || []).map(o => ({ label: o.label || o.value, value: o.value }))
+})
 
 const actionKindItems = [
   { label: 'Create record', value: 'create' },
@@ -467,6 +477,8 @@ function openAddAction() {
   actionForm.label = ''
   actionForm.kind = 'webhook'
   actionForm.config = '{}'
+  actionForm.changeStatusState = ''
+  actionForm.formulaExpression = ''
   actionError.value = ''
   actionOpen.value = true
 }
@@ -478,12 +490,29 @@ async function saveAction() {
     actionError.value = 'name and label are required'
     return
   }
+  // Build the config object per kind, matching what
+  // `execute_module_action` in Core actually reads. Only
+  // notify/webhook/generate accept free-form JSON.
   let config: Record<string, unknown> = {}
-  try {
-    config = actionForm.config.trim() ? JSON.parse(actionForm.config) : {}
-  } catch {
-    actionError.value = 'config must be valid JSON'
-    return
+  if (actionForm.kind === 'change_status') {
+    if (!actionForm.changeStatusState) {
+      actionError.value = 'target status is required'
+      return
+    }
+    config = { state: actionForm.changeStatusState }
+  } else if (actionForm.kind === 'formula') {
+    if (!actionForm.formulaExpression.trim()) {
+      actionError.value = 'expression is required'
+      return
+    }
+    config = { expression: actionForm.formulaExpression.trim() }
+  } else if (actionForm.kind === 'notify' || actionForm.kind === 'webhook' || actionForm.kind === 'generate') {
+    try {
+      config = actionForm.config.trim() ? JSON.parse(actionForm.config) : {}
+    } catch {
+      actionError.value = 'config must be valid JSON'
+      return
+    }
   }
   savingAction.value = true
   try {
@@ -2047,7 +2076,31 @@ const fieldColumns: TableColumn<Field>[] = [
             <UFormField label="Kind">
               <USelect v-model="actionForm.kind" :items="actionKindItems" />
             </UFormField>
-            <UFormField label="Config" hint="JSON object passed to the action">
+            <UAlert
+              v-if="actionForm.kind === 'create' || actionForm.kind === 'update' || actionForm.kind === 'delete'"
+              color="neutral"
+              variant="subtle"
+              title="No config needed"
+              description="The payload is provided when the action runs on a record."
+            />
+            <UFormField v-else-if="actionForm.kind === 'change_status'" label="Target status">
+              <USelectMenu
+                v-model="actionForm.changeStatusState"
+                :items="actionStatusOptions"
+                value-key="value"
+                class="w-full"
+                placeholder="Pick a status…"
+                :disabled="!actionStatusOptions.length"
+              />
+              <template #hint>
+                <span v-if="!actionStatusOptions.length" class="text-warning">This entity has no status field yet — add one in the Fields tab first.</span>
+                <span v-else>Must match one of this entity's status options.</span>
+              </template>
+            </UFormField>
+            <UFormField v-else-if="actionForm.kind === 'formula'" label="Expression" hint="Template with {field} placeholders, e.g. {title} - {sku}">
+              <UInput v-model="actionForm.formulaExpression" placeholder="{title} - {sku}" class="font-mono" />
+            </UFormField>
+            <UFormField v-else label="Config" hint="Advanced: JSON payload forwarded as-is to the integration">
               <UTextarea v-model="actionForm.config" :rows="4" placeholder="{}" class="font-mono" />
             </UFormField>
             <UAlert v-if="actionError" color="error" :title="actionError" />
