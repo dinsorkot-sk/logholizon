@@ -1,6 +1,18 @@
 @import "tailwindcss" theme(static);
 @import "@nuxt/ui";
 
+/* Form Layout drag-and-drop affordance (vue-draggable-plus / SortableJS).
+   Ghost = translucent placeholder where the item will land; chosen = the
+   item being dragged. Uses the app's brand green for the active state. */
+.layout-drag-ghost {
+  opacity: 0.4;
+  border: 1px dashed var(--ui-border-accented, #3ecf8e);
+  border-radius: 6px;
+}
+.layout-drag-chosen {
+  border-color: var(--ui-border-accented, #3ecf8e);
+}
+
 @theme static {
   --font-sans: 'Public Sans', sans-serif;
 

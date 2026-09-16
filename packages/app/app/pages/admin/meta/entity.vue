@@ -2,6 +2,7 @@
 definePageMeta({ middleware: 'auth' })
 
 import { h, nextTick, resolveComponent } from 'vue'
+import { VueDraggable } from 'vue-draggable-plus'
 import type { TableColumn } from '@nuxt/ui'
 
 const UButton = resolveComponent('UButton')
@@ -237,6 +238,22 @@ const unassignedFields = computed(() => {
   return (detail.value?.fields || []).filter(f => !f.is_status && !assigned.has(f.id))
 })
 
+// Writable mirror of the unassigned field ids so the tray can be a
+// VueDraggable source: dragging a pill out removes it from the tray and
+// vue-draggable-plus inserts it into the target section's `fields` array.
+// Dragging a field back here removes it from its section (same as Remove).
+const unassignedFieldIds = computed<string[]>({
+  get: () => unassignedFields.value.map(f => f.id),
+  set: (ids) => {
+    const keep = new Set(ids)
+    for (const section of layoutSections.value) {
+      const before = section.fields.length
+      section.fields = section.fields.filter(id => !keep.has(id))
+      if (section.fields.length !== before) markLayoutDirty()
+    }
+  }
+})
+
 const layoutPreview = computed(() => {
   const byId = new Map((detail.value?.fields || []).map(f => [f.id, f]))
   const sections = layoutSections.value
@@ -250,6 +267,20 @@ const layoutPreview = computed(() => {
 
 function markLayoutDirty() {
   layoutDirty.value = true
+}
+
+// --- Drag-and-drop (vue-draggable-plus / SortableJS) ---
+// All field lists (every section + the unassigned tray) share one group so
+// fields can be dragged within a section, between sections, and from the
+// tray into any section. vue-draggable-plus mutates the bound arrays
+// directly, so we only need to mark the layout dirty on drop.
+// NOTE: the group object must be a stable reference (defined once here, not
+// inline in the template) — SortableJS compares group identity across lists
+// to allow cross-list transfers.
+const layoutFieldGroup = { name: 'layout-fields', pull: true, put: true }
+
+function onLayoutDragEnd() {
+  markLayoutDirty()
 }
 
 function openAddSection() {
@@ -1426,49 +1457,102 @@ const fieldColumns: TableColumn<Field>[] = [
                 <div v-if="!layoutSections.length" class="py-8 text-center text-sm text-muted">
                   No sections yet. Add a section, then assign fields to it. Unassigned fields render under “Other”.
                 </div>
-                <UCard v-for="(section, sectionIndex) in layoutSections" :key="section.id">
+                <UCard v-if="unassignedFields.length">
                   <template #header>
                     <div class="flex items-center justify-between">
-                      <p class="text-sm font-semibold">{{ section.label }} <span class="font-mono text-xs text-muted">{{ section.id }}</span></p>
-                      <div class="flex gap-1">
-                        <UButton size="xs" variant="ghost" icon="i-lucide-arrow-up" :disabled="sectionIndex === 0" @click="moveSection(sectionIndex, -1)" />
-                        <UButton size="xs" variant="ghost" icon="i-lucide-arrow-down" :disabled="sectionIndex === layoutSections.length - 1" @click="moveSection(sectionIndex, 1)" />
-                        <UButton size="xs" variant="ghost" color="error" @click="removeSection(sectionIndex)">Remove</UButton>
-                      </div>
+                      <p class="text-sm font-semibold">Unassigned fields <span class="text-xs font-normal text-muted">drag into a section</span></p>
+                      <UBadge color="neutral" variant="subtle">{{ unassignedFields.length }}</UBadge>
                     </div>
                   </template>
-                  <div v-if="!section.fields.length" class="py-2 text-sm text-muted">No fields in this section yet.</div>
-                  <div v-else class="space-y-1">
-                    <div v-for="(fieldId, fieldIndex) in section.fields" :key="fieldId" class="flex items-center justify-between gap-2 rounded border border-default px-3 py-1.5">
-                      <span class="font-mono text-sm">{{ fieldName(fieldId) }}</span>
-                      <div class="flex gap-1">
-                        <UButton size="xs" variant="ghost" icon="i-lucide-arrow-up" :disabled="fieldIndex === 0" @click="moveField(sectionIndex, fieldIndex, -1)" />
-                        <UButton size="xs" variant="ghost" icon="i-lucide-arrow-down" :disabled="fieldIndex === section.fields.length - 1" @click="moveField(sectionIndex, fieldIndex, 1)" />
-                        <USelectMenu
-                          :model-value="String(sectionIndex)"
-                          :items="layoutSections.map((s, i) => ({ label: s.label, value: String(i) }))"
-                          value-key="value"
-                          size="xs"
-                          class="w-28"
-                          aria-label="Move field to section"
-                          @update:model-value="(value: string) => moveFieldToSection(sectionIndex, fieldIndex, Number(value))"
-                        />
-                        <UButton size="xs" variant="ghost" color="error" @click="removeFieldFromLayout(sectionIndex, fieldIndex)">Remove</UButton>
-                      </div>
+                  <VueDraggable
+                    v-model="unassignedFieldIds"
+                    :group="layoutFieldGroup"
+                    :animation="150"
+                    handle=".field-drag-handle"
+                    ghost-class="layout-drag-ghost"
+                    chosen-class="layout-drag-chosen"
+                    class="flex min-h-10 flex-wrap gap-1.5"
+                    @end="onLayoutDragEnd"
+                  >
+                    <div
+                      v-for="fieldId in unassignedFieldIds"
+                      :key="fieldId"
+                      class="field-drag-handle flex cursor-grab items-center gap-1.5 rounded border border-default bg-elevated px-2.5 py-1.5 text-sm active:cursor-grabbing"
+                      :title="`Drag ${fieldName(fieldId)} into a section`"
+                    >
+                      <UIcon name="i-lucide-grip-vertical" class="size-3.5 shrink-0 text-muted" />
+                      <span class="font-mono">{{ fieldName(fieldId) }}</span>
                     </div>
-                  </div>
-                  <div class="mt-2 flex items-center gap-2">
-                    <USelectMenu
-                      :model-value="''"
-                      :items="unassignedFields.map(f => ({ label: f.name, value: f.id }))"
-                      value-key="value"
-                      placeholder="Add field…"
-                      size="xs"
-                      class="w-48"
-                      @update:model-value="(value: string) => addFieldToSection(sectionIndex, value)"
-                    />
-                  </div>
+                  </VueDraggable>
                 </UCard>
+                <VueDraggable
+                  v-model="layoutSections"
+                  :animation="150"
+                  handle=".section-drag-handle"
+                  ghost-class="layout-drag-ghost"
+                  chosen-class="layout-drag-chosen"
+                  class="space-y-4"
+                  @end="onLayoutDragEnd"
+                >
+                  <UCard v-for="(section, sectionIndex) in layoutSections" :key="section.id">
+                    <template #header>
+                      <div class="flex items-center justify-between">
+                        <div class="flex min-w-0 items-center gap-1.5">
+                          <UIcon name="i-lucide-grip-vertical" class="section-drag-handle size-4 shrink-0 cursor-grab text-muted active:cursor-grabbing" title="Drag to reorder section" />
+                          <p class="truncate text-sm font-semibold">{{ section.label }} <span class="font-mono text-xs text-muted">{{ section.id }}</span></p>
+                        </div>
+                        <div class="flex gap-1">
+                          <UButton size="xs" variant="ghost" icon="i-lucide-arrow-up" :disabled="sectionIndex === 0" @click="moveSection(sectionIndex, -1)" />
+                          <UButton size="xs" variant="ghost" icon="i-lucide-arrow-down" :disabled="sectionIndex === layoutSections.length - 1" @click="moveSection(sectionIndex, 1)" />
+                          <UButton size="xs" variant="ghost" color="error" @click="removeSection(sectionIndex)">Remove</UButton>
+                        </div>
+                      </div>
+                    </template>
+                    <VueDraggable
+                      v-model="section.fields"
+                      :group="layoutFieldGroup"
+                      :animation="150"
+                      handle=".field-drag-handle"
+                      ghost-class="layout-drag-ghost"
+                      chosen-class="layout-drag-chosen"
+                      class="min-h-10 space-y-1"
+                      @end="onLayoutDragEnd"
+                    >
+                      <div v-if="!section.fields.length" class="pointer-events-none rounded border border-dashed border-default px-3 py-2 text-center text-sm text-muted">Drop fields here</div>
+                      <div v-for="(fieldId, fieldIndex) in section.fields" :key="fieldId" class="flex items-center justify-between gap-2 rounded border border-default px-3 py-1.5">
+                        <div class="flex min-w-0 items-center gap-1.5">
+                          <UIcon name="i-lucide-grip-vertical" class="field-drag-handle size-3.5 shrink-0 cursor-grab text-muted active:cursor-grabbing" :title="`Drag ${fieldName(fieldId)} to reorder`" />
+                          <span class="truncate font-mono text-sm">{{ fieldName(fieldId) }}</span>
+                        </div>
+                        <div class="flex gap-1">
+                          <UButton size="xs" variant="ghost" icon="i-lucide-arrow-up" :disabled="fieldIndex === 0" @click="moveField(sectionIndex, fieldIndex, -1)" />
+                          <UButton size="xs" variant="ghost" icon="i-lucide-arrow-down" :disabled="fieldIndex === section.fields.length - 1" @click="moveField(sectionIndex, fieldIndex, 1)" />
+                          <USelectMenu
+                            :model-value="String(sectionIndex)"
+                            :items="layoutSections.map((s, i) => ({ label: s.label, value: String(i) }))"
+                            value-key="value"
+                            size="xs"
+                            class="w-28"
+                            aria-label="Move field to section"
+                            @update:model-value="(value: string) => moveFieldToSection(sectionIndex, fieldIndex, Number(value))"
+                          />
+                          <UButton size="xs" variant="ghost" color="error" @click="removeFieldFromLayout(sectionIndex, fieldIndex)">Remove</UButton>
+                        </div>
+                      </div>
+                    </VueDraggable>
+                    <div class="mt-2 flex items-center gap-2">
+                      <USelectMenu
+                        :model-value="''"
+                        :items="unassignedFields.map(f => ({ label: f.name, value: f.id }))"
+                        value-key="value"
+                        placeholder="Add field…"
+                        size="xs"
+                        class="w-48"
+                        @update:model-value="(value: string) => addFieldToSection(sectionIndex, value)"
+                      />
+                    </div>
+                  </UCard>
+                </VueDraggable>
                 <UCard>
                   <template #header>
                     <p class="text-sm font-semibold">Preview</p>
