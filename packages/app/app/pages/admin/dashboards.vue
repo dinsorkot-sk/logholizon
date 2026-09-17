@@ -88,7 +88,8 @@ const saving = ref(false)
 const loading = ref(false)
 const loadError = ref('')
 const saveError = ref('')
-const form = reactive({ name: '', description: '', active: true, roles: '', users: '', filters: '{}' })
+const form = reactive({ name: '', description: '', active: true, roles: '', users: '' })
+const dashboardFilters = ref<{ field: string; value: string }[]>([])
 const widgets = ref<DashboardWidget[]>([])
 const widgetsDirty = ref(false)
 const widgetResults = ref<Record<string, WidgetResult['result']>>({})
@@ -126,6 +127,14 @@ function toWidget(raw: unknown, index: number): DashboardWidget {
 
 function markWidgetsDirty() {
   widgetsDirty.value = true
+}
+
+function addDashboardFilterRow() {
+  dashboardFilters.value.push({ field: '', value: '' })
+}
+
+function removeDashboardFilterRow(index: number) {
+  dashboardFilters.value.splice(index, 1)
 }
 
 // grid-layout-plus binding: the grid needs `{i,x,y,w,h}` items keyed by
@@ -169,7 +178,8 @@ async function load() {
 }
 function select(d: CoreDashboard) {
   selected.value = d
-  Object.assign(form, { name: d.name, description: d.description, active: d.active, roles: d.roles.join(','), users: d.users.join(','), filters: JSON.stringify(d.filters, null, 2) })
+  Object.assign(form, { name: d.name, description: d.description, active: d.active, roles: d.roles.join(','), users: d.users.join(',') })
+  dashboardFilters.value = Object.entries(d.filters || {}).map(([field, value]) => ({ field, value: String(value) }))
   widgets.value = Array.isArray(d.layout) ? d.layout.map((w, i) => toWidget(w, i)) : []
   widgetsDirty.value = false
   widgetResults.value = {}
@@ -177,7 +187,8 @@ function select(d: CoreDashboard) {
 }
 function reset() {
   selected.value = null
-  Object.assign(form, { name: '', description: '', active: true, roles: '', users: '', filters: '{}' })
+  Object.assign(form, { name: '', description: '', active: true, roles: '', users: '' })
+  dashboardFilters.value = []
   widgets.value = []
   widgetsDirty.value = false
   widgetResults.value = {}
@@ -187,6 +198,13 @@ async function save() {
   saving.value = true
   saveError.value = ''
   try {
+    // Compose dashboard filters object from rows (flat map: {field: value})
+    const filters: Record<string, unknown> = {}
+    for (const row of dashboardFilters.value) {
+      if (row.field.trim()) {
+        filters[row.field.trim()] = row.value
+      }
+    }
     const payload = {
       name: form.name,
       description: form.description,
@@ -194,7 +212,7 @@ async function save() {
       roles: form.roles.split(',').map(x => x.trim()).filter(Boolean),
       users: form.users.split(',').map(x => x.trim()).filter(Boolean),
       layout: widgets.value,
-      filters: JSON.parse(form.filters)
+      filters
     }
     if (selected.value) await $fetch(`/api/meta/dashboards/${selected.value.id}`, { method: 'PUT', body: payload })
     else await $fetch('/api/meta/dashboards', { method: 'POST', body: payload })
@@ -392,7 +410,22 @@ await load()
             <div v-else class="space-y-2"><button v-for="d in dashboards" :key="d.id" class="w-full rounded px-3 py-2 text-left hover:bg-muted" @click="select(d)"><div class="font-medium">{{ d.name }}</div><div class="text-xs text-muted">{{ d.layout.length }} widgets</div></button></div>
           </UCard>
           <UCard>
-            <div class="grid gap-4 md:grid-cols-2"><UInput v-model="form.name" placeholder="Dashboard name" /><UInput v-model="form.description" placeholder="Description" /><UInput v-model="form.roles" placeholder="Roles, comma separated" /><UInput v-model="form.users" placeholder="Users, comma separated" /><UTextarea v-model="form.filters" :rows="5" placeholder="Dashboard filters JSON" /></div>
+            <div class="grid gap-4 md:grid-cols-2"><UInput v-model="form.name" placeholder="Dashboard name" /><UInput v-model="form.description" placeholder="Description" /><UInput v-model="form.roles" placeholder="Roles, comma separated" /><UInput v-model="form.users" placeholder="Users, comma separated" /></div>
+            <div class="mt-4">
+              <div class="mb-2 flex items-center justify-between">
+                <div>
+                  <p class="text-sm font-medium">Dashboard filters</p>
+                  <p class="text-xs text-muted">Applied to every widget as an exact match</p>
+                </div>
+                <UButton size="xs" variant="outline" icon="i-lucide-plus" @click="addDashboardFilterRow">Add filter</UButton>
+              </div>
+              <div v-if="!dashboardFilters.length" class="py-2 text-center text-xs text-muted">No filters — all widgets display all records.</div>
+              <div v-for="(filter, fi) in dashboardFilters" :key="fi" class="mb-2 flex items-center gap-2">
+                <UInput v-model="filter.field" size="xs" class="w-40" placeholder="Field name" />
+                <UInput v-model="filter.value" size="xs" class="flex-1" placeholder="Value" />
+                <UButton size="xs" variant="ghost" color="error" icon="i-lucide-trash" @click="removeDashboardFilterRow(fi)" />
+              </div>
+            </div>
             <div class="mt-4 flex items-center justify-between">
               <p class="text-sm text-muted">{{ widgets.length }} widgets · drag to move, resize from the corner</p>
               <UButton size="sm" icon="i-lucide-plus" @click="openAddWidget">Add widget</UButton>
