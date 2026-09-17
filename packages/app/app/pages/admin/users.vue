@@ -162,7 +162,16 @@ const userColumns: TableColumn<UserRow>[] = [
   {
     accessorKey: 'role',
     header: 'Role',
-    cell: ({ row }) => h(UBadge, { color: row.original.role === 'admin' ? 'primary' : 'neutral', variant: 'subtle' }, () => row.original.role)
+    cell: ({ row }) => {
+      const roleColors: Record<string, string> = {
+        admin: 'primary',
+        manager: 'warning',
+        operator: 'info',
+        user: 'neutral',
+        viewer: 'gray'
+      }
+      return h(UBadge, { color: roleColors[row.original.role] || 'neutral', variant: 'subtle' }, () => row.original.role)
+    }
   },
   {
     accessorKey: 'created_at',
@@ -238,7 +247,13 @@ const userColumns: TableColumn<UserRow>[] = [
             <UFormField label="Role">
               <USelectMenu
                 v-model="createForm.role"
-                :items="[{ label: 'User', value: 'user' }, { label: 'Admin', value: 'admin' }]"
+                :items="[
+                  { label: 'Admin', value: 'admin' },
+                  { label: 'Manager', value: 'manager' },
+                  { label: 'Operator', value: 'operator' },
+                  { label: 'User', value: 'user' },
+                  { label: 'Viewer', value: 'viewer' }
+                ]"
                 value-key="value"
                 class="w-full"
               />
@@ -264,7 +279,13 @@ const userColumns: TableColumn<UserRow>[] = [
             <UFormField label="Role">
               <USelectMenu
                 v-model="roleValue"
-                :items="[{ label: 'User', value: 'user' }, { label: 'Admin', value: 'admin' }]"
+                :items="[
+                  { label: 'Admin', value: 'admin' },
+                  { label: 'Manager', value: 'manager' },
+                  { label: 'Operator', value: 'operator' },
+                  { label: 'User', value: 'user' },
+                  { label: 'Viewer', value: 'viewer' }
+                ]"
                 value-key="value"
                 class="w-full"
               />

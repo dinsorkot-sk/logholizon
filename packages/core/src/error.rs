@@ -9,6 +9,10 @@ use serde::Serialize;
 pub struct ApiError {
     pub code: String,
     pub message: String,
+    /// Optional request ID for tracking/debugging. Usually available in
+    /// response header `x-request-id`; included in JSON body for convenience.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
 }
 
 impl ApiError {
@@ -16,7 +20,13 @@ impl ApiError {
         Self {
             code: code.into(),
             message: message.into(),
+            request_id: None,
         }
+    }
+
+    pub fn with_request_id(mut self, request_id: String) -> Self {
+        self.request_id = Some(request_id);
+        self
     }
 }
 
