@@ -85,8 +85,31 @@ pub async fn restore(source: &Path, destination: &Path) -> Result<Option<std::pa
     };
     let temporary = destination.with_extension("restore.tmp");
     tokio::fs::copy(source, &temporary).await?;
+    // SQLite WAL/SHM files belong to the database currently at the destination.
+    // Keeping them after replacing the main file can make SQLite replay stale
+    // pages from the previous database and fail integrity checks. The source
+    // was validated above, and callers must close all destination connections
+    // before restore, so these sidecars are safe to remove before the swap.
+    remove_sqlite_sidecars(destination).await?;
+    remove_sqlite_sidecars(&temporary).await?;
     tokio::fs::rename(&temporary, destination).await?;
     Ok(rollback)
+}
+
+async fn remove_sqlite_sidecars(database: &Path) -> Result<()> {
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = database.with_extension(format!(
+            "{}{}",
+            database.extension().and_then(|ext| ext.to_str()).unwrap_or(""),
+            suffix
+        ));
+        match tokio::fs::remove_file(&sidecar).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
 }
 
 /// Apply a staged restore file (if present) before the pool connects.
