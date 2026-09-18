@@ -60,6 +60,7 @@ pub async fn restore(source: &Path, destination: &Path) -> Result<Option<std::pa
     }
     // Preserve the live database before replacing it.
     let rollback = if destination.is_file() {
+        checkpoint_sqlite(destination).await?;
         // Nanosecond resolution so two restores within the same second
         // (e.g. a DR drill that restores then undoes) never collide.
         let timestamp = std::time::SystemTime::now()
@@ -94,6 +95,19 @@ pub async fn restore(source: &Path, destination: &Path) -> Result<Option<std::pa
     remove_sqlite_sidecars(&temporary).await?;
     tokio::fs::rename(&temporary, destination).await?;
     Ok(rollback)
+}
+
+async fn checkpoint_sqlite(database: &Path) -> Result<()> {
+    let url = format!("sqlite://{}?mode=rwc", database.to_string_lossy());
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&url)
+        .await?;
+    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&pool)
+        .await?;
+    pool.close().await;
+    Ok(())
 }
 
 async fn remove_sqlite_sidecars(database: &Path) -> Result<()> {
