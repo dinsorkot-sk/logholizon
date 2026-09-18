@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---------- Stage 1: Rust core ----------
-FROM rust:1.85-slim AS core-build
+FROM rust:1.88-slim AS core-build
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY packages/core/Cargo.toml packages/core/Cargo.toml
