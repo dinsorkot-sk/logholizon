@@ -56,7 +56,15 @@ test('Phase 20: user-facing Module Builder creates a complete business domain sh
     await entityLabelInput.press('Tab')
     await expect(entityNameInput).toHaveValue(entityName)
     await expect(addEntityButton).toBeEnabled()
+    const updateResponsePromise = page.waitForResponse(response =>
+      response.url().includes(`/api/modules/${encodeURIComponent(createdBeforeNavigation.id)}`)
+      && response.request().method() === 'PUT'
+    )
     await addEntityButton.click()
+    const updateResponse = await updateResponsePromise
+    expect(updateResponse.status()).toBe(200)
+    const updatedModule = await updateResponse.json()
+    expect(updatedModule.definition.entities.map((candidate: { name: string }) => candidate.name)).toContain(entityName)
     await expect(entityBuilder).toHaveAttribute('data-saving', 'false', { timeout: 15_000 })
     await expect.poll(async () => {
       const response = await page.request.get(`/api/modules/${encodeURIComponent(createdBeforeNavigation.id)}?fresh=${Date.now()}`, {
