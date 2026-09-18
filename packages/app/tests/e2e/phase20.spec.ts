@@ -46,15 +46,19 @@ test('Phase 20: user-facing Module Builder creates a complete business domain sh
     ['rental', 'Rental']
   ]) {
     const [entityName, entityLabel] = entity
+    const entityBuilder = page.getByTestId('entity-builder')
     const entityNameInput = page.getByLabel('Entity name (snake_case)', { exact: true })
     const entityLabelInput = page.getByLabel('Entity label', { exact: true })
     const addEntityButton = page.getByRole('button', { name: 'Add entity' })
+    await expect(entityBuilder).toHaveAttribute('data-saving', 'false', { timeout: 15_000 })
     await entityNameInput.fill(entityName)
     await entityLabelInput.fill(entityLabel)
+    await entityLabelInput.press('Tab')
     await expect(entityNameInput).toHaveValue(entityName)
     await expect(addEntityButton).toBeEnabled()
     await addEntityButton.click()
     await expect(page.getByRole('heading', { name: new RegExp(`^${entityName} ·`) })).toBeVisible({ timeout: 15_000 })
+    await expect(entityBuilder).toHaveAttribute('data-saving', 'false', { timeout: 15_000 })
   }
 
   // The builder persists metadata immediately; verify the runtime can now load
