@@ -60,7 +60,7 @@ test('Phase 20: user-facing Module Builder creates a complete business domain sh
     await expect(entityBuilder).toHaveAttribute('data-saving', 'false', { timeout: 15_000 })
     await expect.poll(async () => {
       const current = await page.evaluate(async (moduleId) => {
-        const response = await fetch(`/api/modules/${encodeURIComponent(moduleId)}`)
+        const response = await fetch(`/api/modules/${encodeURIComponent(moduleId)}?fresh=${Date.now()}`, { cache: 'no-store' })
         return response.json()
       }, createdBeforeNavigation.id)
       return current.definition.entities.some((candidate: { name: string }) => candidate.name === entityName)
