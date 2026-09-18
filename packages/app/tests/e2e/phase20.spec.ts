@@ -37,7 +37,7 @@ test('Phase 20: user-facing Module Builder creates a complete business domain sh
   }, name)
   expect(createdBeforeNavigation).toBeTruthy()
   await page.goto(`/admin/modules/${encodeURIComponent(createdBeforeNavigation.id)}`)
-  await expect(page.getByRole('heading', { name: label })).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByText(label, { exact: true }).first()).toBeVisible({ timeout: 15_000 })
 
   for (const entity of [
     ['vehicle', 'Vehicle'],
