@@ -31,7 +31,7 @@ test('Phase 20: user-facing Module Builder creates a complete business domain sh
   await createDialog.getByRole('button', { name: 'Create', exact: true }).click()
 
   await expect(page.getByText(label, { exact: true })).toBeVisible({ timeout: 15_000 })
-  await page.getByText(label, { exact: true }).click()
+  await page.getByRole('link', { name: new RegExp(label) }).click()
   await expect(page.getByRole('heading', { name: label })).toBeVisible({ timeout: 15_000 })
 
   for (const entity of [
