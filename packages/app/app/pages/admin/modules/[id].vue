@@ -740,7 +740,7 @@ async function rollback(version: number) {
             <UInput v-model="entityForm.name" aria-label="Entity name (snake_case)" placeholder="vehicle (snake_case)" />
             <UInput v-model="entityForm.label" aria-label="Entity label" placeholder="Vehicle" />
             <UInput v-model="entityForm.description" aria-label="Entity description" placeholder="Description (optional)" />
-            <UButton :loading="saving" :disabled="!entityForm.name.trim()" @click="addEntity">Add entity</UButton>
+            <UButton :disabled="saving" @click="addEntity">Add entity</UButton>
           </div>
           <div v-for="entity in entities" :key="entity.name" class="mb-4 rounded-lg border border-muted p-3">
             <div class="flex items-center justify-between">
