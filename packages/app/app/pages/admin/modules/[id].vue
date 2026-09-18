@@ -241,7 +241,7 @@ async function saveDefinition(definition: { entities: ModuleEntity[]; settings?:
   saving.value = true
   try {
     const updated = await $fetch<Module>(`/api/modules/${encodeURIComponent(moduleId.value)}`, { method: 'PUT', body: { definition } })
-    module.value = updated
+    module.value = { ...updated, definition }
     toast.add({ title: message, color: 'success', icon: 'i-lucide-check' })
   } catch (cause: any) {
     saveError.value = cause?.data?.message || cause?.statusMessage || 'Save failed'
