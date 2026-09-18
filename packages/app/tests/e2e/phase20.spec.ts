@@ -41,8 +41,8 @@ test('Phase 20: user-facing Module Builder creates a complete business domain sh
     ['rental', 'Rental']
   ]) {
     const [entityName, entityLabel] = entity
-    await page.getByPlaceholder('vehicle (snake_case)').fill(entityName)
-    await page.getByPlaceholder('Vehicle').fill(entityLabel)
+    await page.getByLabel('Entity name (snake_case)', { exact: true }).fill(entityName)
+    await page.getByLabel('Entity label', { exact: true }).fill(entityLabel)
     await page.getByRole('button', { name: 'Add entity' }).click()
     await expect(page.getByRole('heading', { name: new RegExp(`^${entityName} ·`) })).toBeVisible({ timeout: 15_000 })
   }

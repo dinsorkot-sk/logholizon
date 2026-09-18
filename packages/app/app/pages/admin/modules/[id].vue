@@ -737,9 +737,9 @@ async function rollback(version: number) {
         <UCard>
           <template #header><h2 class="text-sm font-semibold">Entities</h2></template>
           <div class="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_1fr_auto]">
-            <UInput v-model="entityForm.name" placeholder="vehicle (snake_case)" />
-            <UInput v-model="entityForm.label" placeholder="Vehicle" />
-            <UInput v-model="entityForm.description" placeholder="Description (optional)" />
+            <UInput v-model="entityForm.name" aria-label="Entity name (snake_case)" placeholder="vehicle (snake_case)" />
+            <UInput v-model="entityForm.label" aria-label="Entity label" placeholder="Vehicle" />
+            <UInput v-model="entityForm.description" aria-label="Entity description" placeholder="Description (optional)" />
             <UButton :loading="saving" :disabled="!entityForm.name.trim()" @click="addEntity">Add entity</UButton>
           </div>
           <div v-for="entity in entities" :key="entity.name" class="mb-4 rounded-lg border border-muted p-3">
