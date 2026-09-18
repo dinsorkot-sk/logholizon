@@ -23,11 +23,11 @@ test('Phase 20: user-facing Module Builder creates a complete business domain sh
   const createDialog = page.getByRole('dialog')
   await expect.poll(async () => {
     await newModule.click()
-    return createDialog.getByPlaceholder('vehicle').count()
+    return createDialog.getByLabel('Name (snake_case)', { exact: true }).count()
   }, { timeout: 15_000 }).toBeGreaterThan(0)
-  await createDialog.getByPlaceholder('vehicle').fill(name)
-  await createDialog.getByPlaceholder('Vehicle Management').fill(label)
-  await createDialog.getByPlaceholder('Fleet, drivers, maintenance').fill('Phase 20 generic runtime acceptance')
+  await createDialog.getByLabel('Name (snake_case)', { exact: true }).fill(name)
+  await createDialog.getByLabel('Label', { exact: true }).fill(label)
+  await createDialog.getByLabel('Description', { exact: true }).fill('Phase 20 generic runtime acceptance')
   await createDialog.getByRole('button', { name: 'Create', exact: true }).click()
 
   await expect(page.getByText(label, { exact: true })).toBeVisible({ timeout: 15_000 })
