@@ -10,6 +10,7 @@ export default defineEventHandler(async (event) => {
   const session = await coreClient().login(body.username, body.password)
   setCookie(event, 'lh_session', session.token, {
     httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
     path: '/',
     maxAge: 60 * 60 * 24 * 7
