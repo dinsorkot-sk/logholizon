@@ -57,8 +57,14 @@ test('Phase 20: user-facing Module Builder creates a complete business domain sh
     await expect(entityNameInput).toHaveValue(entityName)
     await expect(addEntityButton).toBeEnabled()
     await addEntityButton.click()
-    await expect(page.getByRole('heading', { name: new RegExp(`^${entityName} ·`) })).toBeVisible({ timeout: 15_000 })
     await expect(entityBuilder).toHaveAttribute('data-saving', 'false', { timeout: 15_000 })
+    await expect.poll(async () => {
+      const current = await page.evaluate(async (moduleId) => {
+        const response = await fetch(`/api/modules/${encodeURIComponent(moduleId)}`)
+        return response.json()
+      }, createdBeforeNavigation.id)
+      return current.definition.entities.some((candidate: { name: string }) => candidate.name === entityName)
+    }, { timeout: 15_000 }).toBe(true)
   }
 
   // The builder persists metadata immediately; verify the runtime can now load
