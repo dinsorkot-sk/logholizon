@@ -100,7 +100,10 @@ async fn remove_sqlite_sidecars(database: &Path) -> Result<()> {
     for suffix in ["-wal", "-shm"] {
         let sidecar = database.with_extension(format!(
             "{}{}",
-            database.extension().and_then(|ext| ext.to_str()).unwrap_or(""),
+            database
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or(""),
             suffix
         ));
         match tokio::fs::remove_file(&sidecar).await {
