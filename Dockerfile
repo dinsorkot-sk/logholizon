@@ -39,6 +39,11 @@ COPY --from=app-build /build/packages/app/.output ./app/.output
 # Data volume for SQLite
 VOLUME /data
 
+# The official Node image provides the unprivileged `node` user. Keep both
+# services non-root; the named volume is initialized with matching ownership.
+RUN mkdir -p /data && chown -R node:node /app /data /usr/local/bin/logholizon-core
+USER node
+
 EXPOSE 3000 8787
 
 # Start both processes: core on 8787, Nuxt on 3000

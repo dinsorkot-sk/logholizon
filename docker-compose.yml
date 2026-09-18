@@ -10,8 +10,6 @@ services:
       CORE_BACKUP_KEEP: 7
     volumes:
       - logholizon-data:/data
-    ports:
-      - "8787:8787"
     restart: unless-stopped
     # Readiness (not just liveness): /ready verifies migrations, integrity,
     # WAL policy, and queue depth. node:22-slim has no curl; use node fetch.
