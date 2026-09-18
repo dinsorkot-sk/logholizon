@@ -76,7 +76,7 @@ pub async fn bulk_delete(
             .execute(&mut *tx)
             .await?;
         sqlx::query("INSERT INTO _audit_log (id,entity_id,doc_id,action,payload,actor) VALUES (?,?,?,?,?,?)")
-            .bind(format!("{}:bulk_delete", id))
+            .bind(format!("{id}:bulk_delete"))
             .bind(entity_id)
             .bind(id)
             .bind("delete")

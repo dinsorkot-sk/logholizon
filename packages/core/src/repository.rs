@@ -1341,7 +1341,7 @@ async fn record_module_change(
     diff: &Value,
     actor: Option<&str>,
 ) -> Result<()> {
-    let id = format!("{}_change_{}_{}", module_id, change_type, to_version);
+    let id = format!("{module_id}_change_{change_type}_{to_version}");
     sqlx::query("INSERT INTO _module_change (id, module_id, from_version, to_version, from_semantic_version, to_semantic_version, change_type, diff, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .bind(id).bind(module_id).bind(from_version).bind(to_version)
         .bind(from_semantic_version).bind(to_semantic_version).bind(change_type)
@@ -4086,7 +4086,7 @@ fn chrono_date_from_unix_days(seconds: i64) -> String {
     let day = doy - (153 * mp + 2) / 5 + 1;
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
     year += i64::from(month <= 2);
-    format!("{year:04}-{:02}-{:02}", month, day)
+    format!("{year:04}-{month:02}-{day:02}")
 }
 
 #[derive(Debug, Serialize)]

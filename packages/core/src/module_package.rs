@@ -377,7 +377,7 @@ pub async fn preview_package(
     {
         for entity in entities {
             if let Some(name) = entity.get("name").and_then(Value::as_str) {
-                let entity_id = format!("{}_{}", module_id, name);
+                let entity_id = format!("{module_id}_{name}");
                 let exists: bool =
                     sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _meta_entity WHERE id = ?)")
                         .bind(entity_id)
