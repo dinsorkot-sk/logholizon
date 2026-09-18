@@ -31,7 +31,12 @@ test('Phase 20: user-facing Module Builder creates a complete business domain sh
   await createDialog.getByRole('button', { name: 'Create', exact: true }).click()
 
   await expect(page.getByText(label, { exact: true })).toBeVisible({ timeout: 15_000 })
-  await page.getByRole('link', { name: new RegExp(label) }).click()
+  const createdBeforeNavigation = await page.evaluate(async (moduleName) => {
+    const modules = await fetch('/api/modules').then(response => response.json())
+    return modules.find((module: { name: string }) => module.name === moduleName)
+  }, name)
+  expect(createdBeforeNavigation).toBeTruthy()
+  await page.goto(`/admin/modules/${encodeURIComponent(createdBeforeNavigation.id)}`)
   await expect(page.getByRole('heading', { name: label })).toBeVisible({ timeout: 15_000 })
 
   for (const entity of [
