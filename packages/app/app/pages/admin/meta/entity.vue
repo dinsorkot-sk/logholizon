@@ -1242,7 +1242,7 @@ const fieldColumns: TableColumn<Field>[] = [
               <span class="truncate">{{ entity.label }}</span>
               <span class="shrink-0 font-mono text-xs text-muted">{{ entity.id }}</span>
             </UButton>
-            <p v-if="!filteredEntities.length" class="py-6 text-center text-sm text-muted">
+            <p v-if="!filteredEntities.length" class="py-6 text-center text-[0.8125rem] text-muted leading-normal">
               No entities found.
             </p>
           </div>
@@ -1254,7 +1254,7 @@ const fieldColumns: TableColumn<Field>[] = [
         <!-- Right: detail -->
         <div v-if="!selectedId" class="flex flex-col items-center justify-center gap-3 py-24 text-center">
           <UIcon name="i-lucide-mouse-pointer-click" class="h-10 w-10 text-muted" />
-          <p class="text-sm text-muted">Select an entity to manage its fields.</p>
+          <p class="text-[0.9375rem] text-muted leading-normal">Select an entity to manage its fields.</p>
         </div>
 
         <UCard v-else-if="detailStatus === 'pending'" class="h-fit">
@@ -1276,8 +1276,8 @@ const fieldColumns: TableColumn<Field>[] = [
         <UCard v-else-if="detail" class="h-fit">
           <div class="mb-4 flex items-start justify-between gap-4">
             <div>
-              <h2 class="text-lg font-semibold">{{ detail.label }}</h2>
-              <p class="font-mono text-sm text-muted">{{ detail.name }}</p>
+              <h2 class="text-lg font-semibold tracking-tight">{{ detail.label }}</h2>
+              <p class="font-mono text-[0.8125rem] text-muted leading-normal">{{ detail.name }}</p>
             </div>
             <div class="flex gap-2">
               <UButton size="sm" variant="outline" icon="i-lucide-pencil" @click="openEditEntity">
@@ -1306,11 +1306,11 @@ const fieldColumns: TableColumn<Field>[] = [
                     <UButton size="xs" variant="ghost" color="error" icon="i-lucide-trash" @click="removeRelation(r.id)" />
                   </div>
                 </div>
-                <p v-else class="text-sm text-muted">No relations defined.</p>
+                <p v-else class="text-[0.8125rem] text-muted leading-normal">No relations defined.</p>
               </div>
             </template><template #fields>
               <div class="flex items-center justify-between py-3">
-                <p class="text-sm text-muted">{{ detail.fields.length }} fields</p>
+                 <p class="text-[0.8125rem] text-muted leading-normal">{{ detail.fields.length }} fields</p>
                 <UButton size="sm" icon="i-lucide-plus" @click="openAddField">Add field</UButton>
               </div>
               <UTable :data="detail.fields" :columns="fieldColumns" :get-row-id="(row: Field) => row.id" class="w-full">
@@ -1338,7 +1338,7 @@ const fieldColumns: TableColumn<Field>[] = [
               <div v-else class="space-y-6 py-3">
                 <div>
                   <div class="flex items-center justify-between pb-2">
-                    <p class="text-sm text-muted">{{ (workflow?.states || []).length }} states</p>
+                    <p class="text-[0.8125rem] text-muted leading-normal">{{ (workflow?.states || []).length }} states</p>
                     <UButton size="sm" icon="i-lucide-plus" @click="openAddState">Add state</UButton>
                   </div>
                   <UTable :data="workflow?.states || []" :columns="stateColumns" :get-row-id="(row: WorkflowState) => row.id" class="w-full">
@@ -1349,7 +1349,7 @@ const fieldColumns: TableColumn<Field>[] = [
                 </div>
                 <div>
                   <div class="flex items-center justify-between pb-2">
-                    <p class="text-sm text-muted">{{ (workflow?.transitions || []).length }} transitions</p>
+                    <p class="text-[0.8125rem] text-muted leading-normal">{{ (workflow?.transitions || []).length }} transitions</p>
                     <UButton size="sm" icon="i-lucide-plus" @click="openAddTransition">Add transition</UButton>
                   </div>
                   <UTable :data="workflow?.transitions || []" :columns="transitionColumns" :get-row-id="(row: WorkflowTransition) => row.id" class="w-full">
@@ -1404,7 +1404,7 @@ const fieldColumns: TableColumn<Field>[] = [
                     <UButton size="sm" variant="outline" @click="refreshFieldPermissions()">Retry</UButton>
                   </template>
                 </UAlert>
-                <div v-else-if="!(detail?.fields || []).length" class="py-4 text-sm text-muted">No fields yet.</div>
+                <div v-else-if="!(detail?.fields || []).length" class="py-4 text-[0.8125rem] text-muted leading-normal">No fields yet.</div>
                 <div v-else class="space-y-2">
                   <div v-for="field in detail?.fields || []" :key="field.id" class="flex items-center justify-between gap-4 rounded-lg border border-default px-4 py-2">
                     <div>
@@ -1439,10 +1439,10 @@ const fieldColumns: TableColumn<Field>[] = [
               </UAlert>
               <div v-else class="py-3">
                 <div class="flex items-center justify-between pb-2">
-                  <p class="text-sm text-muted">{{ (views || []).length }} views</p>
+                  <p class="text-[0.8125rem] text-muted leading-normal">{{ (views || []).length }} views</p>
                   <UButton size="sm" icon="i-lucide-plus" @click="openAddView">Add view</UButton>
                 </div>
-                <div v-if="!(views || []).length" class="py-8 text-center text-sm text-muted">
+                <div v-if="!(views || []).length" class="py-8 text-center text-[0.8125rem] text-muted leading-normal">
                   No views yet. Save the current list filter as a view.
                 </div>
                 <div v-else class="space-y-2">
@@ -1475,7 +1475,7 @@ const fieldColumns: TableColumn<Field>[] = [
               </UAlert>
               <div v-else class="space-y-4 py-3">
                 <div class="flex items-center justify-between">
-                  <p class="text-sm text-muted">{{ layoutSections.length }} sections · {{ unassignedFields.length }} unassigned fields</p>
+                  <p class="text-[0.8125rem] text-muted leading-normal">{{ layoutSections.length }} sections · {{ unassignedFields.length }} unassigned fields</p>
                   <div class="flex gap-2">
                     <UButton size="sm" variant="outline" icon="i-lucide-plus" @click="openAddSection">Add section</UButton>
                     <UButton size="sm" :loading="savingLayout" :disabled="!layoutDirty" @click="saveLayout">Save layout</UButton>
@@ -1483,7 +1483,7 @@ const fieldColumns: TableColumn<Field>[] = [
                 </div>
                 <UAlert v-if="layoutError" color="error" :title="layoutError" />
                 <UBadge v-if="layoutDirty" color="warning" variant="subtle">Unsaved changes</UBadge>
-                <div v-if="!layoutSections.length" class="py-8 text-center text-sm text-muted">
+                <div v-if="!layoutSections.length" class="py-8 text-center text-[0.8125rem] text-muted leading-normal">
                   No sections yet. Add a section, then assign fields to it. Unassigned fields render under “Other”.
                 </div>
                 <UCard v-if="unassignedFields.length">
@@ -1547,7 +1547,7 @@ const fieldColumns: TableColumn<Field>[] = [
                       class="min-h-10 space-y-1"
                       @end="onLayoutDragEnd"
                     >
-                      <div v-if="!section.fields.length" class="pointer-events-none rounded border border-dashed border-default px-3 py-2 text-center text-sm text-muted">Drop fields here</div>
+                      <div v-if="!section.fields.length" class="pointer-events-none rounded border border-dashed border-default px-3 py-2 text-center text-[0.8125rem] text-muted leading-normal">Drop fields here</div>
                       <div v-for="(fieldId, fieldIndex) in section.fields" :key="fieldId" class="flex items-center justify-between gap-2 rounded border border-default px-3 py-1.5">
                         <div class="flex min-w-0 items-center gap-1.5">
                           <UIcon name="i-lucide-grip-vertical" class="field-drag-handle size-3.5 shrink-0 cursor-grab text-muted active:cursor-grabbing" :title="`Drag ${fieldName(fieldId)} to reorder`" />
@@ -1586,7 +1586,7 @@ const fieldColumns: TableColumn<Field>[] = [
                   <template #header>
                     <p class="text-sm font-semibold">Preview</p>
                   </template>
-                  <div v-if="!layoutPreview.length" class="py-2 text-sm text-muted">Nothing to preview yet.</div>
+                  <div v-if="!layoutPreview.length" class="py-2 text-[0.8125rem] text-muted leading-normal">Nothing to preview yet.</div>
                   <div v-else class="space-y-4">
                     <div v-for="section in layoutPreview" :key="section.id">
                       <p class="mb-1 text-xs font-semibold uppercase text-muted">{{ section.label }}</p>
@@ -1617,10 +1617,10 @@ const fieldColumns: TableColumn<Field>[] = [
               </UAlert>
               <div v-else class="py-3">
                 <div class="flex items-center justify-between pb-2">
-                  <p class="text-sm text-muted">{{ (notifyRules || []).length }} rules · fires on workflow transition</p>
+                  <p class="text-[0.8125rem] text-muted leading-normal">{{ (notifyRules || []).length }} rules · fires on workflow transition</p>
                   <UButton size="sm" icon="i-lucide-plus" @click="openAddRule">Add rule</UButton>
                 </div>
-                <div v-if="!(notifyRules || []).length" class="py-8 text-center text-sm text-muted">
+                <div v-if="!(notifyRules || []).length" class="py-8 text-center text-[0.8125rem] text-muted leading-normal">
                   No rules yet. Add a webhook URL to notify on every transition.
                 </div>
                 <div v-else class="space-y-2">
@@ -1658,10 +1658,10 @@ const fieldColumns: TableColumn<Field>[] = [
               </UAlert>
               <div v-else class="py-3">
                 <div class="flex items-center justify-between pb-2">
-                  <p class="text-sm text-muted">{{ (moduleActions || []).length }} actions · reusable operations on records</p>
+                  <p class="text-[0.8125rem] text-muted leading-normal">{{ (moduleActions || []).length }} actions · reusable operations on records</p>
                   <UButton size="sm" icon="i-lucide-plus" @click="openAddAction">Add action</UButton>
                 </div>
-                <div v-if="!(moduleActions || []).length" class="py-8 text-center text-sm text-muted">
+                <div v-if="!(moduleActions || []).length" class="py-8 text-center text-[0.8125rem] text-muted leading-normal">
                   No actions yet. Actions run on records from the runtime page.
                 </div>
                 <div v-else class="space-y-2">
@@ -1694,10 +1694,10 @@ const fieldColumns: TableColumn<Field>[] = [
               </UAlert>
               <div v-else class="py-3">
                 <div class="flex items-center justify-between pb-2">
-                  <p class="text-sm text-muted">{{ (automations || []).length }} automations · fire on record events</p>
+                  <p class="text-[0.8125rem] text-muted leading-normal">{{ (automations || []).length }} automations · fire on record events</p>
                   <UButton size="sm" icon="i-lucide-plus" @click="openAddAutomation">Add automation</UButton>
                 </div>
-                <div v-if="!(automations || []).length" class="py-8 text-center text-sm text-muted">
+                <div v-if="!(automations || []).length" class="py-8 text-center text-[0.8125rem] text-muted leading-normal">
                   No automations yet. Automations react to create, update, delete, or transition events.
                 </div>
                 <div v-else class="space-y-2">
@@ -1776,14 +1776,18 @@ const fieldColumns: TableColumn<Field>[] = [
       <!-- Delete entity modal -->
       <UModal v-model:open="deleteEntityOpen" :title="`Delete ${detail?.label || 'entity'}`">
         <template #body>
-          <p class="text-sm text-muted">
-            This will permanently delete this entity and all its fields. This action cannot be undone.
-          </p>
+          <UAlert color="error" icon="i-lucide-alert-triangle" title="This action cannot be undone">
+            <template #description>
+              <p class="mt-1 text-[0.8125rem] text-muted leading-normal">
+                This will permanently delete <span class="font-medium text-default">{{ detail?.label }}</span> and all its fields, records, and workflow data.
+              </p>
+            </template>
+          </UAlert>
         </template>
         <template #footer>
           <div class="flex justify-end gap-2">
             <UButton variant="ghost" @click="deleteEntityOpen = false">Cancel</UButton>
-            <UButton color="error" :loading="deletingEntity" @click="removeEntity">Delete</UButton>
+            <UButton color="error" variant="solid" icon="i-lucide-trash" :loading="deletingEntity" @click="removeEntity">Delete entity</UButton>
           </div>
         </template>
       </UModal>
@@ -1844,9 +1848,9 @@ const fieldColumns: TableColumn<Field>[] = [
                   <span class="flex-1 text-sm">{{ option.label }}</span>
                   <UButton size="xs" variant="ghost" color="error" icon="i-lucide-x" @click="removeOption(option)" />
                 </div>
-                <p v-if="!editingFieldOptions.length" class="text-sm text-muted">No options yet.</p>
+                 <p v-if="!editingFieldOptions.length" class="text-[0.8125rem] text-muted leading-normal">No options yet.</p>
               </div>
-              <p v-else class="text-sm text-muted">Save the field first, then add options.</p>
+               <p v-else class="text-[0.8125rem] text-muted leading-normal">Save the field first, then add options.</p>
               <div v-if="editingField" class="mt-3 flex items-center gap-2">
                 <UInput v-model="newOption.value" placeholder="value (e.g. open)" class="w-28" />
                 <UInput v-model="newOption.label" placeholder="label (e.g. Open)" class="flex-1" />
@@ -1871,15 +1875,18 @@ const fieldColumns: TableColumn<Field>[] = [
       <!-- Delete field modal -->
       <UModal v-model:open="deleteFieldOpen" title="Delete field">
         <template #body>
-          <p class="text-sm text-muted">
-            This will permanently delete the field
-            <span class="font-mono">{{ fieldToDelete?.name }}</span>. This action cannot be undone.
-          </p>
+          <UAlert color="error" icon="i-lucide-alert-triangle" title="This action cannot be undone">
+            <template #description>
+              <p class="mt-1 text-[0.8125rem] text-muted leading-normal">
+                This will permanently delete the field <span class="font-mono font-medium text-default">{{ fieldToDelete?.name }}</span> and all its data.
+              </p>
+            </template>
+          </UAlert>
         </template>
         <template #footer>
           <div class="flex justify-end gap-2">
             <UButton variant="ghost" @click="deleteFieldOpen = false">Cancel</UButton>
-            <UButton color="error" :loading="deletingField" @click="removeField">Delete</UButton>
+            <UButton color="error" variant="solid" icon="i-lucide-trash" :loading="deletingField" @click="removeField">Delete field</UButton>
           </div>
         </template>
       </UModal>
@@ -1908,7 +1915,7 @@ const fieldColumns: TableColumn<Field>[] = [
       <!-- Delete state modal -->
       <UModal v-model:open="deleteStateOpen" title="Delete state">
         <template #body>
-          <p class="text-sm text-muted">
+          <p class="text-[0.8125rem] text-muted leading-normal">
             This will permanently delete the state
             <span class="font-mono">{{ stateToDelete?.name }}</span>. States used by transitions cannot be deleted.
           </p>
@@ -1960,7 +1967,7 @@ const fieldColumns: TableColumn<Field>[] = [
       <!-- Delete transition modal -->
       <UModal v-model:open="deleteTransitionOpen" title="Delete transition">
         <template #body>
-          <p class="text-sm text-muted">
+          <p class="text-[0.8125rem] text-muted leading-normal">
             This will permanently delete the transition
             <span class="font-mono">{{ transitionToDelete?.from_state }} → {{ transitionToDelete?.to_state }}</span>
             ({{ transitionToDelete?.action }}). This action cannot be undone.
@@ -2034,7 +2041,7 @@ const fieldColumns: TableColumn<Field>[] = [
       <!-- Delete notification rule modal -->
       <UModal v-model:open="deleteRuleOpen" title="Delete rule">
         <template #body>
-          <p class="text-sm text-muted">
+          <p class="text-[0.8125rem] text-muted leading-normal">
             This will permanently delete the webhook rule
             <span class="font-mono">{{ ruleToDelete?.target_url }}</span>. This action cannot be undone.
           </p>
@@ -2050,7 +2057,7 @@ const fieldColumns: TableColumn<Field>[] = [
       <!-- Delete view modal -->
       <UModal v-model:open="deleteViewOpen" title="Delete view">
         <template #body>
-          <p class="text-sm text-muted">
+          <p class="text-[0.8125rem] text-muted leading-normal">
             This will permanently delete the view
             <span class="font-mono">{{ viewToDelete?.name }}</span>. This action cannot be undone.
           </p>
@@ -2117,7 +2124,7 @@ const fieldColumns: TableColumn<Field>[] = [
       <!-- Delete action modal -->
       <UModal v-model:open="deleteActionOpen" title="Delete action">
         <template #body>
-          <p class="text-sm text-muted">
+          <p class="text-[0.8125rem] text-muted leading-normal">
             This will permanently delete the action
             <span class="font-mono">{{ actionToDelete?.name }}</span>. This action cannot be undone.
           </p>

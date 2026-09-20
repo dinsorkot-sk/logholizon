@@ -171,7 +171,7 @@ async function restartCore() {
                 <UButton size="sm" icon="i-lucide-database-backup" :loading="creating" @click="createBackup">Backup now</UButton>
               </div>
             </template>
-            <div v-if="!backups?.items?.length" class="py-8 text-center text-sm text-muted">
+            <div v-if="!backups?.items?.length" class="py-8 text-center text-[0.8125rem] text-muted leading-normal">
               No backups yet. Create your first backup to protect your data.
             </div>
             <UTable v-else :data="backups.items" :columns="[
@@ -198,7 +198,7 @@ async function restartCore() {
             <div v-if="deliveriesStatus === 'pending'" class="space-y-2">
               <USkeleton v-for="index in 3" :key="index" class="h-8 w-full" />
             </div>
-            <div v-else-if="!deliveries?.items?.length" class="py-8 text-center text-sm text-muted">
+            <div v-else-if="!deliveries?.items?.length" class="py-8 text-center text-[0.8125rem] text-muted leading-normal">
               No deliveries yet. Add a webhook rule, then transition a record.
             </div>
             <UTable v-else :data="deliveries.items" :columns="[
@@ -216,7 +216,7 @@ async function restartCore() {
               <h2 class="text-sm font-semibold">Core service</h2>
             </template>
             <div class="flex items-center justify-between gap-4">
-              <p class="text-sm text-muted">Restart the Rust core process. Use after staging a restore.</p>
+              <p class="text-[0.8125rem] text-muted leading-normal">Restart the Rust core process. Use after staging a restore.</p>
               <UButton icon="i-lucide-refresh-cw" variant="outline" :loading="restarting" @click="restartCore">Restart core</UButton>
             </div>
           </UCard>

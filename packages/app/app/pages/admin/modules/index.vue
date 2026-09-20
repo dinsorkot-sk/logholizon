@@ -114,22 +114,27 @@ async function createModule() {
         <div v-if="status === 'pending'" class="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <USkeleton v-for="index in 4" :key="index" class="h-32 w-full" />
         </div>
-        <div v-else-if="!filtered.length" class="flex flex-col items-center gap-3 py-16 text-center">
-          <UIcon name="i-lucide-box" class="h-10 w-10 text-muted" />
-          <p class="text-sm text-muted">No modules yet. Create your first user-defined module.</p>
+        <div v-else-if="!filtered.length" class="flex flex-col items-center gap-4 py-16 text-center">
+          <div class="flex h-16 w-16 items-center justify-center rounded-full bg-muted/30">
+            <UIcon name="i-lucide-box" class="h-8 w-8 text-muted" />
+          </div>
+          <div>
+            <p class="font-medium">No modules yet</p>
+            <p class="mt-1 text-sm text-muted">Create your first user-defined module to organize entities.</p>
+          </div>
           <UButton icon="i-lucide-plus" @click="createOpen = true">New module</UButton>
         </div>
         <div v-else class="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <UCard v-for="module in filtered" :key="module.id" :to="`/admin/modules/${encodeURIComponent(module.id)}`">
             <div class="flex items-start justify-between gap-2">
               <div class="min-w-0">
-                <h2 class="truncate text-base font-semibold">{{ module.label }}</h2>
-                <p class="truncate font-mono text-xs text-muted">{{ module.owner }}/{{ module.name }} · v{{ module.version }}</p>
-                <p v-if="module.description" class="mt-1 line-clamp-2 text-sm text-muted">{{ module.description }}</p>
+                <h2 class="truncate text-[0.9375rem] font-semibold tracking-tight">{{ module.label }}</h2>
+                <p class="truncate font-mono text-[0.8125rem] text-muted leading-normal">{{ module.owner }}/{{ module.name }} · v{{ module.version }}</p>
+                <p v-if="module.description" class="mt-1 line-clamp-2 text-[0.8125rem] text-muted leading-normal">{{ module.description }}</p>
               </div>
               <UBadge :color="statusColor(module.status)" variant="subtle">{{ module.status }}</UBadge>
             </div>
-            <p class="mt-3 text-xs text-muted">{{ (module.definition?.entities || []).length }} entities</p>
+            <p class="mt-3 text-[0.8125rem] text-muted leading-normal">{{ (module.definition?.entities || []).length }} entities</p>
           </UCard>
         </div>
       </div>

@@ -1142,7 +1142,7 @@ async function confirmImport() {
     />
 
     <template v-else-if="entity">
-      <p class="font-mono text-sm text-muted">{{ entity.name }}</p>
+      <p class="font-mono text-[0.8125rem] text-muted leading-normal">{{ entity.name }}</p>
       <div class="mb-4 flex flex-wrap items-center gap-2">
           <USelectMenu
             :model-value="entityId"
@@ -1244,7 +1244,7 @@ async function confirmImport() {
 
       <div v-if="!entity.fields.length" class="flex flex-col items-center gap-3 py-16 text-center">
         <UIcon name="i-lucide-table-properties" class="h-10 w-10 text-muted" />
-        <p class="text-sm text-muted">This entity has no fields yet.</p>
+        <p class="text-[0.8125rem] text-muted leading-normal">This entity has no fields yet.</p>
         <UButton icon="i-lucide-settings-2" :to="'/admin/meta/entity'">Add fields in Entity Manager</UButton>
       </div>
 
@@ -1270,7 +1270,7 @@ async function confirmImport() {
             <UButton size="xs" variant="ghost" @click="selectedRows = new Set()">Clear</UButton>
           </div>
           <div v-if="viewMode === 'kanban'">
-            <div v-if="!statusField" class="p-6 text-center text-sm text-muted">
+            <div v-if="!statusField" class="p-6 text-center text-[0.8125rem] text-muted leading-normal">
               Kanban needs a status field. Mark one select field as the status field in Entity Manager.
             </div>
             <div v-else class="flex gap-3 overflow-x-auto p-3">
@@ -1306,7 +1306,7 @@ async function confirmImport() {
             </div>
           </div>
           <div v-else-if="viewMode === 'calendar'">
-            <div v-if="!calendarField" class="p-6 text-center text-sm text-muted">
+            <div v-if="!calendarField" class="p-6 text-center text-[0.8125rem] text-muted leading-normal">
               Calendar needs a date field. Add a date field in Entity Manager first.
             </div>
             <div v-else>
@@ -1351,13 +1351,13 @@ async function confirmImport() {
           >
             <template #empty>
               <div class="py-10 text-center">
-                <p class="text-sm text-muted">No records yet for {{ entity.label }}.</p>
+                <p class="text-[0.8125rem] text-muted leading-normal">No records yet for {{ entity.label }}.</p>
                 <UButton size="sm" icon="i-lucide-plus" class="mt-2" @click="openCreate">Create first record</UButton>
               </div>
             </template>
           </UTable>
           <div v-if="total > limit" class="flex items-center justify-between border-t px-3 py-2">
-            <p class="text-sm text-muted">Showing {{ pageStart }}–{{ pageEnd }} of {{ total }}</p>
+              <p class="text-[0.8125rem] text-muted leading-normal">Showing {{ pageStart }}–{{ pageEnd }} of {{ total }}</p>
             <div class="flex gap-2">
               <UButton size="sm" variant="outline" :disabled="!hasPrev" @click="prevPage">Prev</UButton>
               <UButton size="sm" variant="outline" :disabled="!hasNext" @click="nextPage">Next</UButton>
@@ -1481,7 +1481,7 @@ async function confirmImport() {
                 <UButton size="sm" :loading="postingComment" :disabled="!canEdit || !commentBody.trim()" @click="postComment">Post</UButton>
               </div>
               <UAlert v-if="commentError" color="error" :title="commentError" class="mb-2" />
-              <div v-if="commentsStatus === 'pending'" class="py-2 text-sm text-muted">Loading comments…</div>
+              <div v-if="commentsStatus === 'pending'" class="py-2 text-[0.8125rem] text-muted leading-normal">Loading comments…</div>
               <UAlert v-else-if="commentsStatus === 'error'" color="error" title="Cannot load comments" :description="commentsError?.message" class="mb-2" />
               <ol v-else-if="(comments?.items || []).length" class="mb-4 space-y-2">
                 <li v-for="comment in comments?.items || []" :key="comment.id" class="rounded-lg bg-muted/40 px-3 py-2">
@@ -1491,7 +1491,7 @@ async function confirmImport() {
                   </UTooltip>
                 </li>
               </ol>
-              <p v-else class="mb-4 text-sm text-muted">No comments yet.</p>
+                <p v-else class="mb-4 text-[0.8125rem] text-muted leading-normal">No comments yet.</p>
               <h2 class="mb-2 text-sm font-semibold">Activities{{ activities?.open ? ` (${activities.open} open)` : '' }}</h2>
               <div class="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_auto_auto]">
                 <UInput v-model="activityTitle" placeholder="New activity…" :disabled="!canEdit" @keyup.enter="createActivity" />
@@ -1509,7 +1509,7 @@ async function confirmImport() {
                   </div>
                 </li>
               </ol>
-              <p v-else class="mb-4 text-sm text-muted">No activities yet.</p>
+              <p v-else class="mb-4 text-[0.8125rem] text-muted leading-normal">No activities yet.</p>
               <h2 class="mb-2 text-sm font-semibold">Attachments{{ attachments?.total ? ` (${attachments.total})` : '' }}</h2>
               <div class="mb-2 flex items-center gap-2">
                 <input ref="attachmentInput" type="file" class="hidden" accept="image/*,.pdf,.txt,.csv,.xlsx" @change="uploadAttachment">
@@ -1537,9 +1537,9 @@ async function confirmImport() {
                   />
                 </li>
               </ol>
-              <p v-else class="mb-4 text-sm text-muted">No attachments yet.</p>
+              <p v-else class="mb-4 text-[0.8125rem] text-muted leading-normal">No attachments yet.</p>
               <h2 class="mb-2 text-sm font-semibold">History</h2>
-              <div v-if="auditStatus === 'pending'" class="py-4 text-sm text-muted">Loading history…</div>
+              <div v-if="auditStatus === 'pending'" class="py-4 text-[0.8125rem] text-muted leading-normal">Loading history…</div>
               <UAlert v-else-if="auditStatus === 'error'" color="error" title="Cannot load history" />
               <ol v-else class="space-y-3">
                 <li v-for="entry in auditItems" :key="entry.id" class="flex gap-3">
@@ -1554,7 +1554,7 @@ async function confirmImport() {
                     </p>
                   </div>
                 </li>
-                <li v-if="!auditItems.length" class="text-sm text-muted">No history yet.</li>
+                <li v-if="!auditItems.length" class="text-[0.8125rem] text-muted leading-normal">No history yet.</li>
               </ol>
             </div>
           </UForm>
@@ -1591,7 +1591,7 @@ async function confirmImport() {
 
       <UModal v-model:open="deleteOpen" :title="`Delete ${entity?.label || 'record'}`">
         <template #body>
-          <p class="text-sm text-muted">
+          <p class="text-[0.8125rem] text-muted leading-normal">
             This will permanently delete this record. This action cannot be undone.
           </p>
         </template>
@@ -1605,7 +1605,7 @@ async function confirmImport() {
 
       <UModal v-model:open="bulkDeleteOpen" :title="`Delete ${selectedRows.size} records`">
         <template #body>
-          <p class="text-sm text-muted">
+          <p class="text-[0.8125rem] text-muted leading-normal">
             This will permanently delete {{ selectedRows.size }} selected records. This action cannot be undone.
           </p>
         </template>

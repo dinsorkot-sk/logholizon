@@ -51,19 +51,24 @@ const selectedEntity = computed(() => (entities.value || []).find(e => e.id === 
       </UAlert>
 
       <div v-else-if="status === 'pending'" class="grid grid-cols-1 gap-4 sm:grid-cols-3" aria-busy="true">
-        <USkeleton v-for="index in 3" :key="index" class="h-24 w-full" />
+        <USkeleton v-for="index in (counts?.length || 3)" :key="index" class="h-28 w-full" />
       </div>
 
-      <div v-else-if="!counts?.length" class="flex flex-col items-center gap-3 py-16 text-center">
-        <UIcon name="i-lucide-inbox" class="h-10 w-10 text-muted" />
-        <p class="text-sm text-muted">No records yet for {{ selectedEntity?.label || entityId }}.</p>
+      <div v-else-if="!counts?.length" class="flex flex-col items-center gap-4 py-16 text-center">
+        <div class="flex h-16 w-16 items-center justify-center rounded-full bg-muted/30">
+          <UIcon name="i-lucide-inbox" class="h-8 w-8 text-muted" />
+        </div>
+        <div>
+          <p class="font-medium">No records yet</p>
+          <p class="mt-1 text-[0.8125rem] text-muted leading-normal">Start by creating your first {{ selectedEntity?.label || entityId }} record.</p>
+        </div>
         <UButton icon="i-lucide-plus" :to="`/app/${encodeURIComponent(entityId)}`">Create first record</UButton>
       </div>
 
       <div v-else class="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <UCard v-for="item in counts" :key="item.status">
           <p class="text-sm text-muted">{{ item.status }}</p>
-          <p class="text-3xl font-semibold">{{ item.count }}</p>
+          <p class="mt-1 text-3xl font-semibold tabular-nums">{{ item.count.toLocaleString() }}</p>
         </UCard>
       </div>
     </template>

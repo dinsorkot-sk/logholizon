@@ -15,16 +15,20 @@ const mainLinks = computed<NavigationMenuItem[]>(() => {
     { label: 'Reports', icon: 'i-lucide-chart-bar', to: '/app/reports' }
   ]
   if (isAdmin.value) {
-    links.push(
-      { label: 'Module Builder', icon: 'i-lucide-box', to: '/admin/modules' },
-      { label: 'Solution Library', icon: 'i-lucide-package-open', to: '/admin/solutions' },
-      { label: 'Entity Manager', icon: 'i-lucide-layout-grid', to: '/admin/meta/entity' },
-      { label: 'Workflow Builder', icon: 'i-lucide-git-branch', to: '/admin/meta/workflow' },
-      { label: 'Users', icon: 'i-lucide-users', to: '/admin/users' },
-      { label: 'Audit Log', icon: 'i-lucide-history', to: '/admin/audit' },
-      { label: 'Observability', icon: 'i-lucide-activity', to: '/admin/observability' },
-      { label: 'Settings', icon: 'i-lucide-settings', to: '/admin/settings' }
-    )
+    links.push({
+      label: 'Admin',
+      icon: 'i-lucide-shield',
+      children: [
+        { label: 'Module Builder', icon: 'i-lucide-box', to: '/admin/modules' },
+        { label: 'Solution Library', icon: 'i-lucide-package-open', to: '/admin/solutions' },
+        { label: 'Entity Manager', icon: 'i-lucide-layout-grid', to: '/admin/meta/entity' },
+        { label: 'Workflow Builder', icon: 'i-lucide-git-branch', to: '/admin/meta/workflow' },
+        { label: 'Users', icon: 'i-lucide-users', to: '/admin/users' },
+        { label: 'Audit Log', icon: 'i-lucide-history', to: '/admin/audit' },
+        { label: 'Observability', icon: 'i-lucide-activity', to: '/admin/observability' },
+        { label: 'Settings', icon: 'i-lucide-settings', to: '/admin/settings' }
+      ]
+    })
   }
   return links
 })
@@ -71,14 +75,14 @@ const commandGroups = computed<CommandPaletteGroup[]>(() => {
   ]
   if (isAdmin.value) {
     nav.push(
-      { label: 'Module Builder', icon: 'i-lucide-box', to: '/admin/modules', kbds: ['g', 'm'] },
-      { label: 'Solution Library', icon: 'i-lucide-package-open', to: '/admin/solutions', kbds: ['g', 'l'] },
-      { label: 'Entity Manager', icon: 'i-lucide-layout-grid', to: '/admin/meta/entity', kbds: ['g', 'e'] },
-      { label: 'Workflow Builder', icon: 'i-lucide-git-branch', to: '/admin/meta/workflow', kbds: ['g', 'w'] },
-      { label: 'Users', icon: 'i-lucide-users', to: '/admin/users', kbds: ['g', 'u'] },
-      { label: 'Audit Log', icon: 'i-lucide-history', to: '/admin/audit', kbds: ['g', 'a'] },
-      { label: 'Observability', icon: 'i-lucide-activity', to: '/admin/observability', kbds: ['g', 'o'] },
-      { label: 'Settings', icon: 'i-lucide-settings', to: '/admin/settings', kbds: ['g', 's'] }
+      { label: 'Module Builder', icon: 'i-lucide-box', to: '/admin/modules', kbds: ['g', 'm'], suffix: 'Admin' },
+      { label: 'Solution Library', icon: 'i-lucide-package-open', to: '/admin/solutions', kbds: ['g', 'l'], suffix: 'Admin' },
+      { label: 'Entity Manager', icon: 'i-lucide-layout-grid', to: '/admin/meta/entity', kbds: ['g', 'e'], suffix: 'Admin' },
+      { label: 'Workflow Builder', icon: 'i-lucide-git-branch', to: '/admin/meta/workflow', kbds: ['g', 'w'], suffix: 'Admin' },
+      { label: 'Users', icon: 'i-lucide-users', to: '/admin/users', kbds: ['g', 'u'], suffix: 'Admin' },
+      { label: 'Audit Log', icon: 'i-lucide-history', to: '/admin/audit', kbds: ['g', 'a'], suffix: 'Admin' },
+      { label: 'Observability', icon: 'i-lucide-activity', to: '/admin/observability', kbds: ['g', 'o'], suffix: 'Admin' },
+      { label: 'Settings', icon: 'i-lucide-settings', to: '/admin/settings', kbds: ['g', 's'], suffix: 'Admin' }
     )
   }
   const entityItems: CommandPaletteGroup['items'] = []
@@ -137,9 +141,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       :ui="{ footer: 'lg:border-t lg:border-default' }"
     >
       <template #header="{ collapsed }">
-        <div class="flex h-12 items-center gap-2 px-3">
-          <span class="text-lg font-bold text-primary">L</span>
-          <span v-if="!collapsed" class="font-semibold">LOGHOLIZON</span>
+        <div class="flex h-12 items-center gap-2.5 px-3">
+          <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 ring-1 ring-primary/20">
+            <span class="text-sm font-bold text-primary">L</span>
+          </div>
+          <span v-if="!collapsed" class="text-sm font-semibold tracking-tight">LOGHOLIZON</span>
         </div>
       </template>
 

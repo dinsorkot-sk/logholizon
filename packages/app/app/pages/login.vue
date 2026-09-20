@@ -96,12 +96,14 @@ async function onSetup(event: FormSubmitEvent<SetupSchema>) {
 </script>
 
 <template>
-  <div class="flex min-h-screen flex-col items-center justify-center gap-4 p-4">
-    <div class="flex items-center gap-2">
-      <span class="text-lg font-bold text-primary">L</span>
-      <span class="font-semibold">LOGHOLIZON</span>
+  <div class="flex min-h-screen flex-col items-center justify-center gap-6 p-4">
+    <div class="flex items-center gap-2.5">
+      <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 ring-1 ring-primary/20">
+        <span class="text-sm font-bold text-primary">L</span>
+      </div>
+      <span class="text-lg font-semibold tracking-tight">LOGHOLIZON</span>
     </div>
-    <UPageCard class="w-full max-w-md">
+    <UPageCard class="w-full max-w-sm">
       <UAuthForm
         v-if="isFirstRun"
         :schema="setupSchema"

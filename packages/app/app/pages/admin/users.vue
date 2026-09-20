@@ -304,15 +304,18 @@ const userColumns: TableColumn<UserRow>[] = [
       <!-- Delete user modal -->
       <UModal v-model:open="deleteOpen" title="Delete user">
         <template #body>
-          <p class="text-sm text-muted">
-            This will permanently delete the user
-            <span class="font-mono">{{ deleteTarget?.username }}</span>. This action cannot be undone.
-          </p>
+          <UAlert color="error" icon="i-lucide-alert-triangle" title="This action cannot be undone">
+            <template #description>
+              <p class="mt-1 text-sm text-muted">
+                This will permanently delete user <span class="font-mono font-medium text-default">{{ deleteTarget?.username }}</span> and revoke all access.
+              </p>
+            </template>
+          </UAlert>
         </template>
         <template #footer>
           <div class="flex justify-end gap-2">
             <UButton variant="ghost" @click="deleteOpen = false">Cancel</UButton>
-            <UButton color="error" :loading="deleting" @click="removeUser">Delete</UButton>
+            <UButton color="error" variant="solid" icon="i-lucide-trash" :loading="deleting" @click="removeUser">Delete user</UButton>
           </div>
         </template>
       </UModal>

@@ -1,5 +1,5 @@
 <template>
-  <UApp>
+  <UApp class="font-sans text-base leading-normal">
     <NuxtLoadingIndicator />
     <NuxtLayout>
       <NuxtPage />

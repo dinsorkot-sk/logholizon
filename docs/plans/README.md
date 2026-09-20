@@ -453,7 +453,15 @@ Scope (stabilization only, no new runtime features):
   `cargo test --workspace -- --test-threads=1`, `pnpm app test` (23/23),
   `pnpm app check`, `pnpm app build` all green on this branch.
 
-## v0.1.1 — Tauri Desktop (offline) — IN PROGRESS
+## v0.1.5 — RBAC Roles Expansion & CSRF Hardening — COMPLETE (100%)
+
+Base: `origin/dev` at `v0.1.4` tip.
+
+Scope:
+- RBAC Roles Expansion: added manager, operator, and viewer roles (migration `0044`), backfilled field and entity permissions for all roles.
+- Security Hardening: CSRF middleware and `request_id` propagation in Axum core.
+- UI Polish: refined typography scale (`text-[0.8125rem]`, leading-normal), empty state redesigns, confirmation dialog improvements across 13 app files.
+- Gates: all cargo tests, clippy, fmt, and app test/check/build suites verified green.
 
 Goal: LOGHOLIZON runs as an offline desktop app. The Tauri shell boots
 `logholizon-core` in-process on an ephemeral loopback port; the Nuxt

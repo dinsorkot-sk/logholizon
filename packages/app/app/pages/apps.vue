@@ -32,9 +32,14 @@ const apps = computed(() => groupEntitiesByModule(entities.value || []))
         <USkeleton v-for="index in 6" :key="index" class="h-32 w-full" />
       </div>
 
-      <div v-else-if="!apps.length" class="flex flex-col items-center gap-3 py-16 text-center">
-        <UIcon name="i-lucide-layout-grid" class="h-10 w-10 text-muted" />
-        <p class="text-sm text-muted">No apps yet. Create an entity to get started.</p>
+      <div v-else-if="!apps.length" class="flex flex-col items-center gap-4 py-16 text-center">
+        <div class="flex h-16 w-16 items-center justify-center rounded-full bg-muted/30">
+          <UIcon name="i-lucide-layout-grid" class="h-8 w-8 text-muted" />
+        </div>
+        <div>
+          <p class="font-medium">No apps yet</p>
+          <p class="mt-1 text-[0.8125rem] text-muted leading-normal">Create an entity to get started with your first app.</p>
+        </div>
         <UButton icon="i-lucide-plus" to="/admin/meta/entity">Open Entity Manager</UButton>
       </div>
 
@@ -43,8 +48,8 @@ const apps = computed(() => groupEntitiesByModule(entities.value || []))
           <div class="flex items-center gap-3">
             <UIcon :name="app.icon" class="h-8 w-8 text-primary" />
             <div class="min-w-0">
-              <h2 class="truncate text-base font-semibold">{{ app.label }}</h2>
-              <p class="text-sm text-muted">{{ app.entities.length }} {{ app.entities.length === 1 ? 'entity' : 'entities' }}</p>
+              <h2 class="truncate text-[0.9375rem] font-semibold tracking-tight">{{ app.label }}</h2>
+              <p class="text-[0.8125rem] text-muted">{{ app.entities.length }} {{ app.entities.length === 1 ? 'entity' : 'entities' }}</p>
             </div>
           </div>
           <div class="mt-3 flex flex-wrap gap-1">

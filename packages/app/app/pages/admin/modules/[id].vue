@@ -732,7 +732,7 @@ async function rollback(version: number) {
               <UBadge :color="module.status === 'published' ? 'success' : module.status === 'archived' ? 'neutral' : 'warning'" variant="subtle">{{ module.status }}</UBadge>
             </div>
           </template>
-          <p class="text-sm text-muted">Entities materialize as <span class="font-mono">{{ module.id }}_&lt;entity&gt;</span> on publish. Draft edits never touch live records.</p>
+          <p class="text-[0.8125rem] text-muted leading-normal">Entities materialize as <span class="font-mono">{{ module.id }}_&lt;entity&gt;</span> on publish. Draft edits never touch live records.</p>
         </UCard>
         <UCard>
           <template #header><h2 class="text-sm font-semibold">Entities</h2></template>
@@ -943,7 +943,7 @@ async function rollback(version: number) {
               <UButton size="xs" variant="outline" @click="rollback(version.version)">Rollback</UButton>
             </li>
           </ol>
-          <p v-else class="text-sm text-muted">No published versions yet. Publish to snapshot.</p>
+          <p v-else class="text-[0.8125rem] text-muted leading-normal">No published versions yet. Publish to snapshot.</p>
         </UCard>
       </div>
     </template>
