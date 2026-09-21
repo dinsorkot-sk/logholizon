@@ -162,11 +162,11 @@ async fn field_permissions_crud_and_check() {
     .await
     .unwrap();
 
-    // Every registered role receives permissions for each new field.
+    // Default: both roles can view and edit every field.
     let perms = repository::get_field_permissions(&pool, "work_order")
         .await
         .unwrap();
-    assert_eq!(perms.len(), 10); // 2 fields × 5 system roles
+    assert_eq!(perms.len(), 4);
     repository::check_field_permission(&pool, "work_order", "title", "user", false)
         .await
         .unwrap();
