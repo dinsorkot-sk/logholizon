@@ -34,6 +34,9 @@ impl DesktopRuntime {
 /// Prefers the platform data dir (`$XDG_DATA_HOME` / `%APPDATA%` /
 /// `~/Library/Application Support`), falling back to the current dir so
 /// tests and portable runs keep working.
+///
+/// The returned path is *not* automatically created; callers must ensure
+/// the directory exists and is writable before booting.
 pub fn app_data_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from) {
         return dir.join("logholizon-desktop");
@@ -53,6 +56,45 @@ pub fn app_data_dir() -> PathBuf {
         return home.join(".local").join("share").join("logholizon-desktop");
     }
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+/// Validate and prepare the app-data directory for boot.
+///
+/// Ensures the directory and `logholizon/` subdirectory exist and are
+/// writable. Returns an error if the path is invalid, inaccessible, or
+/// a file rather than a directory.
+pub fn ensure_app_data_dir(data_dir: &std::path::Path) -> anyhow::Result<()> {
+    // Ensure the root app-data dir exists.
+    std::fs::create_dir_all(data_dir).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to create app-data directory {}: {}",
+            data_dir.display(),
+            e
+        )
+    })?;
+
+    // Ensure the logholizon/ subdirectory exists.
+    let db_dir = data_dir.join("logholizon");
+    std::fs::create_dir_all(&db_dir).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to create database directory {}: {}",
+            db_dir.display(),
+            e
+        )
+    })?;
+
+    // Verify writability: try to touch a temporary file.
+    let test_file = db_dir.join(".write-test");
+    std::fs::write(&test_file, b"").map_err(|e| {
+        anyhow::anyhow!(
+            "app-data directory {} is not writable: {}",
+            db_dir.display(),
+            e
+        )
+    })?;
+    let _ = std::fs::remove_file(test_file);
+
+    Ok(())
 }
 
 /// Boot the in-process core on an ephemeral loopback port.

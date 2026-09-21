@@ -4,7 +4,7 @@
 //! headless: boot + health-gate + shutdown, which still proves the sidecar
 //! lifecycle end to end.
 
-use logholizon_desktop::{app_data_dir, boot, shutdown, wait_for_health};
+use logholizon_desktop::{app_data_dir, boot, ensure_app_data_dir, shutdown, wait_for_health};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -13,6 +13,11 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let data_dir = app_data_dir();
+    ensure_app_data_dir(&data_dir).map_err(|e| {
+        tracing::error!("app-data initialization failed: {:#}", e);
+        e
+    })?;
+
     let runtime = boot(&data_dir).await?;
     let base_url = runtime.base_url();
     wait_for_health(&base_url, std::time::Duration::from_secs(30)).await?;

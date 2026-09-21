@@ -490,6 +490,30 @@ Release readiness: `cargo fmt --all -- --check`, `cargo clippy --workspace
 --all-targets -- -D warnings`, `cargo test --workspace -- --test-threads=1`,
 `pnpm test`, `pnpm check`, and `pnpm build` in `packages/app` all pass.
 
+## v0.1.7 — Desktop App-Data Lifecycle & Startup Hardening — COMPLETE
+
+Base: `v0.1.6`.
+
+Scope (no Core domain changes, no SQL outside core, no new `/v1` routes):
+
+- `packages/desktop/src-tauri/src/lib.rs`: new `ensure_app_data_dir()` function
+  to validate and prepare the app-data directory before boot, with writable-check
+  and comprehensive error reporting on initialization failure.
+- `packages/desktop/src-tauri/src/main.rs`: call `ensure_app_data_dir()` early
+  in the boot sequence with explicit error logging so startup failures are clear.
+- `packages/desktop/src-tauri/tests/app_data.rs`: focused integration test covering
+  directory creation, idempotency, writability validation, and error rejection
+  on file-path collision (3 tests).
+- Verified: `cargo test --workspace -- --test-threads=1` all green (incl. new
+  app_data tests + existing sidecar boot test).
+- Verified: `pnpm desktop:test`, `pnpm desktop:check`, `pnpm desktop:build`
+  all pass.
+- No new features; hardening only. Desktop scope boundary unchanged.
+
+Release readiness: `cargo fmt --all -- --check`, `cargo clippy --workspace
+--all-targets -- -D warnings`, `cargo test --workspace -- --test-threads=1`,
+and `pnpm desktop:build` all pass.
+
 ## Working Rule
 
 Do not increase the percentage by adding more built-in ERP features. Increase the percentage by making the runtime capable of representing those features as user-defined metadata.
