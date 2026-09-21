@@ -466,34 +466,29 @@ Scope:
   --all-targets -- -D warnings`, `cargo test --workspace -- --test-threads=1`,
   `pnpm test`, `pnpm check`, and `pnpm build` in `packages/app` all pass.
 
-## v0.1.1 — Tauri Desktop (offline) — IN PROGRESS
+## v0.1.1 — Tauri Desktop (offline) — COMPLETE
 
-Goal: LOGHOLIZON runs as an offline desktop app. The Tauri shell boots
-`logholizon-core` in-process on an ephemeral loopback port; the Nuxt
-frontend ships as a static SPA calling `/v1` directly with a stored Bearer
-token; SQLite lives under the OS app-data directory.
+Completed in v0.1.1. Offline desktop scope implemented with Tauri shell,
+in-process core boot, static SPA, and SQLite under OS app-data. All gates
+passed. Deferred to v0.1.2+: auto-updater + signing, tray, multi-window,
+file associations, `.icns`/`.ico` packaging.
 
-Scope (no Core domain changes, no SQL outside core, no new `/v1` routes):
+## v0.1.6 — Tauri Desktop (offline) — COMPLETE
 
-- `packages/core/src/desktop.rs`: app-data DB URL, desktop `Config`
-  (Tauri origins, background loops off by default), `boot_desktop_pool`,
-  `ensure_first_run` (admin + demo seed). Test: `tests/desktop.rs`.
-- `packages/desktop/src-tauri`: shell crate (`logholizon-desktop`,
-  `ui` feature gates the `tauri` dep so gates run without WebKit),
-  sidecar lifecycle (`boot`/`wait_for_health`/`shutdown`/`probe_runtime`),
-  `tauri.conf.json` (nsis/dmg/appimage), placeholder PNG icons.
-  Test: `tests/sidecar.rs` (boot + `/health` + `/v1` login + shutdown).
-- `packages/app/modules/desktop.ts`: build-time module (only with
-  `LOGHOLIZON_DESKTOP=1`) replacing `#build/fetch.mjs` so every
-  `useFetch`/`$fetch` `/api/*` call targets the sidecar core; web output
-  stays byte-identical (verified: no desktop code in web server bundle).
-- `packages/app/app/utils/desktop-routes.ts` + `desktop-fetch.ts`:
-  gateway→core route map, fetch wrapper, token store; `useAuth` persists
-  the token on desktop. Test: `tests/desktop-routes.test.ts`.
-- Docs: `packages/desktop/README.md`, app + root `AGENTS.md` updates.
+Base: `v0.1.5`.
 
-Deferred to v0.1.2+: auto-updater + signing, tray, multi-window, file
-associations, `.icns`/`.ico` packaging.
+Scope:
+
+- Test regression fix: corrected expected field permission count from 4 to 10
+  in `packages/core/tests/fields.rs` to match migration `0044_rbac_roles_expansion.sql`
+  (5 system roles × 2 fields = 10 rows).
+- Verified: `cargo test --workspace -- --test-threads=1` all green.
+- Verified: `pnpm desktop:test`, `pnpm desktop:check`, `pnpm desktop:build` all pass.
+- No new Core domain logic; only test expectation correction and roadmap update.
+
+Release readiness: `cargo fmt --all -- --check`, `cargo clippy --workspace
+--all-targets -- -D warnings`, `cargo test --workspace -- --test-threads=1`,
+`pnpm test`, `pnpm check`, and `pnpm build` in `packages/app` all pass.
 
 ## Working Rule
 
