@@ -1156,6 +1156,94 @@ async function confirmImport() {
     importing.value = false
   }
 }
+
+// --- Record Actions (Duplicate, Print, Custom Actions) ---
+const { data: moduleActions, refresh: refreshModuleActions } = await useFetch<{ id: string; name: string; label: string; kind: string }[]>(
+  () => entityId.value ? `/api/entities/${encodeURIComponent(entityId.value)}/actions` : '',
+  { watch: [entityId] }
+)
+const executingActionId = ref<string | null>(null)
+
+async function duplicateRecord() {
+  if (!selected.value) return
+  const duplicate = { ...payload }
+  delete (duplicate as any).id
+  // Reset status to initial state (workflow first state)
+  const statusName = statusField.value?.name
+  if (statusName && workflow.value?.states?.length) {
+    duplicate[statusName] = workflow.value.states[0]!.name
+  }
+  Object.keys(payload).forEach(key => delete payload[key])
+  Object.assign(payload, emptyPayload(), duplicate)
+  initialPayload.value = { ...payload }
+  selected.value = null
+  selectedUpdatedAt.value = ''
+  toast.add({ title: 'Record duplicated as draft', color: 'success', icon: 'i-lucide-copy' })
+}
+
+function printRecord() {
+  const w = window.open('', '_blank')
+  if (!w) return
+  const fields = viewableFields.value
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <title>${entity.value?.label || entityId.value} — ${selected.value?.id}</title>
+        <style>
+          body { font-family: system-ui, sans-serif; margin: 2rem; line-height: 1.6; }
+          h1 { font-size: 1.5rem; margin-bottom: 1rem; }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 1rem; }
+          th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #ccc; }
+          th { background: #f5f5f5; font-weight: 600; }
+          @media print { body { margin: 0; } }
+        </style>
+      </head>
+      <body>
+        <h1>${entity.value?.label || entityId.value}</h1>
+        <table>
+          <tr>
+            <th>Field</th>
+            <th>Value</th>
+          </tr>
+          ${fields.map(f => `<tr><td><strong>${f.name}</strong></td><td>${fieldLabel(f, selected.value?.payload[f.name]) || '—'}</td></tr>`).join('')}
+        </table>
+        <script>window.print(); window.close();<\/script>
+      </body>
+    </html>
+  `
+  w.document.write(html)
+}
+
+async function executeCustomAction(action: { id: string; name: string; label: string; kind: string }) {
+  if (!selected.value) return
+  executingActionId.value = action.id
+  try {
+    const result = await $fetch(`/api/entities/${encodeURIComponent(entityId.value)}/actions/${encodeURIComponent(action.id)}`, {
+      method: 'POST',
+      body: {
+        document_id: selected.value.id,
+        payload,
+        expected_updated_at: selectedUpdatedAt.value || undefined
+      }
+    })
+    if (result?.document) {
+      selected.value = result.document
+      selectedUpdatedAt.value = result.document.updated_at
+      Object.keys(payload).forEach(key => delete payload[key])
+      Object.assign(payload, emptyPayload(), result.document.payload)
+      initialPayload.value = { ...payload }
+      await refresh()
+      await refreshAudit()
+    }
+    toast.add({ title: `Action "${action.label}" executed`, color: 'success', icon: 'i-lucide-check' })
+  } catch (cause: any) {
+    toast.add({ title: `Unable to execute "${action.label}"`, description: cause?.data?.message || cause?.statusMessage || 'Action failed', color: 'error', icon: 'i-lucide-alert-circle' })
+  } finally {
+    executingActionId.value = null
+  }
+}
 </script>
 
 <template>
@@ -1499,9 +1587,8 @@ async function confirmImport() {
               </UFormField>
             </template>
             <UAlert v-if="error" color="error" :title="error" />
-            <div v-if="selected" class="border-t pt-4">
-              <div class="mb-2 flex items-center justify-between">
-                <div class="mb-4 border-t pt-4">
+            <div v-if="selected" class="space-y-4 border-t pt-4">
+              <div>
                 <div class="mb-2 flex items-center justify-between"><h2 class="text-sm font-semibold">Related records</h2><span v-if="relatedLoading" class="text-xs text-muted">Loading…</span></div>
                 <div v-if="relatedRelations.length" class="space-y-3">
                   <div v-for="relation in relatedRelations" :key="relation.id" class="rounded-lg bg-muted/40 px-3 py-2">
@@ -1512,16 +1599,18 @@ async function confirmImport() {
                 </div>
                 <p v-else-if="!relatedLoading" class="text-xs text-muted">No relations configured.</p>
               </div>
-              <h2 class="text-sm font-semibold">Comments</h2>
-                <UButton
-                  size="xs"
-                  variant="outline"
-                  :icon="followers?.is_following ? 'i-lucide-bell-off' : 'i-lucide-bell'"
-                  :loading="togglingFollow"
-                  @click="toggleFollow"
-                >{{ followers?.is_following ? 'Unfollow' : 'Follow' }}{{ followers?.total ? ` (${followers.total})` : '' }}</UButton>
-              </div>
-              <div class="mb-2 flex gap-2">
+              <div>
+                <div class="mb-2 flex items-center justify-between">
+                  <h2 class="text-sm font-semibold">Comments</h2>
+                  <UButton
+                    size="xs"
+                    variant="outline"
+                    :icon="followers?.is_following ? 'i-lucide-bell-off' : 'i-lucide-bell'"
+                    :loading="togglingFollow"
+                    @click="toggleFollow"
+                  >{{ followers?.is_following ? 'Unfollow' : 'Follow' }}{{ followers?.total ? ` (${followers.total})` : '' }}</UButton>
+                </div>
+                <div class="mb-2 flex gap-2">
                 <UInput
                   v-model="commentBody"
                   placeholder="Write a comment…"
@@ -1622,19 +1711,34 @@ async function confirmImport() {
                 <UButton size="sm" variant="outline" @click="refreshWorkflow()">Retry</UButton>
               </template>
             </UAlert>
-            <div class="flex justify-between gap-2">
-              <div class="flex gap-2">
-                <UButton
-                  v-for="item in availableActions()"
-                  :key="item.action"
-                  :loading="transitioningAction === item.action"
-                  :disabled="!canEdit || (transitioningAction !== null && transitioningAction !== item.action)"
-                  @click="transition(item.action)"
-                >{{ transitionLabel(item.action) }}</UButton>
-                <p v-if="selected && !availableActions().length && workflowStatus === 'success'" class="self-center text-xs text-muted">No actions available for this status.</p>
-                <UButton v-if="selected" color="error" variant="ghost" :disabled="!canEdit" @click="deleteOpen = true">Delete</UButton>
+            <div class="flex flex-col gap-2">
+              <div class="flex justify-between gap-2">
+                <div class="flex flex-wrap gap-2">
+                  <UButton
+                    v-for="item in availableActions()"
+                    :key="item.action"
+                    :loading="transitioningAction === item.action"
+                    :disabled="!canEdit || (transitioningAction !== null && transitioningAction !== item.action)"
+                    @click="transition(item.action)"
+                  >{{ transitionLabel(item.action) }}</UButton>
+                  <p v-if="selected && !availableActions().length && workflowStatus === 'success'" class="self-center text-xs text-muted">No actions available for this status.</p>
+                </div>
+                <div class="ml-auto flex gap-2"><UButton variant="ghost" @click="requestClose">Cancel</UButton><UButton type="submit" form="record-form" :loading="saving" :disabled="!canEdit">Save</UButton></div>
               </div>
-              <div class="ml-auto flex gap-2"><UButton variant="ghost" @click="requestClose">Cancel</UButton><UButton type="submit" form="record-form" :loading="saving" :disabled="!canEdit">Save</UButton></div>
+              <div v-if="selected" class="flex flex-wrap items-center gap-2 border-t pt-2">
+                <UButton size="sm" variant="outline" icon="i-lucide-copy" @click="duplicateRecord">Duplicate</UButton>
+                <UButton size="sm" variant="outline" icon="i-lucide-printer" @click="printRecord">Print</UButton>
+                <UButton
+                  v-for="action in moduleActions"
+                  :key="action.id"
+                  size="sm"
+                  variant="outline"
+                  :loading="executingActionId === action.id"
+                  :disabled="executingActionId !== null"
+                  @click="executeCustomAction(action)"
+                >{{ action.label }}</UButton>
+                <UButton size="sm" color="error" variant="ghost" :disabled="!canEdit" @click="deleteOpen = true">Delete</UButton>
+              </div>
             </div>
           </div>
         </template>
