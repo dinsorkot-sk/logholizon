@@ -1632,6 +1632,7 @@ async function executeCustomAction(action: { id: string; name: string; label: st
                 </li>
               </ol>
                 <p v-else class="mb-4 text-[0.8125rem] text-muted leading-normal">No comments yet.</p>
+              </div>
               <h2 class="mb-2 text-sm font-semibold">Activities{{ activities?.open ? ` (${activities.open} open)` : '' }}</h2>
               <div class="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_auto_auto]">
                 <UInput v-model="activityTitle" placeholder="New activity…" :disabled="!canEdit" @keyup.enter="createActivity" />
