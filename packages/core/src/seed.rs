@@ -76,6 +76,16 @@ pub async fn seed(pool: &SqlitePool) -> Result<()> {
             .execute(&mut *tx)
             .await?;
     }
+    sqlx::query("INSERT OR IGNORE INTO _entity_form_layout (entity_id, config) VALUES (?, ?)")
+        .bind("work_order")
+        .bind(serde_json::to_string(&json!({
+            "sections": [
+                { "id": "primary", "label": "Primary details", "fields": ["work_order_priority", "work_order_title"] }
+            ]
+        }))?)
+        .execute(&mut *tx)
+        .await?;
+
     for (id, field_id, value, label) in [
         (
             "work_order_status_draft",

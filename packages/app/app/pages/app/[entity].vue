@@ -14,6 +14,8 @@ type Field = { id: string; name: string; type: string; required: boolean; is_sta
 type EntityOption = { id: string; label: string }
 type EntityPermission = { role: string; can_view: boolean; can_edit: boolean }
 type Entity = { id: string; name: string; label: string; fields: Field[]; permission?: EntityPermission }
+type Relation = { id: string; source_entity_id: string; target_entity_id: string; name: string; relation_type: string }
+type RelatedDocument = { id: string; payload: Record<string, unknown> }
 type Document = { id: string; entity_id: string; payload: Record<string, unknown>; created_at: string; updated_at: string }
 type DocumentList = { items: Document[]; total: number }
 type AuditEntry = { id: string; action: string; payload: Record<string, unknown>; created_at: string; actor?: string | null }
@@ -127,6 +129,26 @@ const viewableFields = computed(() => (entity.value?.fields || []).filter(f => f
 // searches server-side so large target entities stay usable.
 const refOptions = ref<Record<string, EntityOption[]>>({})
 const refSearch = ref<Record<string, string>>({})
+const relatedRelations = ref<Relation[]>([])
+const relatedDocuments = ref<Record<string, RelatedDocument[]>>({})
+const relatedLoading = ref(false)
+async function loadRelatedRecords(documentId: string) {
+  if (!documentId) return
+  relatedLoading.value = true
+  try {
+    const relations = await $fetch<Relation[]>(`/api/entities/${encodeURIComponent(entityId.value)}/relations`)
+    relatedRelations.value = relations
+    const entries = await Promise.all(relations.map(async relation => [relation.id, await $fetch<RelatedDocument[]>(`/api/entities/${encodeURIComponent(documentId)}/relations/${encodeURIComponent(relation.id)}`)] as const))
+    relatedDocuments.value = Object.fromEntries(entries)
+  } catch {
+    relatedRelations.value = []
+    relatedDocuments.value = {}
+  } finally { relatedLoading.value = false }
+}
+function relationTargetEntity(relation: Relation) { return relation.source_entity_id === entityId.value ? relation.target_entity_id : relation.source_entity_id }
+function relationTargetLabel(relation: Relation) { const id = relationTargetEntity(relation); return entities.value?.find(e => e.id === id)?.label || id }
+function relatedRecordLabel(record: RelatedDocument) { return String(record.payload.title || record.payload.name || record.id) }
+watch(selected, document => { if (document) loadRelatedRecords(document.id); else { relatedRelations.value = []; relatedDocuments.value = {} } }, { immediate: true })
 async function loadRefOptions(field: Field, search = '') {
   const target = field.ref_entity
   if (field.type !== 'reference' || !target) return
@@ -187,8 +209,20 @@ const activeViewId = computed(() => {
 })
 const { data: activeView } = await useFetch<EntityView>(
   () => activeViewId.value ? `/api/views/${encodeURIComponent(activeViewId.value)}` : '',
-  { watch: [activeViewId], immediate: false }
+  { watch: [activeViewId], immediate: true }
 )
+watch(activeView, (view) => {
+  if (!view) return
+  const config = view.config || {}
+  if (typeof config.search === 'string') search.value = config.search
+  if (typeof config.status === 'string') statusFilter.value = config.status
+  if (typeof config.sort_by === 'string') sortBy.value = config.sort_by
+  if (config.sort_dir === 'asc' || config.sort_dir === 'desc') sortDir.value = config.sort_dir
+  if (Array.isArray(config.columns)) {
+    const allowed = new Set(viewableFields.value.map(field => field.name))
+    visibleColumns.value = new Set(config.columns.filter((name): name is string => typeof name === 'string' && allowed.has(name)))
+  }
+}, { immediate: true })
 const { data: savedViews, refresh: refreshSavedViews } = await useFetch<EntityView[]>(
   () => `/api/entities/${encodeURIComponent(entityId.value)}/views`,
   { watch: [entityId] }
@@ -232,6 +266,7 @@ function currentFilterConfig() {
     config.sort_by = sortBy.value
     config.sort_dir = sortDir.value
   }
+  config.columns = [...visibleColumns.value]
   return config
 }
 
@@ -874,10 +909,15 @@ const auditItems = computed(() => {
 })
 
 // --- Column visibility ---
-watch(entity, (e) => {
-  if (e) {
-    visibleColumns.value = new Set(e.fields.filter(f => f.can_view ?? true).map(f => f.name))
+watch([entity, activeView], ([e, view]) => {
+  if (!e) return
+  const allowed = new Set(e.fields.filter(f => f.can_view ?? true).map(f => f.name))
+  const columns = view?.config?.columns
+  if (Array.isArray(columns)) {
+    visibleColumns.value = new Set(columns.filter((name): name is string => typeof name === 'string' && allowed.has(name)))
+    return
   }
+  visibleColumns.value = allowed
 }, { immediate: true })
 
 function toggleColumn(name: string) {
@@ -1461,7 +1501,18 @@ async function confirmImport() {
             <UAlert v-if="error" color="error" :title="error" />
             <div v-if="selected" class="border-t pt-4">
               <div class="mb-2 flex items-center justify-between">
-                <h2 class="text-sm font-semibold">Comments</h2>
+                <div class="mb-4 border-t pt-4">
+                <div class="mb-2 flex items-center justify-between"><h2 class="text-sm font-semibold">Related records</h2><span v-if="relatedLoading" class="text-xs text-muted">Loading…</span></div>
+                <div v-if="relatedRelations.length" class="space-y-3">
+                  <div v-for="relation in relatedRelations" :key="relation.id" class="rounded-lg bg-muted/40 px-3 py-2">
+                    <p class="mb-1 text-xs font-semibold uppercase text-muted">{{ relation.name }} · {{ relationTargetLabel(relation) }}</p>
+                    <NuxtLink v-for="record in relatedDocuments[relation.id] || []" :key="record.id" :to="`/app/${encodeURIComponent(relationTargetEntity(relation))}?record=${encodeURIComponent(record.id)}`" class="block truncate py-1 text-sm text-primary hover:underline">{{ relatedRecordLabel(record) }}</NuxtLink>
+                    <p v-if="!(relatedDocuments[relation.id] || []).length" class="text-xs text-muted">No related records.</p>
+                  </div>
+                </div>
+                <p v-else-if="!relatedLoading" class="text-xs text-muted">No relations configured.</p>
+              </div>
+              <h2 class="text-sm font-semibold">Comments</h2>
                 <UButton
                   size="xs"
                   variant="outline"

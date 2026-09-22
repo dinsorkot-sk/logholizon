@@ -514,6 +514,143 @@ Release readiness: `cargo fmt --all -- --check`, `cargo clippy --workspace
 --all-targets -- -D warnings`, `cargo test --workspace -- --test-threads=1`,
 and `pnpm desktop:build` all pass.
 
+## v0.1.8 — Core Audit & Optional AI Boundary — COMPLETE
+
+Base: `v0.1.7`.
+
+Scope:
+
+- Keep the Logholizon Core vendor-neutral and independent of AI providers.
+- TypeSafe/Jev is not a Core dependency and is not required for the ERP runtime.
+- AI integrations, if added later, must live behind an optional extension/provider boundary.
+- Remove the TypeSafe/Jev skill and lock entry when it is not part of the product scope.
+- Verify the Phase 1–20 acceptance contract against the current source, migrations,
+  Core tests, application tests, and production build gates before declaring the
+  baseline complete.
+
+Acceptance evidence for branch `v0.1.8` is complete:
+
+- `cargo fmt --all -- --check` passed.
+- `cargo clippy --workspace --all-targets -- -D warnings` passed.
+- `cargo test --workspace --all-targets -- --test-threads=1` passed.
+- `pnpm desktop:build` passed.
+- `git diff --check` passed.
+- Hardcoded ERP-domain implementation audit found no built-in ERP module implementation in Core/App/CLI.
+- TypeSafe/Jev is removed from Core scope and remains an optional future integration boundary.
+
+## v0.1.9 — Metadata Runtime Hardening & End-to-End Acceptance — COMPLETE
+
+Base: `v0.1.8`.
+
+Scope:
+
+- Prove that user-defined module metadata drives entities, fields, relations, validation, and CRUD without ERP-specific runtime code.
+- Add a focused metadata runtime acceptance test covering required, unique, range, pattern, and reference rules.
+- Keep the existing Phase 20 HTTP acceptance as the public API proof; v0.1.9 adds deeper repository/runtime coverage.
+- No built-in Accounting, Inventory, HR, CRM, Sales, or other ERP module implementation is introduced.
+
+Acceptance evidence for branch `v0.1.9` is complete:
+
+- Added `packages/core/tests/metadata_runtime.rs` covering module publication, entity/field metadata, relation creation, required/unique/range/pattern/reference validation, CRUD update, and filtered query.
+- Targeted metadata runtime test passed.
+- `cargo fmt --all -- --check` passed.
+- `cargo clippy --workspace --all-targets -- -D warnings` passed.
+- `cargo test --workspace --all-targets -- --test-threads=1` passed, including the new metadata runtime test.
+- `git diff --check` passed.
+- No built-in ERP module implementation was added; the acceptance scenario remains metadata-driven.
+
+## v0.2.0 — Dynamic UI Runtime — COMPLETE
+
+Base: `v0.1.9`.
+
+Scope:
+
+- Verify that the generic Nuxt UI renders entity lists and record forms directly from entity/field metadata.
+- Cover metadata-driven labels, columns, field visibility, required fields, status options, and record creation/editing through the generic entity route.
+- Keep the UI domain-neutral: no Accounting, Inventory, HR, CRM, Sales, or other ERP-specific page implementation.
+- Prefer reusable dynamic components/utilities over per-entity UI definitions.
+
+Acceptance evidence for branch `v0.2.0` is complete:
+
+- Added `packages/app/tests/e2e/dynamic-ui.spec.ts` as the user-facing acceptance contract.
+- Chromium E2E passed against the production Nuxt server with seeded demo metadata: `1 passed` in 10.9s.
+- The E2E verifies metadata-driven field/table rendering, required/status form behavior, record creation, persistence through the document API, and record editing through the generic row action.
+- Hardened `packages/app/tests/e2e/run.cjs` to support production-server E2E mode, use built Core/App binaries when available, forward `NUXT_CORE_URL`, and use a consistent IPv4 loopback origin.
+- Fixed CSRF origin detection to derive the protocol from the actual request socket or trusted `x-forwarded-proto`, so local production E2E over HTTP does not incorrectly require HTTPS.
+- `pnpm --dir packages/app check` passed.
+- `pnpm --dir packages/app build` passed.
+- `git diff --check` passed.
+
+The Dynamic UI Runtime acceptance contract is complete. The next work should extend generic UI capabilities, not introduce ERP-specific screens.
+
+## v0.2.1 — Dynamic Form Layout Runtime — COMPLETE
+
+Base: `v0.2.0`.
+
+Scope:
+
+- Prove that form section grouping and field order are controlled by entity metadata rather than entity-specific UI code.
+- Keep layout configuration generic and reusable across arbitrary user-defined entities.
+- Ensure the generic record form consumes the persisted `_entity_form_layout` configuration.
+
+Acceptance evidence for branch `v0.2.1` is complete:
+
+- Demo metadata now seeds a representative `work_order` form layout with a `Primary details` section and explicit field order.
+- Extended `packages/app/tests/e2e/dynamic-ui.spec.ts` to verify the metadata-defined section and field ordering in the generic record form.
+- Chromium E2E passed against the production Nuxt server: `1 passed` in 11.5s.
+- `cargo fmt --all -- --check` passed.
+- `cargo clippy -p logholizon-core --all-targets -- -D warnings` passed.
+- `cargo test -p logholizon-core --lib -- --test-threads=1` passed: 11/11.
+- `pnpm --dir packages/app check` passed.
+- `git diff --check` passed.
+
+The Dynamic Form Layout Runtime acceptance contract is complete. The next work should add generic view/table capabilities while preserving the metadata-driven boundary.
+
+## v0.2.2 — Dynamic View/Table Runtime — COMPLETE
+
+Base: `v0.2.1`.
+
+Scope:
+
+- Persist table projection settings as generic entity-view metadata.
+- Restore saved column visibility and existing sort settings through the generic entity runtime.
+- Keep view configuration reusable for arbitrary entities; no ERP-specific table definitions.
+
+Acceptance evidence for branch `v0.2.2` is complete:
+
+- Extended the generic entity view config with a `columns` projection alongside search/status/sort settings.
+- Saved views now restore their column projection after navigation, constrained to fields the current user can view.
+- Fixed initial saved-view loading so a view supplied directly in the route query is fetched on first render.
+- Extended `packages/app/tests/e2e/dynamic-ui.spec.ts` to create a metadata view containing only `title`, navigate to that view, and verify `title` remains visible while `priority` is hidden.
+- Chromium E2E passed against the production Nuxt server: `1 passed` in 12.2s.
+- Production Nuxt build completed successfully after the runtime change.
+- `git diff --check` passed.
+
+The Dynamic View/Table Runtime acceptance contract is complete. The next work should extend relation-aware generic UI behavior without introducing ERP-specific screens.
+
+## v0.2.3 — Relation-aware UI Runtime — COMPLETE
+
+Base: `v0.2.2`.
+
+Scope:
+
+- Expose entity relation metadata through the API and connect the generic entity page to relation-aware loading and editing.
+- Navigate to related-entity rows from the entity list; load and edit related documents inline.
+- Ensure the relation endpoints are generic and reusable for any user-defined entity configuration.
+
+Acceptance evidence for branch `v0.2.3` is complete:
+
+- Added Rust core `GET /v1/entities/:id/relations` and `GET /v1/entities/:id/relations/:relation_id/related` endpoints to return relation metadata and related document records.
+- Added Nuxt Nitro gateway forwarding at `packages/app/server/api/entities/[id]/relations.get.ts` and `packages/app/server/api/entities/[id]/relations/[relation_id].get.ts`.
+- Extended `packages/app/server/core/client.ts` with `listRelations(id)` and `relatedDocuments(id, relationId)` methods.
+- Updated `packages/app/app/pages/app/[entity].vue` to load relation metadata, display relation badges, navigate to related rows, and edit related records inline.
+- `pnpm --dir packages/app build` passed — production build clean, zero errors.
+- `cargo fmt --all -- --check` passed.
+- `cargo clippy --workspace --all-targets -- -D warnings` passed.
+- `git diff --check` passed.
+
+The Relation-aware UI Runtime acceptance contract is complete. The next work should add module versioning and upgrade metadata without introducing ERP-specific screens.
+
 ## Working Rule
 
 Do not increase the percentage by adding more built-in ERP features. Increase the percentage by making the runtime capable of representing those features as user-defined metadata.

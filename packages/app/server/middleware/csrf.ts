@@ -14,6 +14,7 @@
  */
 
 import { defineEventHandler, getHeader } from 'h3'
+import { TLSSocket } from 'node:tls'
 
 export default defineEventHandler((event) => {
   const method = event.node.req.method
@@ -49,7 +50,7 @@ export default defineEventHandler((event) => {
   const host = getHeader(event, 'host')
   const proto =
     getHeader(event, 'x-forwarded-proto') || // reverse proxy (production)
-    (process.env.NODE_ENV === 'production' ? 'https' : 'http')
+    (event.node.req.socket instanceof TLSSocket ? 'https' : 'http')
 
   const expectedOrigin = `${proto}://${host}`
 

@@ -8,6 +8,7 @@ export default defineConfig({
   fullyParallel: false,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? 'github' : 'list',
+  timeout: 120_000,
   use: {
     // Nuxt dev binds IPv6 loopback (`[::1]`) on Windows; `localhost` resolves
     // there while `127.0.0.1` is refused. Core binds IPv4, so keep its URL.
