@@ -75,7 +75,7 @@ Rust Axum Runtime
 - Stable `/v1` error and response contracts.
 - No dependency on hardcoded business entities.
 
-### Phase 5 — Dynamic UI Runtime — 45%
+### Phase 5 — Dynamic UI Runtime — 45% — COMPLETE (100%)
 - Generic module/entity routes.
 - Dynamic form renderer.
 - Dynamic field renderers.
@@ -83,7 +83,7 @@ Rust Axum Runtime
 - Dynamic list/table renderer.
 - Search, filter, sort, pagination and saved views.
 - Record detail, related records, timeline and audit.
-- Generic actions and export/import integration.
+- Generic actions (Duplicate, Print, Custom Actions) and export/import integration.
 
 ### Phase 6 — Module Builder — 55%
 - Module Builder.
@@ -648,6 +648,14 @@ Acceptance evidence for branch `v0.2.3` is complete:
 - `cargo fmt --all -- --check` passed.
 - `cargo clippy --workspace --all-targets -- -D warnings` passed.
 - `git diff --check` passed.
+
+Phase 5 generic record actions extension:
+- Implemented `packages/app/server/api/entities/[id]/actions.get.ts` gateway to list module actions.
+- Added duplicate record capability with initial status reset in `packages/app/app/pages/app/[entity].vue`.
+- Added printable HTML preview with automated `window.print()` in `packages/app/app/pages/app/[entity].vue`.
+- Added metadata-driven custom action execution buttons with loading states in the record detail footer.
+- Added acceptance test assertion in `packages/app/tests/e2e/dynamic-ui.spec.ts` for metadata-driven record duplication.
+- Verified production build and lint gates green.
 
 The Relation-aware UI Runtime acceptance contract is complete. The next work should add module versioning and upgrade metadata without introducing ERP-specific screens.
 

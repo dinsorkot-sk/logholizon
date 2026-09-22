@@ -148,4 +148,23 @@ test('generic entity UI renders and edits records from metadata', async ({ page 
   await editDialog.getByLabel(new RegExp(`${titleField.label || titleField.name}\*?$`, 'i')).fill(updatedTitle)
   await editDialog.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(page.getByText(updatedTitle, { exact: true })).toBeVisible({ timeout: 15_000 })
+
+  // Phase 5: generic record-level actions (duplicate) must be metadata-driven
+  // and work on any entity through the same detail form, without an
+  // entity-specific implementation.
+  const updatedRow = page.getByRole('row').filter({ hasText: updatedTitle }).first()
+  await updatedRow.getByRole('button', { name: 'Edit' }).click()
+  const detailDialog = page.getByRole('dialog')
+  await expect(detailDialog).toBeVisible({ timeout: 15_000 })
+  await detailDialog.getByRole('button', { name: 'Duplicate' }).click()
+  const duplicateTitleInput = detailDialog.getByLabel(new RegExp(`${titleField.label || titleField.name}\\*?$`, 'i'))
+  await expect(duplicateTitleInput).toHaveValue(updatedTitle)
+  const duplicatedTitle = `${updatedTitle} copy`
+  await duplicateTitleInput.fill(duplicatedTitle)
+  const duplicateCreatePromise = page.waitForResponse(response => response.url().includes('/api/documents') && response.request().method() === 'POST', { timeout: 15_000 })
+  await detailDialog.getByRole('button', { name: 'Save', exact: true }).click()
+  const duplicateCreateResponse = await duplicateCreatePromise
+  expect(duplicateCreateResponse.status(), await duplicateCreateResponse.text()).toBe(200)
+  await expect(page.getByText(duplicatedTitle, { exact: true })).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByText(updatedTitle, { exact: true })).toBeVisible({ timeout: 15_000 })
 })
