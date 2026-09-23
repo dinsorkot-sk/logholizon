@@ -85,17 +85,18 @@ Rust Axum Runtime
 - Record detail, related records, timeline and audit.
 - Generic actions (Duplicate, Print, Custom Actions) and export/import integration.
 
-### Phase 6 — Module Builder — 55%
-- Module Builder.
-- Entity Builder.
-- Field Builder.
-- Relation Builder.
-- Form Builder.
-- View Builder.
-- Module settings.
-- Preview mode.
-- Publish flow.
-- Builder must operate entirely on metadata.
+### Phase 6 — Module Builder — 80%
+- Module Builder — CRUD with full definition editor.
+- Entity Builder — add/remove entities with inline field editor.
+- Field Builder — all field types, options, constraints, computed/ref.
+- Relation Builder — definition-level relations (source/target/name/type/on_delete) stored in definition JSON, materialized on publish.
+- Form Builder — sections with field assignment.
+- View Builder — column visibility, sort direction, status filter per view.
+- Module settings — JSON settings card in builder.
+- Custom Actions — definition-level actions (entity/name/label/kind) stored in definition JSON, materialized on publish.
+- Preview mode — navigate to runtime entity page from builder.
+- Publish flow — full lifecycle (draft→review→publish→enable→disable→archive).
+- Builder operates entirely on metadata.
 
 ### Phase 7 — RBAC & Permissions — 63%
 - Role management.

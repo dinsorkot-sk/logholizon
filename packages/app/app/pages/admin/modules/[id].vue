@@ -52,6 +52,22 @@ type ModuleRelation = {
   relation_type: string
   on_delete: string
 }
+type DefinitionRelation = {
+  source: string
+  target: string
+  name: string
+  relation_type: string
+  on_delete: string
+  source_field?: string
+  target_field?: string
+}
+type DefinitionAction = {
+  entity: string
+  name: string
+  label: string
+  kind: string
+  config?: Record<string, unknown>
+}
 type ModuleVersion = { id: string; module_id: string; version: number; actor: string | null; created_at: string }
 type Module = {
   id: string
@@ -63,7 +79,7 @@ type Module = {
   owner: string
   status: string
   version: number
-  definition: { entities?: ModuleEntity[]; settings?: Record<string, unknown> }
+  definition: { entities?: ModuleEntity[]; settings?: Record<string, unknown>; relations?: DefinitionRelation[]; actions?: DefinitionAction[] }
 }
 
 const toast = useToast()
@@ -112,7 +128,9 @@ const newOption = reactive({ entity: '', field: '', value: '', label: '' })
 const newView = reactive({ entity: '', name: '' })
 const newReport = reactive({ entity: '', name: '', group_by: '', chart_type: '' })
 const newNotification = reactive({ entity: '', target_url: '', trigger: 'transition', active: true })
-const newRelation = reactive({ source: '', target: '', name: '', relation_type: 'many_to_one', on_delete: 'restrict' })
+const newRelation = reactive({ source: '', target: '', name: '', relation_type: 'many_to_one', on_delete: 'restrict', source_field: '', target_field: '' })
+const newAction = reactive({ entity: '', name: '', label: '', kind: 'custom' })
+const newDefView = reactive({ entity: '', name: '', columns: '', sort_by: '', sort_dir: 'asc', status_filter: '' })
 const layoutForms = ref<Record<string, { label: string }>>({})
 const layoutFieldPick = ref<Record<string, string>>({})
 
@@ -162,6 +180,13 @@ const deleteRuleItems = [
   { label: 'Restrict', value: 'restrict' },
   { label: 'Set null', value: 'set_null' },
   { label: 'Cascade', value: 'cascade' }
+]
+
+const actionKindItems = [
+  { label: 'Custom', value: 'custom' },
+  { label: 'Duplicate', value: 'duplicate' },
+  { label: 'Print', value: 'print' },
+  { label: 'Webhook', value: 'webhook' }
 ]
 
 const chartTypeItems = [
@@ -221,7 +246,7 @@ function fieldDisplayName(entityName: string, ref: string) {
   return ref.startsWith(prefix) ? ref.slice(prefix.length) : ref
 }
 
-function cloneDefinition(): { entities: ModuleEntity[]; settings?: Record<string, unknown> } {
+function cloneDefinition(): { entities: ModuleEntity[]; settings?: Record<string, unknown>; relations?: DefinitionRelation[]; actions?: DefinitionAction[] } {
   return JSON.parse(JSON.stringify(module.value?.definition || { entities: [] }))
 }
 
@@ -536,74 +561,145 @@ function unassignedLayoutFields(entity: ModuleEntity) {
   )
 }
 
-// --- Relations (post-publish, on materialized entities) ---
+// --- Definition-level relations ---
+function defRelations(): DefinitionRelation[] {
+  return (module.value?.definition as any)?.relations || []
+}
+
+async function addDefRelation() {
+  if (!newRelation.source || !newRelation.target || !newRelation.name.trim()) return
+  const definition = cloneDefinition()
+  definition.relations = definition.relations || []
+  if (definition.relations.some(r => r.name === newRelation.name.trim())) {
+    saveError.value = `relation already exists: ${newRelation.name.trim()}`
+    return
+  }
+  definition.relations.push({
+    source: newRelation.source,
+    target: newRelation.target,
+    name: newRelation.name.trim(),
+    relation_type: newRelation.relation_type,
+    on_delete: newRelation.on_delete,
+    ...(newRelation.source_field.trim() ? { source_field: newRelation.source_field.trim() } : {}),
+    ...(newRelation.target_field.trim() ? { target_field: newRelation.target_field.trim() } : {})
+  })
+  newRelation.name = ''
+  newRelation.source_field = ''
+  newRelation.target_field = ''
+  await saveDefinition(definition, 'Relation added')
+}
+
+async function removeDefRelation(index: number) {
+  const definition = cloneDefinition()
+  definition.relations = definition.relations || []
+  definition.relations.splice(index, 1)
+  await saveDefinition(definition, 'Relation removed')
+}
+
+// --- Definition-level actions ---
+function defActions(): DefinitionAction[] {
+  return (module.value?.definition as any)?.actions || []
+}
+
+async function addDefAction() {
+  if (!newAction.entity || !newAction.name.trim() || !newAction.label.trim()) return
+  const definition = cloneDefinition()
+  definition.actions = definition.actions || []
+  if (definition.actions.some(a => a.entity === newAction.entity && a.name === newAction.name.trim())) {
+    saveError.value = `action already exists: ${newAction.entity}.${newAction.name.trim()}`
+    return
+  }
+  definition.actions.push({
+    entity: newAction.entity,
+    name: newAction.name.trim(),
+    label: newAction.label.trim(),
+    kind: newAction.kind
+  })
+  newAction.name = ''
+  newAction.label = ''
+  await saveDefinition(definition, 'Action added')
+}
+
+async function removeDefAction(index: number) {
+  const definition = cloneDefinition()
+  definition.actions = definition.actions || []
+  definition.actions.splice(index, 1)
+  await saveDefinition(definition, 'Action removed')
+}
+
+// --- View config save ---
+async function saveViewConfig(entityName: string, viewName: string, config: Record<string, unknown>) {
+  const definition = cloneDefinition()
+  const entity = definition.entities.find((e: ModuleEntity) => e.name === entityName)
+  const view = entity?.views?.find(v => v.name === viewName)
+  if (!view) return
+  view.config = config
+  await saveDefinition(definition, 'View config saved')
+}
+
+function updateViewConfig(entityName: string, viewName: string, patch: Record<string, unknown>) {
+  const definition = cloneDefinition()
+  const entity = definition.entities.find((e: ModuleEntity) => e.name === entityName)
+  const view = entity?.views?.find(v => v.name === viewName)
+  if (!view) return
+  view.config = view.config || {}
+  Object.assign(view.config, patch)
+  return saveDefinition(definition, 'View config saved')
+}
+
+function setViewColumn(entityName: string, viewName: string, fieldName: string, include: boolean) {
+  const definition = cloneDefinition()
+  const entity = definition.entities.find((e: ModuleEntity) => e.name === entityName)
+  const view = entity?.views?.find(v => v.name === viewName)
+  if (!view) return
+  view.config = view.config || {}
+  const columns = new Set<string>((view.config.columns || []) as string[])
+  if (include) columns.add(fieldName)
+  else columns.delete(fieldName)
+  view.config.columns = Array.from(columns)
+  saveDefinition(definition, 'View columns updated')
+}
+
+function setViewSortBy(entityName: string, viewName: string, sortBy: string) {
+  return updateViewConfig(entityName, viewName, { sort_by: sortBy })
+}
+
+function setViewSortDir(entityName: string, viewName: string, sortDir: string) {
+  return updateViewConfig(entityName, viewName, { sort_dir: sortDir })
+}
+
+function setViewStatusFilter(entityName: string, viewName: string, statusFilter: string) {
+  return updateViewConfig(entityName, viewName, { status_filter: statusFilter })
+}
+
+// --- Preview module (navigate to runtime as if published) ---
+function previewModule() {
+  if (!module.value) return
+  // Navigate to the first entity's runtime page
+  const firstEntity = entities.value[0]
+  if (firstEntity) {
+    navigateTo(`/app/${encodeURIComponent(materializedId(firstEntity.name))}`)
+  }
+}
+
+// Runtime relations kept for post-publish inspection (optional)
 const relationsByEntity = ref<Record<string, ModuleRelation[]>>({})
 const relationsLoading = ref(false)
 const relationsError = ref('')
 
 async function loadRelations() {
-  if (!module.value || module.value.status === 'draft') {
-    relationsByEntity.value = {}
-    return
-  }
+  if (!module.value || module.value.status === 'draft') { relationsByEntity.value = {}; return }
   relationsLoading.value = true
   relationsError.value = ''
   try {
     const next: Record<string, ModuleRelation[]> = {}
     for (const entity of entities.value) {
       const id = materializedId(entity.name)
-      try {
-        next[entity.name] = await $fetch<ModuleRelation[]>(`/api/meta/entities/${encodeURIComponent(id)}/relations`)
-      } catch {
-        next[entity.name] = []
-      }
+      try { next[entity.name] = await $fetch<ModuleRelation[]>(`/api/meta/entities/${encodeURIComponent(id)}/relations`) } catch { next[entity.name] = [] }
     }
     relationsByEntity.value = next
-  } catch (cause: any) {
-    relationsError.value = cause?.data?.message || cause?.statusMessage || 'Unable to load relations'
-  } finally {
-    relationsLoading.value = false
-  }
-}
-
-watch([module, entities], () => { loadRelations() }, { immediate: true })
-
-async function addRelation() {
-  relationsError.value = ''
-  if (!newRelation.source || !newRelation.target || !newRelation.name.trim()) {
-    relationsError.value = 'source, target, and name are required'
-    return
-  }
-  saving.value = true
-  try {
-    await $fetch(`/api/meta/entities/${encodeURIComponent(materializedId(newRelation.source))}/relations`, {
-      method: 'POST',
-      body: {
-        name: newRelation.name.trim(),
-        target_entity_id: materializedId(newRelation.target),
-        relation_type: newRelation.relation_type,
-        on_delete: newRelation.on_delete
-      }
-    })
-    newRelation.name = ''
-    await loadRelations()
-    toast.add({ title: 'Relation created', color: 'success', icon: 'i-lucide-check' })
-  } catch (cause: any) {
-    relationsError.value = cause?.data?.message || cause?.statusMessage || 'Failed to create relation'
-  } finally {
-    saving.value = false
-  }
-}
-
-async function removeRelation(id: string) {
-  relationsError.value = ''
-  try {
-    await $fetch(`/api/meta/relations/${encodeURIComponent(id)}`, { method: 'DELETE' })
-    await loadRelations()
-    toast.add({ title: 'Relation deleted', color: 'success', icon: 'i-lucide-check' })
-  } catch (cause: any) {
-    relationsError.value = cause?.data?.message || cause?.statusMessage || 'Failed to delete relation'
-  }
+  } catch (cause: any) { relationsError.value = cause?.data?.message || cause?.statusMessage || 'Unable to load relations' }
+  finally { relationsLoading.value = false }
 }
 
 async function addState() {
@@ -729,7 +825,10 @@ async function rollback(version: number) {
           <template #header>
             <div class="flex items-center justify-between">
               <h2 class="text-sm font-semibold">Definition · {{ module.owner }}/{{ module.name }} · v{{ module.version }}</h2>
-              <UBadge :color="module.status === 'published' ? 'success' : module.status === 'archived' ? 'neutral' : 'warning'" variant="subtle">{{ module.status }}</UBadge>
+              <div class="flex items-center gap-2">
+                <UButton size="xs" variant="ghost" icon="i-lucide-eye" @click="previewModule">Preview</UButton>
+                <UBadge :color="module.status === 'published' ? 'success' : module.status === 'archived' ? 'neutral' : 'warning'" variant="subtle">{{ module.status }}</UBadge>
+              </div>
             </div>
           </template>
           <p class="text-[0.8125rem] text-muted leading-normal">Entities materialize as <span class="font-mono">{{ module.id }}_&lt;entity&gt;</span> on publish. Draft edits never touch live records.</p>
@@ -847,10 +946,27 @@ async function rollback(version: number) {
             <UInput v-model="newView.name" placeholder="All vehicles" />
             <UButton :disabled="!newView.entity || !newView.name.trim()" @click="addView">Add view</UButton>
           </div>
-          <div v-for="entity in entities" :key="`view-${entity.name}`" class="mt-2 text-sm">
-            <div v-for="view in entity.views || []" :key="view.name" class="flex items-center justify-between rounded bg-muted/40 px-2 py-1">
-              <span class="font-mono">{{ entity.name }} · {{ view.name }}</span>
-              <UButton size="xs" variant="ghost" color="error" @click="removeView(entity.name, view.name)">Remove</UButton>
+          <div v-for="entity in entities" :key="`view-${entity.name}`" class="mt-3 rounded border border-muted p-2 text-sm">
+            <p class="font-mono text-xs text-muted mb-1">{{ entity.name }}</p>
+            <div v-for="view in entity.views || []" :key="view.name" class="mb-3 rounded bg-muted/40 p-2">
+              <div class="flex items-center justify-between mb-2">
+                <span class="font-semibold">{{ view.name }}</span>
+                <UButton size="xs" variant="ghost" color="error" @click="removeView(entity.name, view.name)">Remove</UButton>
+              </div>
+              <div class="mb-2">
+                <p class="text-xs text-muted mb-1">Visible columns</p>
+                <div class="flex flex-wrap gap-1">
+                  <label v-for="field in entity.fields" :key="`col-${field.name}`" class="flex items-center gap-1 text-xs bg-background/60 px-2 py-1 rounded">
+                    <UCheckbox :model-value="(view.config?.columns || []).includes(field.name)" @update:model-value="toggle => setViewColumn(entity.name, view.name, field.name, toggle as boolean)" />
+                    {{ field.name }}
+                  </label>
+                </div>
+              </div>
+              <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <USelectMenu :model-value="view.config?.sort_by" placeholder="Sort by" :items="(entity.fields || []).map(f => ({ label: f.label || f.name, value: f.name }))" value-key="value" @update:model-value="v => setViewSortBy(entity.name, view.name, v as string)" />
+                <USelectMenu :model-value="view.config?.sort_dir" :items="[{ label: 'Ascending', value: 'asc' }, { label: 'Descending', value: 'desc' }]" value-key="value" @update:model-value="v => setViewSortDir(entity.name, view.name, v as string)" />
+                <UInput :model-value="view.config?.status_filter" placeholder="Status filter (optional)" @update:model-value="v => setViewStatusFilter(entity.name, view.name, v as string)" />
+              </div>
             </div>
           </div>
         </UCard>
@@ -912,28 +1028,57 @@ async function rollback(version: number) {
           </div>
         </UCard>
         <UCard>
+          <template #header><h2 class="text-sm font-semibold">Settings</h2></template>
+          <p class="mb-2 text-xs text-muted">Module-level settings are persisted in the definition and can be read by runtime rules. Enter valid JSON.</p>
+          <UTextarea v-model="settingsText" :rows="5" placeholder='{ "default_currency": "USD" }' />
+          <UAlert v-if="settingsError" color="error" class="mt-2" :title="settingsError" />
+          <div class="mt-2 flex justify-end">
+            <UButton :disabled="saving" @click="saveSettings">Save settings</UButton>
+          </div>
+        </UCard>
+        <UCard>
           <template #header>
             <div class="flex items-center justify-between">
               <h2 class="text-sm font-semibold">Relations</h2>
-              <UButton size="xs" variant="ghost" icon="i-lucide-refresh-cw" :loading="relationsLoading" @click="loadRelations()">Refresh</UButton>
             </div>
           </template>
-          <p v-if="isDraft" class="mb-2 text-xs text-muted">Publish first — relations attach to materialized entities ({{ module?.id }}_&lt;entity&gt;).</p>
+          <p class="mb-2 text-xs text-muted">Relations are stored in the module definition and materialized on publish. Use source/target entity names (short form).</p>
           <UAlert v-if="relationsError" color="error" :title="relationsError" />
-          <div v-else class="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_1fr_1fr_1fr_auto]">
+          <div class="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_1fr_1fr_1fr_auto]">
             <USelectMenu v-model="newRelation.source" :items="entities.map(e => ({ label: e.label || e.name, value: e.name }))" value-key="value" placeholder="Source…" />
             <USelectMenu v-model="newRelation.target" :items="entities.map(e => ({ label: e.label || e.name, value: e.name }))" value-key="value" placeholder="Target…" />
             <UInput v-model="newRelation.name" placeholder="rental_vehicle" />
             <USelectMenu v-model="newRelation.relation_type" :items="relationTypeItems" value-key="value" />
             <USelectMenu v-model="newRelation.on_delete" :items="deleteRuleItems" value-key="value" />
-            <UButton :disabled="isDraft || !newRelation.source || !newRelation.target || !newRelation.name.trim()" @click="addRelation">Add relation</UButton>
+            <UButton :disabled="!newRelation.source || !newRelation.target || !newRelation.name.trim()" @click="addDefRelation">Add relation</UButton>
           </div>
-          <div v-for="entity in entities" :key="`rel-${entity.name}`" class="mt-2 text-sm">
-            <div v-for="rel in relationsByEntity[entity.name] || []" :key="rel.id" class="flex items-center justify-between rounded bg-muted/40 px-2 py-1">
-              <span class="font-mono">{{ rel.name }} · {{ rel.relation_type }} · {{ rel.on_delete }}</span>
-              <UButton size="xs" variant="ghost" color="error" @click="removeRelation(rel.id)">Remove</UButton>
-            </div>
+          <div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <UInput v-model="newRelation.source_field" placeholder="Source field (optional)" />
+            <UInput v-model="newRelation.target_field" placeholder="Target field (optional)" />
           </div>
+          <ul class="mt-3 space-y-1 text-sm">
+            <li v-for="(rel, index) in defRelations()" :key="`${rel.source}-${rel.target}-${rel.name}`" class="flex items-center justify-between rounded bg-muted/40 px-2 py-1">
+              <span class="font-mono">{{ rel.source }} → {{ rel.target }} · {{ rel.name }} · {{ rel.relation_type }} · {{ rel.on_delete }}</span>
+              <UButton size="xs" variant="ghost" color="error" @click="removeDefRelation(index)">Remove</UButton>
+            </li>
+          </ul>
+        </UCard>
+        <UCard>
+          <template #header><h2 class="text-sm font-semibold">Actions</h2></template>
+          <p class="mb-2 text-xs text-muted">Custom actions are stored in the definition and registered on materialized entities on publish.</p>
+          <div class="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_1fr_1fr_auto]">
+            <USelectMenu v-model="newAction.entity" :items="entities.map(e => ({ label: e.label || e.name, value: e.name }))" value-key="value" placeholder="Entity…" />
+            <UInput v-model="newAction.name" placeholder="generate_invoice" />
+            <UInput v-model="newAction.label" placeholder="Generate invoice" />
+            <USelectMenu v-model="newAction.kind" :items="actionKindItems" value-key="value" placeholder="Kind" />
+            <UButton :disabled="!newAction.entity || !newAction.name.trim() || !newAction.label.trim()" @click="addDefAction">Add action</UButton>
+          </div>
+          <ul class="mt-3 space-y-1 text-sm">
+            <li v-for="(action, index) in defActions()" :key="`${action.entity}-${action.name}`" class="flex items-center justify-between rounded bg-muted/40 px-2 py-1">
+              <span class="font-mono">{{ action.entity }} · {{ action.name }} · {{ action.label }} · {{ action.kind }}</span>
+              <UButton size="xs" variant="ghost" color="error" @click="removeDefAction(index)">Remove</UButton>
+            </li>
+          </ul>
         </UCard>
         <UCard>
           <template #header><h2 class="text-sm font-semibold">Versions</h2></template>
