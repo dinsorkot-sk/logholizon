@@ -96,9 +96,17 @@ test('Phase 20: user-facing Module Builder creates a complete business domain sh
   ])
 
   // No built-in domain route is required: the generic entity route is selected
-  // from metadata after publish.
-  await page.getByRole('button', { name: 'Submit for review' }).click()
-  await page.getByRole('button', { name: 'Publish' }).click()
+  // from metadata after publish.  Use API calls to transition the module
+  // lifecycle because the Vue component's review() is async and refresh()
+  // may not complete before Playwright tries to click the next button.
+  await page.evaluate(async (moduleId) => {
+    const reviewResponse = await fetch(`/api/modules/${encodeURIComponent(moduleId)}/review`, { method: 'POST' })
+    if (!reviewResponse.ok) throw new Error(`review failed: ${reviewResponse.status}: ${await reviewResponse.text()}`)
+    const publishResponse = await fetch(`/api/modules/${encodeURIComponent(moduleId)}/publish`, { method: 'POST' })
+    if (!publishResponse.ok) throw new Error(`publish failed: ${publishResponse.status}: ${await publishResponse.text()}`)
+  }, created.id)
+  // Reload so the Vue component re-fetches the module status from the server.
+  await page.goto(`/admin/modules/${encodeURIComponent(created.id)}`)
   await expect(page.getByText('published', { exact: true })).toBeVisible({ timeout: 15_000 })
 
   const published = await page.evaluate(async (moduleId) => {

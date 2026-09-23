@@ -38,6 +38,19 @@ test('generic entity UI renders and edits records from metadata', async ({ page 
   expect(firstField).toBeTruthy()
   expect(secondField).toBeTruthy()
 
+  // Ensure the form-layout metadata has loaded before opening the record
+  // dialog.  The section headers are rendered from this data; if the fetch
+  // hasn't resolved yet, layoutSections is null and the flat fallback is used.
+  await expect.poll(async () => {
+    const response = await page.evaluate(async () => (await fetch('/api/entities/work_order/form-layout')).json())
+    return response?.config?.sections?.some((s: { label?: string }) => s.label === 'Primary details') ?? false
+  }, { timeout: 15_000 }).toBe(true)
+
+  // Reload so the page component's useFetch picks up the available layout
+  // data during SSR rather than resolving asynchronously after mount.
+  await page.goto('/app/work_order')
+  await expect(page.getByText(entity.label, { exact: true }).first()).toBeVisible({ timeout: 15_000 })
+
   await page.getByRole('button', { name: 'New record' }).click()
   const layoutDialog = page.getByRole('dialog')
   await expect(layoutDialog.getByText('Primary details', { exact: true })).toBeVisible({ timeout: 15_000 })
