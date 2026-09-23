@@ -1887,8 +1887,11 @@ pub async fn update_entity_permissions(
     permissions: &[EntityPermission],
 ) -> Result<Vec<EntityPermission>> {
     require_entity(pool, entity_id).await?;
-    let valid_roles: std::collections::HashSet<_> =
-        crate::rbac::list_roles(pool).await?.into_iter().map(|r| r.name).collect();
+    let valid_roles: std::collections::HashSet<_> = crate::rbac::list_roles(pool)
+        .await?
+        .into_iter()
+        .map(|r| r.name)
+        .collect();
     for p in permissions {
         if !valid_roles.contains(&p.role) {
             return Err(AppError::BadRequest(format!("invalid role: {}", p.role)).into());
@@ -1942,8 +1945,11 @@ pub async fn update_record_permissions(
     permissions: &[RecordPermission],
 ) -> Result<Vec<RecordPermission>> {
     require_entity(pool, entity_id).await?;
-    let valid_roles: std::collections::HashSet<_> =
-        crate::rbac::list_roles(pool).await?.into_iter().map(|r| r.name).collect();
+    let valid_roles: std::collections::HashSet<_> = crate::rbac::list_roles(pool)
+        .await?
+        .into_iter()
+        .map(|r| r.name)
+        .collect();
     for p in permissions {
         if !valid_roles.contains(&p.role) {
             return Err(AppError::BadRequest(format!("invalid role: {}", p.role)).into());
@@ -2057,14 +2063,8 @@ pub async fn get_entity_permission_for_role(
     .fetch_optional(pool)
     .await?;
     // Missing row = default allow (entities created before the migration).
-    let (
-        can_view,
-        can_edit,
-        can_export,
-        can_import,
-        can_execute,
-        can_approve,
-    ) = row.unwrap_or((1, 1, 1, 1, 1, 1));
+    let (can_view, can_edit, can_export, can_import, can_execute, can_approve) =
+        row.unwrap_or((1, 1, 1, 1, 1, 1));
     Ok(EntityPermission {
         role: role.to_string(),
         can_view: can_view != 0,
@@ -4463,8 +4463,7 @@ pub async fn list_documents_as_role_actor(
     let mut params: Vec<String> = vec![entity_id.to_string()];
 
     // Record-level scope filter (own / none / all).
-    let (scope_where, scope_params) =
-        record_scope_filter(pool, entity_id, role, actor).await?;
+    let (scope_where, scope_params) = record_scope_filter(pool, entity_id, role, actor).await?;
     where_sql.push_str(&scope_where);
     params.extend(scope_params);
 
@@ -7001,14 +7000,12 @@ pub async fn check_record_access(
     let (scope, owner_field) = get_record_scope(pool, entity_id, role).await?;
     match scope.as_str() {
         "all" | "" => Ok(()),
-        "none" => Err(AppError::Forbidden(format!(
-            "no record access for entity: {entity_id}"
-        ))
-        .into()),
+        "none" => {
+            Err(AppError::Forbidden(format!("no record access for entity: {entity_id}")).into())
+        }
         "own" => {
-            let field_name = owner_field.ok_or_else(|| {
-                AppError::BadRequest("own scope requires an owner_field".into())
-            })?;
+            let field_name = owner_field
+                .ok_or_else(|| AppError::BadRequest("own scope requires an owner_field".into()))?;
             let owner_value = doc_payload
                 .get(&field_name)
                 .and_then(|v| v.as_str())
@@ -7037,9 +7034,8 @@ pub async fn record_scope_filter(
     let (scope, owner_field) = get_record_scope(pool, entity_id, role).await?;
     match scope.as_str() {
         "own" => {
-            let field_name = owner_field.ok_or_else(|| {
-                AppError::BadRequest("own scope requires an owner_field".into())
-            })?;
+            let field_name = owner_field
+                .ok_or_else(|| AppError::BadRequest("own scope requires an owner_field".into()))?;
             match actor {
                 Some(a) if !a.is_empty() => Ok((
                     format!(" AND json_extract(payload, '$.{field_name}') = ?"),
