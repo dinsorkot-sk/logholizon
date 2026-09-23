@@ -1,0 +1,2 @@
+- Communicates in bilingual Thai/English, responding to user Thai input in kind. Confidence: 0.8
+- Provides structured markdown table summaries of task/status progress (e.g. phase checklists with ✓ marks and status columns). Confidence: 0.75

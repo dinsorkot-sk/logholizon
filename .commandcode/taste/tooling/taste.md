@@ -1,0 +1,3 @@
+- Rust toolchain gating: `cargo fmt` (format check), `cargo clippy -- -D warnings` (strict lints as errors), `cargo test --workspace` (full suite). Confidence: 0.9
+- App (Nuxt) gating: `pnpm check` for type checking, `pnpm test` for the vitest suite. Confidence: 0.8
+- Targets specific test binaries with `cargo test --test <name>` (and chains multiple `--test <name>` flags) when running a focused subset rather than the whole workspace. Confidence: 0.7

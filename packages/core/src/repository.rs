@@ -304,7 +304,7 @@ pub struct WorkflowDefinition {
     pub transitions: Vec<WorkflowTransition>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct EntityPermission {
     pub role: String,
     pub can_view: bool,
@@ -316,9 +316,10 @@ pub struct EntityPermission {
 }
 
 impl EntityPermission {
-    pub fn simple(role: impl Into<String>, can_view: bool, can_edit: bool) -> Self {
+    /// Convenience constructor that grants basic view/edit and all capability flags.
+    pub fn simple(role: &str, can_view: bool, can_edit: bool) -> Self {
         Self {
-            role: role.into(),
+            role: role.to_string(),
             can_view,
             can_edit,
             can_export: true,
@@ -329,9 +330,8 @@ impl EntityPermission {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RecordPermission {
-    pub entity_id: String,
     pub role: String,
     pub scope: String,
     pub owner_field: Option<String>,
@@ -1007,7 +1007,7 @@ async fn materialize_module_definition(
                 let rules = field_rules_from_definition(field);
                 let field_id = format!("{entity_id}_{field_name}");
                 sqlx::query(
-                    "INSERT INTO _meta_field (id, entity_id, name, label, description, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width, readonly, hidden, searchable, sortable, filterable, indexed, precision, help_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                    "INSERT INTO _meta_field (id, entity_id, name, label, description, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width, readonly, hidden, searchable, sortable, filterable, indexed, precision, help_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
                      ON CONFLICT(id) DO UPDATE SET label = excluded.label, description = excluded.description, type = excluded.type, required = excluded.required, is_status = excluded.is_status, position = excluded.position, ref_entity = excluded.ref_entity, computed_expr = excluded.computed_expr, is_unique = excluded.is_unique, min_value = excluded.min_value, max_value = excluded.max_value, pattern = excluded.pattern, min_length = excluded.min_length, max_length = excluded.max_length, default_value = excluded.default_value, auto_number_prefix = excluded.auto_number_prefix, auto_number_width = excluded.auto_number_width, readonly = excluded.readonly, hidden = excluded.hidden, searchable = excluded.searchable, sortable = excluded.sortable, filterable = excluded.filterable, indexed = excluded.indexed, precision = excluded.precision, help_text = excluded.help_text",
                 )
                 .bind(&field_id)
@@ -1572,7 +1572,6 @@ pub async fn rollback_module(
     .bind(actor)
     .execute(&mut *tx)
     .await?;
-
     sqlx::query(
         "UPDATE _module SET status = 'published', version = ?, semantic_version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
     )
@@ -1766,19 +1765,16 @@ pub async fn create_entity(pool: &SqlitePool, id: &str, name: &str, label: &str)
         .bind(label)
         .execute(pool)
         .await?;
-    // Default permissions for all registered roles.
-    sqlx::query(
-        "INSERT OR IGNORE INTO _entity_permission (entity_id, role, can_view, can_edit, can_export, can_import, can_execute, can_approve) SELECT ?, name, 1, 1, 1, 1, 1, 1 FROM _role",
-    )
-    .bind(id)
-    .execute(pool)
-    .await?;
-    sqlx::query(
-        "INSERT OR IGNORE INTO _record_permission (entity_id, role, scope) SELECT ?, name, 'all' FROM _role",
-    )
-    .bind(id)
-    .execute(pool)
-    .await?;
+    // Default permissions: both roles can view and edit.
+    for role in ["admin", "user"] {
+        sqlx::query(
+            "INSERT OR IGNORE INTO _entity_permission (entity_id, role, can_view, can_edit) VALUES (?, ?, 1, 1)",
+        )
+        .bind(id)
+        .bind(role)
+        .execute(pool)
+        .await?;
+    }
     Ok(Entity {
         id: id.to_string(),
         name: name.to_string(),
@@ -1891,25 +1887,18 @@ pub async fn update_entity_permissions(
     permissions: &[EntityPermission],
 ) -> Result<Vec<EntityPermission>> {
     require_entity(pool, entity_id).await?;
-    let mut tx = pool.begin().await?;
+    let valid_roles: std::collections::HashSet<_> =
+        crate::rbac::list_roles(pool).await?.into_iter().map(|r| r.name).collect();
     for p in permissions {
-        let role_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _role WHERE name = ?")
-            .bind(&p.role)
-            .fetch_one(&mut *tx)
-            .await?;
-        if role_exists == 0 {
+        if !valid_roles.contains(&p.role) {
             return Err(AppError::BadRequest(format!("invalid role: {}", p.role)).into());
         }
+    }
+    let mut tx = pool.begin().await?;
+    for p in permissions {
         sqlx::query(
-            "INSERT INTO _entity_permission (entity_id, role, can_view, can_edit, can_export, can_import, can_execute, can_approve) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(entity_id, role) DO UPDATE SET \
-             can_view = excluded.can_view, \
-             can_edit = excluded.can_edit, \
-             can_export = excluded.can_export, \
-             can_import = excluded.can_import, \
-             can_execute = excluded.can_execute, \
-             can_approve = excluded.can_approve",
+            "INSERT INTO _entity_permission (entity_id, role, can_view, can_edit, can_export, can_import, can_execute, can_approve) VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(entity_id, role) DO UPDATE SET can_view = excluded.can_view, can_edit = excluded.can_edit, can_export = excluded.can_export, can_import = excluded.can_import, can_execute = excluded.can_execute, can_approve = excluded.can_approve",
         )
         .bind(entity_id)
         .bind(&p.role)
@@ -1931,16 +1920,15 @@ pub async fn get_record_permissions(
     entity_id: &str,
 ) -> Result<Vec<RecordPermission>> {
     require_entity(pool, entity_id).await?;
-    let rows = sqlx::query_as::<_, (String, String, String, Option<String>)>(
-        "SELECT entity_id, role, scope, owner_field FROM _record_permission WHERE entity_id = ? ORDER BY role",
+    let rows = sqlx::query_as::<_, (String, String, Option<String>)>(
+        "SELECT role, scope, owner_field FROM _record_permission WHERE entity_id = ? ORDER BY role",
     )
     .bind(entity_id)
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
-        .map(|(entity_id, role, scope, owner_field)| RecordPermission {
-            entity_id,
+        .map(|(role, scope, owner_field)| RecordPermission {
             role,
             scope,
             owner_field,
@@ -1954,22 +1942,18 @@ pub async fn update_record_permissions(
     permissions: &[RecordPermission],
 ) -> Result<Vec<RecordPermission>> {
     require_entity(pool, entity_id).await?;
-    let mut tx = pool.begin().await?;
+    let valid_roles: std::collections::HashSet<_> =
+        crate::rbac::list_roles(pool).await?.into_iter().map(|r| r.name).collect();
     for p in permissions {
-        let role_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _role WHERE name = ?")
-            .bind(&p.role)
-            .fetch_one(&mut *tx)
-            .await?;
-        if role_exists == 0 {
+        if !valid_roles.contains(&p.role) {
             return Err(AppError::BadRequest(format!("invalid role: {}", p.role)).into());
         }
         if !matches!(p.scope.as_str(), "all" | "own") {
-            return Err(AppError::BadRequest(format!(
-                "invalid record permission scope: {}",
-                p.scope
-            ))
-            .into());
+            return Err(AppError::BadRequest(format!("invalid scope: {}", p.scope)).into());
         }
+    }
+    let mut tx = pool.begin().await?;
+    for p in permissions {
         sqlx::query(
             "INSERT INTO _record_permission (entity_id, role, scope, owner_field) VALUES (?, ?, ?, ?) \
              ON CONFLICT(entity_id, role) DO UPDATE SET scope = excluded.scope, owner_field = excluded.owner_field",
@@ -2073,8 +2057,14 @@ pub async fn get_entity_permission_for_role(
     .fetch_optional(pool)
     .await?;
     // Missing row = default allow (entities created before the migration).
-    let (can_view, can_edit, can_export, can_import, can_execute, can_approve) =
-        row.unwrap_or((1, 1, 1, 1, 1, 1));
+    let (
+        can_view,
+        can_edit,
+        can_export,
+        can_import,
+        can_execute,
+        can_approve,
+    ) = row.unwrap_or((1, 1, 1, 1, 1, 1));
     Ok(EntityPermission {
         role: role.to_string(),
         can_view: can_view != 0,
@@ -2239,11 +2229,7 @@ pub async fn update_field_permissions(
 ) -> Result<Vec<FieldPermission>> {
     require_entity(pool, entity_id).await?;
     for (field_id, role, _, _) in permissions {
-        let role_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _role WHERE name = ?")
-            .bind(role)
-            .fetch_one(pool)
-            .await?;
-        if role_exists == 0 {
+        if !matches!(role.as_str(), "admin" | "user") {
             return Err(AppError::BadRequest(format!("invalid role: {role}")).into());
         }
         let owner: Option<String> =
@@ -2978,7 +2964,7 @@ pub async fn create_field_with_rules(
     .await?;
     let field_id = format!("{entity_id}_{name}");
     sqlx::query(
-        "INSERT INTO _meta_field (id, entity_id, name, label, description, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width, readonly, hidden, searchable, sortable, filterable, indexed, precision, help_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO _meta_field (id, entity_id, name, label, description, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width, readonly, hidden, searchable, sortable, filterable, indexed, precision, help_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&field_id)
     .bind(entity_id)
@@ -3010,13 +2996,16 @@ pub async fn create_field_with_rules(
     .bind(rules.help_text.as_deref().unwrap_or(""))
     .execute(pool)
     .await?;
-    // Default field permissions for all registered roles.
-    sqlx::query(
-        "INSERT OR IGNORE INTO _field_permission (field_id, role, can_view, can_edit) SELECT ?, name, 1, 1 FROM _role",
-    )
-    .bind(&field_id)
-    .execute(pool)
-    .await?;
+    // Default field permissions: both roles can view and edit.
+    for role in ["admin", "user"] {
+        sqlx::query(
+            "INSERT OR IGNORE INTO _field_permission (field_id, role, can_view, can_edit) VALUES (?, ?, 1, 1)",
+        )
+        .bind(&field_id)
+        .bind(role)
+        .execute(pool)
+        .await?;
+    }
     get_field(pool, &field_id).await
 }
 
@@ -4035,6 +4024,16 @@ async fn preview_workbook_sheet(
         }
         let mut payload = serde_json::Map::new();
         for (field, value) in fields.iter().zip(record.iter().skip(1)) {
+            let is_formula = match field.r#type.as_str() {
+                // Valid numbers (including negative/positive like -5 or +5) are not formulas.
+                "number" => {
+                    value.parse::<f64>().is_err() && value.starts_with(['=', '+', '-', '@'])
+                }
+                _ => value.starts_with(['=', '+', '-', '@']),
+            };
+            if is_formula {
+                errors.push(format!("row {}: formula values are not allowed", index + 2));
+            }
             let parsed = match field.r#type.as_str() {
                 "number" => value
                     .parse::<f64>()
@@ -4053,7 +4052,7 @@ async fn preview_workbook_sheet(
         }
         let value = Value::Object(payload);
         if let Err(error) = validate_payload_for_role(pool, &entity_id, &value, role).await {
-            errors.push(format!("{sheet_name} row {}: {error}", index + 2));
+            errors.push(format!("row {}: {error}", index + 2));
         }
         sheet_rows.push(serde_json::json!({ "id": id, "payload": value }));
     }
@@ -4437,6 +4436,18 @@ pub async fn list_documents_as_role(
     filter: &ListDocumentsFilter,
     role: &str,
 ) -> Result<DocumentList> {
+    list_documents_as_role_actor(pool, entity_id, limit, offset, filter, role, None).await
+}
+
+pub async fn list_documents_as_role_actor(
+    pool: &SqlitePool,
+    entity_id: &str,
+    limit: i64,
+    offset: i64,
+    filter: &ListDocumentsFilter,
+    role: &str,
+    actor: Option<&str>,
+) -> Result<DocumentList> {
     use sqlx::Row;
     let mut filter = filter.clone();
     if let Some(view_id) = filter.view_id.clone().filter(|s| !s.trim().is_empty()) {
@@ -4450,6 +4461,12 @@ pub async fn list_documents_as_role(
     let viewable = viewable_field_names(pool, entity_id, role).await?;
     let mut where_sql = String::from("entity_id = ?");
     let mut params: Vec<String> = vec![entity_id.to_string()];
+
+    // Record-level scope filter (own / none / all).
+    let (scope_where, scope_params) =
+        record_scope_filter(pool, entity_id, role, actor).await?;
+    where_sql.push_str(&scope_where);
+    params.extend(scope_params);
 
     if let Some(status) = filter.status.as_deref().filter(|s| !s.trim().is_empty()) {
         if let Some(status_field) = fields.iter().find(|f| f.is_status) {
@@ -4539,6 +4556,8 @@ pub async fn update_document_as_role(
     role: &str,
 ) -> Result<Document> {
     let existing = get_document(pool, id).await?;
+    // Record-level scope check (own scope).
+    check_record_access(pool, &existing.entity_id, role, &existing.payload, actor).await?;
     // Drop hidden keys from the incoming payload first (unknown-field
     // tolerance), then merge over stored values and restore stored values
     // for non-editable fields so a forced write cannot change them.
@@ -5698,6 +5717,8 @@ pub async fn delete_document_as_role(
 ) -> Result<()> {
     let existing = get_document(pool, id).await?;
     check_permission(pool, &existing.entity_id, role, true).await?;
+    // Record-level scope check (own scope).
+    check_record_access(pool, &existing.entity_id, role, &existing.payload, actor).await?;
     let mut tx = pool.begin().await?;
     sqlx::query("DELETE FROM _doc WHERE id = ?")
         .bind(id)
@@ -6946,4 +6967,88 @@ pub async fn check_entity_capability(
         .into());
     }
     Ok(())
+}
+
+/// Record-level scope: returns (scope, owner_field) for a role on an entity.
+/// `scope` is `"all"`, `"own"`, or `"none"` (default `"all"` when no row exists).
+pub async fn get_record_scope(
+    pool: &SqlitePool,
+    entity_id: &str,
+    role: &str,
+) -> Result<(String, Option<String>)> {
+    if role == "admin" {
+        return Ok(("all".to_string(), None));
+    }
+    let row: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT scope, owner_field FROM _record_permission WHERE entity_id = ? AND role = ?",
+    )
+    .bind(entity_id)
+    .bind(role)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.unwrap_or(("all".to_string(), None)))
+}
+
+/// Check if a role can access a specific document based on record-level scope.
+/// For `"own"` scope, the document payload must contain `owner_field` matching `actor`.
+pub async fn check_record_access(
+    pool: &SqlitePool,
+    entity_id: &str,
+    role: &str,
+    doc_payload: &Value,
+    actor: Option<&str>,
+) -> Result<()> {
+    let (scope, owner_field) = get_record_scope(pool, entity_id, role).await?;
+    match scope.as_str() {
+        "all" | "" => Ok(()),
+        "none" => Err(AppError::Forbidden(format!(
+            "no record access for entity: {entity_id}"
+        ))
+        .into()),
+        "own" => {
+            let field_name = owner_field.ok_or_else(|| {
+                AppError::BadRequest("own scope requires an owner_field".into())
+            })?;
+            let owner_value = doc_payload
+                .get(&field_name)
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            match actor {
+                Some(a) if a == owner_value => Ok(()),
+                _ => Err(AppError::Forbidden(format!(
+                    "no record access: you do not own this document in entity: {entity_id}"
+                ))
+                .into()),
+            }
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Build a SQL WHERE fragment that restricts documents by record-level scope.
+/// For `"own"` scope, only documents where `owner_field = actor` are returned.
+/// Returns (where_fragment, params_to_bind).
+pub async fn record_scope_filter(
+    pool: &SqlitePool,
+    entity_id: &str,
+    role: &str,
+    actor: Option<&str>,
+) -> Result<(String, Vec<String>)> {
+    let (scope, owner_field) = get_record_scope(pool, entity_id, role).await?;
+    match scope.as_str() {
+        "own" => {
+            let field_name = owner_field.ok_or_else(|| {
+                AppError::BadRequest("own scope requires an owner_field".into())
+            })?;
+            match actor {
+                Some(a) if !a.is_empty() => Ok((
+                    format!(" AND json_extract(payload, '$.{field_name}') = ?"),
+                    vec![a.to_string()],
+                )),
+                _ => Ok((" AND 1 = 0".to_string(), vec![])),
+            }
+        }
+        "none" => Ok((" AND 1 = 0".to_string(), vec![])),
+        _ => Ok((String::new(), vec![])),
+    }
 }

@@ -6,6 +6,11 @@ use axum::{
     routing::get,
     Json, Router,
 };
+
+fn default_true() -> bool {
+    true
+}
+
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
@@ -1559,28 +1564,7 @@ async fn get_entity_permissions(
 
 #[derive(Debug, Deserialize)]
 pub struct UpdatePermissionsRequest {
-    pub permissions: Vec<PermissionEntry>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PermissionEntry {
-    pub role: String,
-    #[serde(default = "default_true")]
-    pub can_view: bool,
-    #[serde(default = "default_true")]
-    pub can_edit: bool,
-    #[serde(default = "default_true")]
-    pub can_export: bool,
-    #[serde(default = "default_true")]
-    pub can_import: bool,
-    #[serde(default = "default_true")]
-    pub can_execute: bool,
-    #[serde(default = "default_true")]
-    pub can_approve: bool,
-}
-
-fn default_true() -> bool {
-    true
+    pub permissions: Vec<repository::EntityPermission>,
 }
 
 async fn update_entity_permissions(
@@ -1588,20 +1572,7 @@ async fn update_entity_permissions(
     Path(id): Path<String>,
     Json(input): Json<UpdatePermissionsRequest>,
 ) -> Result<Json<Vec<repository::EntityPermission>>, AppError> {
-    let entries: Vec<repository::EntityPermission> = input
-        .permissions
-        .into_iter()
-        .map(|p| repository::EntityPermission {
-            role: p.role,
-            can_view: p.can_view,
-            can_edit: p.can_edit,
-            can_export: p.can_export,
-            can_import: p.can_import,
-            can_execute: p.can_execute,
-            can_approve: p.can_approve,
-        })
-        .collect();
-    repository::update_entity_permissions(&state.pool, &id, &entries)
+    repository::update_entity_permissions(&state.pool, &id, &input.permissions)
         .await
         .map(Json)
         .map_err(map_db_error)
@@ -2748,6 +2719,9 @@ async fn preview_import_for_user(
     repository::check_permission(&state.pool, &id, &current_role(&user), false)
         .await
         .map_err(map_db_error)?;
+    repository::check_entity_capability(&state.pool, &id, &current_role(&user), "import")
+        .await
+        .map_err(map_db_error)?;
     repository::preview_documents_csv_as_role(&state.pool, &id, &body, &current_role(&user))
         .await
         .map(Json)
@@ -2834,7 +2808,7 @@ async fn list_documents(
     repository::check_permission(&state.pool, &query.entity_id, &current_role(&user), false)
         .await
         .map_err(map_db_error)?;
-    repository::list_documents_as_role(
+    repository::list_documents_as_role_actor(
         &state.pool,
         &query.entity_id,
         query.limit,
@@ -2847,6 +2821,7 @@ async fn list_documents(
             view_id: query.view_id,
         },
         &current_role(&user),
+        current_actor(&user).as_deref(),
     )
     .await
     .map(Json)
@@ -2888,6 +2863,16 @@ async fn get_document(
     repository::check_permission(&state.pool, &doc.entity_id, &current_role(&user), false)
         .await
         .map_err(map_db_error)?;
+    // Record-level scope check (own scope).
+    repository::check_record_access(
+        &state.pool,
+        &doc.entity_id,
+        &current_role(&user),
+        &doc.payload,
+        current_actor(&user).as_deref(),
+    )
+    .await
+    .map_err(map_db_error)?;
     let viewable =
         repository::viewable_field_names(&state.pool, &doc.entity_id, &current_role(&user))
             .await

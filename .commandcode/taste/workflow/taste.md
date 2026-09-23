@@ -1,0 +1,7 @@
+- Commits always include a `Co-authored-by: CommandCodeBot <noreply@commandcode.ai>` trailer as a project convention. Confidence: 0.9
+- Runs quality gates before every commit: `cargo fmt --check`, `cargo clippy -- -D warnings`, full `cargo test --workspace -- --test-threads=1`, plus `pnpm check` (typecheck) and `pnpm test` for the Nuxt app. Confidence: 0.9
+- Uses per-version feature branches (e.g. v0.2.6 branched from v0.2.5 tag), commits locally, then `git push -u origin <branch>` to open a PR against the remote. Confidence: 0.85
+- Excludes the `.commandcode/` local agent-metadata directory from commits. Confidence: 0.8
+- Performs pre-change safety analysis before adding enforcement: inspects baseline state via `git show <tag>:...` and checks existing test auth/roles (e.g. default role capabilities) to confirm new checks won't break passing tests. Confidence: 0.75
+- Runs Rust tests with `--test-threads=1` for deterministic ordering and to avoid flaky file-path collisions between sub-tests. Confidence: 0.7
+- Runs long-running checks (typecheck, full test suite) in the background, teeing output to a log file (`/tmp/...log`) and polling with a shell-output handle. Confidence: 0.6

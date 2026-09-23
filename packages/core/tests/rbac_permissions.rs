@@ -164,7 +164,6 @@ async fn rbac_record_permissions_scoping() {
 
     // Update record permission for operator role to scope = 'own'
     let updated = vec![repository::RecordPermission {
-        entity_id: entity.id.clone(),
         role: "operator".into(),
         scope: "own".into(),
         owner_field: Some("created_by".into()),
@@ -179,7 +178,6 @@ async fn rbac_record_permissions_scoping() {
 
     // Invalid scope is rejected
     let bad_scope = vec![repository::RecordPermission {
-        entity_id: entity.id.clone(),
         role: "operator".into(),
         scope: "invalid".into(),
         owner_field: None,
@@ -192,7 +190,6 @@ async fn rbac_record_permissions_scoping() {
 
     // Invalid role is rejected
     let bad_role = vec![repository::RecordPermission {
-        entity_id: entity.id.clone(),
         role: "ghost".into(),
         scope: "all".into(),
         owner_field: None,
