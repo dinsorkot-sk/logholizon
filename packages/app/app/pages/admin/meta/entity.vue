@@ -17,7 +17,15 @@ type EntityDetail = Entity & { fields: Field[] }
 type WorkflowState = { id: string; name: string; label: string; position: number }
 type WorkflowTransition = { id: string; action: string; from_state: string; to_state: string }
 type WorkflowDefinition = { states: WorkflowState[]; transitions: WorkflowTransition[] }
-type EntityPermission = { role: string; can_view: boolean; can_edit: boolean }
+type EntityPermission = {
+  role: string
+  can_view?: boolean
+  can_edit?: boolean
+  can_export?: boolean
+  can_import?: boolean
+  can_execute?: boolean
+  can_approve?: boolean
+}
 type RecordPermission = { entity_id: string; role: string; scope: string; owner_field: string | null }
 type FieldPermission = { field_id: string; role: string; can_view: boolean; can_edit: boolean }
 type EntityView = { id: string; entity_id: string; name: string; config: Record<string, unknown>; created_at: string }
@@ -117,7 +125,10 @@ async function selectEntity(id: string) {
 // --- Permissions ---
 const savingPermissions = ref(false)
 
-async function togglePermission(permission: EntityPermission, key: 'can_view' | 'can_edit') {
+async function togglePermission(
+  permission: EntityPermission,
+  key: 'can_view' | 'can_edit' | 'can_export' | 'can_import' | 'can_execute' | 'can_approve'
+) {
   if (!selectedId.value || !permissions.value) return
   const next = permissions.value.map(p =>
     p.role === permission.role ? { ...p, [key]: !p[key] } : { ...p }
@@ -1445,6 +1456,18 @@ const fieldColumns: TableColumn<Field>[] = [
                     </UFormField>
                     <UFormField label="Edit" :ui="{ label: 'text-xs' }">
                       <USwitch :model-value="permission.can_edit" :disabled="savingPermissions || !permission.can_view" @update:model-value="togglePermission(permission, 'can_edit')" />
+                    </UFormField>
+                    <UFormField label="Export" :ui="{ label: 'text-xs' }">
+                      <USwitch :model-value="permission.can_export" :disabled="savingPermissions || !permission.can_view" @update:model-value="togglePermission(permission, 'can_export')" />
+                    </UFormField>
+                    <UFormField label="Import" :ui="{ label: 'text-xs' }">
+                      <USwitch :model-value="permission.can_import" :disabled="savingPermissions || !permission.can_view" @update:model-value="togglePermission(permission, 'can_import')" />
+                    </UFormField>
+                    <UFormField label="Execute" :ui="{ label: 'text-xs' }">
+                      <USwitch :model-value="permission.can_execute" :disabled="savingPermissions || !permission.can_edit" @update:model-value="togglePermission(permission, 'can_execute')" />
+                    </UFormField>
+                    <UFormField label="Approve" :ui="{ label: 'text-xs' }">
+                      <USwitch :model-value="permission.can_approve" :disabled="savingPermissions || !permission.can_edit" @update:model-value="togglePermission(permission, 'can_approve')" />
                     </UFormField>
                   </div>
                 </div>

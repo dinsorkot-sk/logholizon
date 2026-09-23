@@ -2376,6 +2376,16 @@ async fn transition_document(
     repository::check_permission(&state.pool, &existing.entity_id, &current_role(&user), true)
         .await
         .map_err(map_db_error)?;
+    if input.action.to_lowercase().contains("approve") {
+        repository::check_entity_capability(
+            &state.pool,
+            &existing.entity_id,
+            &current_role(&user),
+            "approve",
+        )
+        .await
+        .map_err(map_db_error)?;
+    }
     repository::transition_document_as_role(
         &state.pool,
         &id,
@@ -2534,6 +2544,9 @@ async fn execute_module_action(
             "entity and action are required".into(),
         ));
     }
+    repository::check_entity_capability(&state.pool, &id, &current_role(&user), "execute")
+        .await
+        .map_err(map_db_error)?;
     repository::execute_module_action(
         &state.pool,
         &id,
@@ -2717,6 +2730,9 @@ async fn export_documents_for_user(
     repository::check_permission(&state.pool, &id, &current_role(&user), false)
         .await
         .map_err(map_db_error)?;
+    repository::check_entity_capability(&state.pool, &id, &current_role(&user), "export")
+        .await
+        .map_err(map_db_error)?;
     let csv = repository::export_documents_csv_as_role(&state.pool, &id, &current_role(&user))
         .await
         .map_err(map_db_error)?;
@@ -2745,6 +2761,9 @@ async fn confirm_import_for_user(
     body: String,
 ) -> Result<Json<repository::ImportResult>, AppError> {
     repository::check_permission(&state.pool, &id, &current_role(&user), true)
+        .await
+        .map_err(map_db_error)?;
+    repository::check_entity_capability(&state.pool, &id, &current_role(&user), "import")
         .await
         .map_err(map_db_error)?;
     repository::confirm_documents_csv_as_role(

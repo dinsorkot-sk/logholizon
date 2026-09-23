@@ -117,6 +117,28 @@ async fn rbac_entity_and_capability_permissions() {
             .await
             .is_err()
     );
+    // Viewer (all capabilities off) is denied execute and approve
+    assert!(
+        repository::check_entity_capability(&pool, &entity.id, "viewer", "execute")
+            .await
+            .is_err()
+    );
+    assert!(
+        repository::check_entity_capability(&pool, &entity.id, "viewer", "approve")
+            .await
+            .is_err()
+    );
+    // Operator can execute but cannot approve
+    assert!(
+        repository::check_entity_capability(&pool, &entity.id, "operator", "execute")
+            .await
+            .is_ok()
+    );
+    assert!(
+        repository::check_entity_capability(&pool, &entity.id, "operator", "approve")
+            .await
+            .is_err()
+    );
     // Admin always bypasses capability restrictions
     assert!(
         repository::check_entity_capability(&pool, &entity.id, "admin", "export")
