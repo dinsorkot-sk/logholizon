@@ -36,6 +36,8 @@ test('login API rejects invalid credentials', async ({ page }) => {
 
 test('admin user can log in and see admin navigation', async ({ page }) => {
   await login(page, 'admin', 'admin123')
-  await expect(page.getByRole('link', { name: 'Entity Manager' })).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Audit Log' })).toBeVisible()
+  // The admin sidebar links are inside a popover menu; wait longer for
+  // the navigation to hydrate on CI.
+  await expect(page.getByRole('link', { name: 'Entity Manager' })).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByRole('link', { name: 'Audit Log' })).toBeVisible({ timeout: 15_000 })
 })

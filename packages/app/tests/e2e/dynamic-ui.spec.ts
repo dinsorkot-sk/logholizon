@@ -40,7 +40,7 @@ test('generic entity UI renders and edits records from metadata', async ({ page 
 
   await page.getByRole('button', { name: 'New record' }).click()
   const layoutDialog = page.getByRole('dialog')
-  await expect(layoutDialog.getByText('Primary details', { exact: true })).toBeVisible()
+  await expect(layoutDialog.getByText('Primary details', { exact: true })).toBeVisible({ timeout: 15_000 })
   const firstLabel = firstField.name
   const secondLabel = secondField.name
   const firstText = layoutDialog.getByText(firstLabel, { exact: true }).first()

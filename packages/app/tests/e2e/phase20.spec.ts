@@ -42,40 +42,49 @@ test('Phase 20: user-facing Module Builder creates a complete business domain sh
   await page.goto(`/admin/modules/${encodeURIComponent(createdBeforeNavigation.id)}`)
   await expect(page.getByText(label, { exact: true }).first()).toBeVisible({ timeout: 15_000 })
 
-  // Add entities via the API: Nuxt UI v3 UInput's v-model state does not
-  // reliably pick up Playwright-filled values in CI, making UI-driven
-  // entity creation flaky (addEntity returns early on empty name).
-  // The entity builder UI is still validated by verifying the entities
-  // appear on the page after each API mutation.
-  for (const [entityName, entityLabel] of [
-    ['vehicle', 'Vehicle'],
-    ['driver', 'Driver'],
-    ['maintenance', 'Maintenance'],
-    ['rental', 'Rental']
-  ]) {
-    const moduleId = createdBeforeNavigation.id
-    await page.evaluate(async ({ id, eName, eLabel }) => {
-      const mod = await fetch(`/api/modules/${encodeURIComponent(id)}`).then(r => r.json())
-      const definition = mod.definition || { entities: [] }
+  // Add entities via a single batch API call: Nuxt UI v3 UInput's v-model
+  // state does not reliably pick up Playwright-filled values in CI, making
+  // UI-driven entity creation flaky (addEntity returns early on empty name).
+  const entityNames = ['vehicle', 'driver', 'maintenance', 'rental']
+  await page.evaluate(async ({ id, entities }) => {
+    const mod = await fetch(`/api/modules/${encodeURIComponent(id)}`).then(r => r.json())
+    const definition = mod.definition || { entities: [] }
+    for (const { eName, eLabel } of entities) {
       definition.entities.push({ name: eName, label: eLabel, fields: [] })
-      const response = await fetch(`/api/modules/${encodeURIComponent(id)}`, {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ definition })
-      })
-      if (!response.ok) throw new Error(`PUT failed: ${response.status}`)
-    }, { id: moduleId, eName: entityName, eLabel: entityLabel })
+    }
+    const response = await fetch(`/api/modules/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ definition })
+    })
+    if (!response.ok) throw new Error(`PUT failed: ${response.status}`)
+  }, {
+    id: createdBeforeNavigation.id,
+    entities: [
+      { eName: 'vehicle', eLabel: 'Vehicle' },
+      { eName: 'driver', eLabel: 'Driver' },
+      { eName: 'maintenance', eLabel: 'Maintenance' },
+      { eName: 'rental', eLabel: 'Rental' }
+    ]
+  })
 
-    // Verify the entity appears in the UI and persisted server-side.
+  // Reload so the Vue component re-fetches the module definition from the server.
+  await page.goto(`/admin/modules/${encodeURIComponent(createdBeforeNavigation.id)}`)
+  await expect(page.getByTestId('entity-builder')).toBeVisible({ timeout: 15_000 })
+
+  // Verify all entities are visible in the builder UI.
+  for (const entityName of entityNames) {
     await expect(page.getByText(entityName, { exact: true }).first()).toBeVisible({ timeout: 15_000 })
-    await expect.poll(async () => {
-      const response = await page.request.get(`/api/modules/${encodeURIComponent(createdBeforeNavigation.id)}?fresh=${Date.now()}`, {
-        headers: { 'cache-control': 'no-cache' }
-      })
-      const current = await response.json()
-      return current.definition.entities.some((candidate: { name: string }) => candidate.name === entityName)
-    }, { timeout: 15_000 }).toBe(true)
   }
+
+  // Verify server-side persistence.
+  await expect.poll(async () => {
+    const response = await page.request.get(`/api/modules/${encodeURIComponent(createdBeforeNavigation.id)}?fresh=${Date.now()}`, {
+      headers: { 'cache-control': 'no-cache' }
+    })
+    const current = await response.json()
+    return current.definition.entities.map((e: { name: string }) => e.name).sort()
+  }, { timeout: 15_000 }).toEqual(entityNames.sort())
 
   // The builder persists metadata immediately; verify the runtime can now load
   // the generated application route without any domain-specific frontend page.
