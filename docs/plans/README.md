@@ -85,7 +85,7 @@ Rust Axum Runtime
 - Record detail, related records, timeline and audit.
 - Generic actions (Duplicate, Print, Custom Actions) and export/import integration.
 
-### Phase 6 — Module Builder — 80%
+### Phase 6 — Module Builder — COMPLETE (100%)
 - Module Builder — CRUD with full definition editor.
 - Entity Builder — add/remove entities with inline field editor.
 - Field Builder — all field types, options, constraints, computed/ref.
@@ -659,6 +659,26 @@ Phase 5 generic record actions extension:
 - Verified production build and lint gates green.
 
 The Relation-aware UI Runtime acceptance contract is complete. The next work should add module versioning and upgrade metadata without introducing ERP-specific screens.
+
+## v0.2.4 — Module Builder — COMPLETE
+
+Base: `v0.2.3`.
+
+Scope:
+
+- Module Builder with full definition editor for entities, fields, relations, form layouts, views, reports, notifications, actions, and settings.
+- Definition-level relations (`source`, `target`, `name`, `type`, `on_delete`, `source_field`, `target_field`) stored in definition JSON, materialized on publish.
+- Definition-level custom actions (`entity`, `name`, `label`, `kind`, `config`) stored in definition JSON, materialized on publish.
+- View configuration editor (column visibility toggles, sort direction, status filter) stored per view.
+- Module settings JSON card editor and preview mode navigation to runtime entity page.
+- Full publish lifecycle UI (draft -> review -> publish -> enable -> disable -> archive) with version history.
+- Type-safe view config getters and component bindings in `packages/app/app/pages/admin/modules/[id].vue`.
+
+Acceptance evidence for branch `v0.2.4` is complete:
+
+- Nuxt app type check passed: `pnpm --dir packages/app check` (0 errors).
+- All core unit and integration tests passed (`cargo test --workspace`).
+- Module definition, lifecycle, relations, actions, and package export/import tests verified (`packages/core/tests/modules.rs`).
 
 ## Working Rule
 

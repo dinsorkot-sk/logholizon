@@ -672,6 +672,22 @@ function setViewStatusFilter(entityName: string, viewName: string, statusFilter:
   return updateViewConfig(entityName, viewName, { status_filter: statusFilter })
 }
 
+function getViewColumns(view: ModuleEntityView): string[] {
+  return Array.isArray(view.config?.columns) ? (view.config.columns as string[]) : []
+}
+
+function getViewSortBy(view: ModuleEntityView): string | undefined {
+  return typeof view.config?.sort_by === 'string' ? (view.config.sort_by as string) : undefined
+}
+
+function getViewSortDir(view: ModuleEntityView): string | undefined {
+  return typeof view.config?.sort_dir === 'string' ? (view.config.sort_dir as string) : undefined
+}
+
+function getViewStatusFilter(view: ModuleEntityView): string | undefined {
+  return typeof view.config?.status_filter === 'string' ? (view.config.status_filter as string) : undefined
+}
+
 // --- Preview module (navigate to runtime as if published) ---
 function previewModule() {
   if (!module.value) return
@@ -957,15 +973,15 @@ async function rollback(version: number) {
                 <p class="text-xs text-muted mb-1">Visible columns</p>
                 <div class="flex flex-wrap gap-1">
                   <label v-for="field in entity.fields" :key="`col-${field.name}`" class="flex items-center gap-1 text-xs bg-background/60 px-2 py-1 rounded">
-                    <UCheckbox :model-value="(view.config?.columns || []).includes(field.name)" @update:model-value="toggle => setViewColumn(entity.name, view.name, field.name, toggle as boolean)" />
+                    <UCheckbox :model-value="getViewColumns(view).includes(field.name)" @update:model-value="toggle => setViewColumn(entity.name, view.name, field.name, toggle as boolean)" />
                     {{ field.name }}
                   </label>
                 </div>
               </div>
               <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                <USelectMenu :model-value="view.config?.sort_by" placeholder="Sort by" :items="(entity.fields || []).map(f => ({ label: f.label || f.name, value: f.name }))" value-key="value" @update:model-value="v => setViewSortBy(entity.name, view.name, v as string)" />
-                <USelectMenu :model-value="view.config?.sort_dir" :items="[{ label: 'Ascending', value: 'asc' }, { label: 'Descending', value: 'desc' }]" value-key="value" @update:model-value="v => setViewSortDir(entity.name, view.name, v as string)" />
-                <UInput :model-value="view.config?.status_filter" placeholder="Status filter (optional)" @update:model-value="v => setViewStatusFilter(entity.name, view.name, v as string)" />
+                <USelectMenu :model-value="getViewSortBy(view)" placeholder="Sort by" :items="(entity.fields || []).map(f => ({ label: f.label || f.name, value: f.name }))" value-key="value" @update:model-value="v => setViewSortBy(entity.name, view.name, v as string)" />
+                <USelectMenu :model-value="getViewSortDir(view)" :items="[{ label: 'Ascending', value: 'asc' }, { label: 'Descending', value: 'desc' }]" value-key="value" @update:model-value="v => setViewSortDir(entity.name, view.name, v as string)" />
+                <UInput :model-value="getViewStatusFilter(view)" placeholder="Status filter (optional)" @update:model-value="v => setViewStatusFilter(entity.name, view.name, v as string)" />
               </div>
             </div>
           </div>
