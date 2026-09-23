@@ -68,7 +68,7 @@ pub async fn create_role(
     .bind(name)
     .execute(pool)
     .await?;
-    sqlx::query("INSERT OR IGNORE INTO _record_permission (entity_id, role, scope) SELECT id, ?, ''all'' FROM _meta_entity")
+    sqlx::query("INSERT OR IGNORE INTO _record_permission (entity_id, role, scope) SELECT id, ?, 'all' FROM _meta_entity")
         .bind(name).execute(pool).await?;
     get_role(pool, &id).await
 }

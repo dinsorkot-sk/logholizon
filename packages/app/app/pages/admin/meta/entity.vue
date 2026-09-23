@@ -18,6 +18,7 @@ type WorkflowState = { id: string; name: string; label: string; position: number
 type WorkflowTransition = { id: string; action: string; from_state: string; to_state: string }
 type WorkflowDefinition = { states: WorkflowState[]; transitions: WorkflowTransition[] }
 type EntityPermission = { role: string; can_view: boolean; can_edit: boolean }
+type RecordPermission = { entity_id: string; role: string; scope: string; owner_field: string | null }
 type FieldPermission = { field_id: string; role: string; can_view: boolean; can_edit: boolean }
 type EntityView = { id: string; entity_id: string; name: string; config: Record<string, unknown>; created_at: string }
 type FormLayoutSection = { id: string; label: string; fields: string[] }
@@ -39,6 +40,8 @@ const permissionsUrl = computed(() => selectedId.value ? `/api/meta/entities/${e
 const { data: permissions, status: permissionsStatus, error: permissionsError, refresh: refreshPermissions } = await useFetch<EntityPermission[]>(permissionsUrl, { immediate: false })
 const fieldPermissionsUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/field-permissions` : '')
 const { data: fieldPermissions, status: fieldPermissionsStatus, error: fieldPermissionsError, refresh: refreshFieldPermissions } = await useFetch<FieldPermission[]>(fieldPermissionsUrl, { immediate: false })
+const recordPermissionsUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/record-permissions` : '')
+const { data: recordPermissions, status: recordPermissionsStatus, error: recordPermissionsError, refresh: refreshRecordPermissions } = await useFetch<RecordPermission[]>(recordPermissionsUrl, { immediate: false })
 const viewsUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/views` : '')
 const { data: views, status: viewsStatus, error: viewsError, refresh: refreshViews } = await useFetch<EntityView[]>(viewsUrl, { immediate: false })
 const formLayoutUrl = computed(() => selectedId.value ? `/api/meta/entities/${encodeURIComponent(selectedId.value)}/form-layout` : '')
@@ -102,6 +105,7 @@ async function selectEntity(id: string) {
   refreshWorkflow()
   refreshPermissions()
   refreshFieldPermissions()
+  refreshRecordPermissions()
   refreshViews()
   refreshFormLayout()
   resetLayoutEditor()
@@ -170,7 +174,61 @@ async function toggleFieldPermission(fieldId: string, key: 'can_view' | 'can_edi
   }
 }
 
-// --- Views ---
+// --- Record-level permissions ---
+const savingRecordPermissions = ref(false)
+
+const ownerFieldOptions = computed(() => {
+  const opts: { label: string; value: string }[] = [{ label: 'created_by', value: 'created_by' }]
+  for (const f of detail.value?.fields || []) {
+    opts.push({ label: `${f.name} (${f.type})`, value: f.name })
+  }
+  return opts
+})
+
+function updateRecordScope(p: RecordPermission, scope: string) {
+  if (!selectedId.value || !recordPermissions.value) return
+  p.scope = scope
+  if (scope === 'all') p.owner_field = null
+  else if (!p.owner_field) p.owner_field = 'created_by'
+  const next = recordPermissions.value.map(x => ({
+    role: x.role, scope: x.scope, owner_field: x.owner_field || null
+  }))
+  void saveRecordPermissions(next)
+}
+
+function updateRecordOwnerField(p: RecordPermission, owner_field: string | null) {
+  if (!selectedId.value || !recordPermissions.value) return
+  p.owner_field = owner_field
+  const next = recordPermissions.value.map(x => ({
+    role: x.role, scope: x.scope, owner_field: x.owner_field || null
+  }))
+  void saveRecordPermissions(next)
+}
+
+async function saveRecordPermissions(
+  next: { role: string; scope: string; owner_field: string | null }[]
+) {
+  if (!selectedId.value) return
+  savingRecordPermissions.value = true
+  try {
+    await $fetch(`/api/meta/entities/${encodeURIComponent(selectedId.value)}/record-permissions`, {
+      method: 'PUT',
+      body: { permissions: next }
+    })
+    await refreshRecordPermissions()
+    toast.add({ title: 'Record permissions updated', color: 'success', icon: 'i-lucide-check' })
+  } catch (e: any) {
+    toast.add({
+      title: 'Unable to update record permissions',
+      description: e?.data?.message || e?.statusMessage || 'Update failed',
+      color: 'error',
+      icon: 'i-lucide-alert-circle'
+    })
+    await refreshRecordPermissions()
+  } finally {
+    savingRecordPermissions.value = false
+  }
+}
 const viewOpen = ref(false)
 const viewForm = reactive({ name: '' })
 const viewError = ref('')
@@ -1389,6 +1447,58 @@ const fieldColumns: TableColumn<Field>[] = [
                       <USwitch :model-value="permission.can_edit" :disabled="savingPermissions || !permission.can_view" @update:model-value="togglePermission(permission, 'can_edit')" />
                     </UFormField>
                   </div>
+                </div>
+                <h3 class="pt-4 text-sm font-semibold">Record access (which records each role can reach)</h3>
+                <div v-if="recordPermissionsStatus === 'pending'" class="py-4">
+                  <USkeleton v-for="index in 5" :key="index" class="mb-2 h-8 w-full" />
+                </div>
+                <UAlert
+                  v-else-if="recordPermissionsStatus === 'error'"
+                  color="error"
+                  title="Cannot load record permissions"
+                  :description="recordPermissionsError?.message || 'Check the Rust core connection.'"
+                >
+                  <template #actions>
+                    <UButton size="sm" variant="outline" @click="refreshRecordPermissions()">Retry</UButton>
+                  </template>
+                </UAlert>
+                <div v-else class="space-y-2">
+                  <div v-for="rp in recordPermissions || []" :key="rp.role" class="flex items-center justify-between gap-4 rounded-lg border border-default px-4 py-3">
+                    <div>
+                      <p class="font-mono text-sm font-medium">{{ rp.role }}</p>
+                      <p class="text-xs text-muted">Scope: {{ rp.scope }}{{ rp.owner_field ? ` · owner: ${rp.owner_field}` : '' }}</p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                      <USelectMenu
+                        :model-value="rp.scope"
+                        :items="[{ label: 'All records', value: 'all' }, { label: 'Own records', value: 'own' }]"
+                        value-key="value"
+                        size="xs"
+                        class="w-36"
+                        :disabled="savingRecordPermissions"
+                        @update:model-value="updateRecordScope(rp, $event)"
+                      >
+                        <UButton size="xs" variant="outline" class="w-36">{{ rp.scope === 'own' ? 'Own records' : 'All records' }}</UButton>
+                      </USelectMenu>
+                      <USelectMenu
+                        v-if="rp.scope === 'own'"
+                        :model-value="rp.owner_field ?? undefined"
+                        :items="ownerFieldOptions"
+                        value-key="value"
+                        size="xs"
+                        class="w-40"
+                        :disabled="savingRecordPermissions"
+                        placeholder="owner field"
+                        @update:model-value="updateRecordOwnerField(rp, $event || null)"
+                      >
+                        <UButton size="xs" variant="outline" class="w-40">
+                          <span v-if="rp.owner_field">{{ rp.owner_field }}</span>
+                          <span v-else class="text-muted">owner field</span>
+                        </UButton>
+                      </USelectMenu>
+                    </div>
+                  </div>
+                  <p v-if="(recordPermissions || []).length === 0" class="text-[0.8125rem] text-muted leading-normal">No record permissions defined.</p>
                 </div>
                 <h3 class="pt-4 text-sm font-semibold">Field access (user role — admin always has full access)</h3>
                 <div v-if="fieldPermissionsStatus === 'pending'" class="py-4">

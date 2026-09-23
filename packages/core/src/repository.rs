@@ -304,11 +304,37 @@ pub struct WorkflowDefinition {
     pub transitions: Vec<WorkflowTransition>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EntityPermission {
     pub role: String,
     pub can_view: bool,
     pub can_edit: bool,
+    pub can_export: bool,
+    pub can_import: bool,
+    pub can_execute: bool,
+    pub can_approve: bool,
+}
+
+impl EntityPermission {
+    pub fn simple(role: impl Into<String>, can_view: bool, can_edit: bool) -> Self {
+        Self {
+            role: role.into(),
+            can_view,
+            can_edit,
+            can_export: true,
+            can_import: true,
+            can_execute: true,
+            can_approve: true,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RecordPermission {
+    pub entity_id: String,
+    pub role: String,
+    pub scope: String,
+    pub owner_field: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1740,16 +1766,19 @@ pub async fn create_entity(pool: &SqlitePool, id: &str, name: &str, label: &str)
         .bind(label)
         .execute(pool)
         .await?;
-    // Default permissions: both roles can view and edit.
-    for role in ["admin", "user"] {
-        sqlx::query(
-            "INSERT OR IGNORE INTO _entity_permission (entity_id, role, can_view, can_edit) VALUES (?, ?, 1, 1)",
-        )
-        .bind(id)
-        .bind(role)
-        .execute(pool)
-        .await?;
-    }
+    // Default permissions for all registered roles.
+    sqlx::query(
+        "INSERT OR IGNORE INTO _entity_permission (entity_id, role, can_view, can_edit, can_export, can_import, can_execute, can_approve) SELECT ?, name, 1, 1, 1, 1, 1, 1 FROM _role",
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO _record_permission (entity_id, role, scope) SELECT ?, name, 'all' FROM _role",
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
     Ok(Entity {
         id: id.to_string(),
         name: name.to_string(),
@@ -1832,48 +1861,128 @@ pub async fn get_entity_permissions(
     entity_id: &str,
 ) -> Result<Vec<EntityPermission>> {
     require_entity(pool, entity_id).await?;
-    let rows = sqlx::query_as::<_, (String, i64, i64)>(
-        "SELECT role, can_view, can_edit FROM _entity_permission WHERE entity_id = ? ORDER BY role",
+    let rows = sqlx::query_as::<_, (String, i64, i64, i64, i64, i64, i64)>(
+        "SELECT role, can_view, can_edit, can_export, can_import, can_execute, can_approve FROM _entity_permission WHERE entity_id = ? ORDER BY role",
     )
     .bind(entity_id)
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
-        .map(|(role, can_view, can_edit)| EntityPermission {
-            role,
-            can_view: can_view != 0,
-            can_edit: can_edit != 0,
-        })
+        .map(
+            |(role, can_view, can_edit, can_export, can_import, can_execute, can_approve)| {
+                EntityPermission {
+                    role,
+                    can_view: can_view != 0,
+                    can_edit: can_edit != 0,
+                    can_export: can_export != 0,
+                    can_import: can_import != 0,
+                    can_execute: can_execute != 0,
+                    can_approve: can_approve != 0,
+                }
+            },
+        )
         .collect())
 }
 
 pub async fn update_entity_permissions(
     pool: &SqlitePool,
     entity_id: &str,
-    permissions: &[(String, bool, bool)],
+    permissions: &[EntityPermission],
 ) -> Result<Vec<EntityPermission>> {
     require_entity(pool, entity_id).await?;
-    for (role, _, _) in permissions {
-        if !matches!(role.as_str(), "admin" | "user") {
-            return Err(AppError::BadRequest(format!("invalid role: {role}")).into());
-        }
-    }
     let mut tx = pool.begin().await?;
-    for (role, can_view, can_edit) in permissions {
+    for p in permissions {
+        let role_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _role WHERE name = ?")
+            .bind(&p.role)
+            .fetch_one(&mut *tx)
+            .await?;
+        if role_exists == 0 {
+            return Err(AppError::BadRequest(format!("invalid role: {}", p.role)).into());
+        }
         sqlx::query(
-            "INSERT INTO _entity_permission (entity_id, role, can_view, can_edit) VALUES (?, ?, ?, ?) \
-             ON CONFLICT(entity_id, role) DO UPDATE SET can_view = excluded.can_view, can_edit = excluded.can_edit",
+            "INSERT INTO _entity_permission (entity_id, role, can_view, can_edit, can_export, can_import, can_execute, can_approve) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(entity_id, role) DO UPDATE SET \
+             can_view = excluded.can_view, \
+             can_edit = excluded.can_edit, \
+             can_export = excluded.can_export, \
+             can_import = excluded.can_import, \
+             can_execute = excluded.can_execute, \
+             can_approve = excluded.can_approve",
         )
         .bind(entity_id)
-        .bind(role)
-        .bind(*can_view as i64)
-        .bind(*can_edit as i64)
+        .bind(&p.role)
+        .bind(p.can_view as i64)
+        .bind(p.can_edit as i64)
+        .bind(p.can_export as i64)
+        .bind(p.can_import as i64)
+        .bind(p.can_execute as i64)
+        .bind(p.can_approve as i64)
         .execute(&mut *tx)
         .await?;
     }
     tx.commit().await?;
     get_entity_permissions(pool, entity_id).await
+}
+
+pub async fn get_record_permissions(
+    pool: &SqlitePool,
+    entity_id: &str,
+) -> Result<Vec<RecordPermission>> {
+    require_entity(pool, entity_id).await?;
+    let rows = sqlx::query_as::<_, (String, String, String, Option<String>)>(
+        "SELECT entity_id, role, scope, owner_field FROM _record_permission WHERE entity_id = ? ORDER BY role",
+    )
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(entity_id, role, scope, owner_field)| RecordPermission {
+            entity_id,
+            role,
+            scope,
+            owner_field,
+        })
+        .collect())
+}
+
+pub async fn update_record_permissions(
+    pool: &SqlitePool,
+    entity_id: &str,
+    permissions: &[RecordPermission],
+) -> Result<Vec<RecordPermission>> {
+    require_entity(pool, entity_id).await?;
+    let mut tx = pool.begin().await?;
+    for p in permissions {
+        let role_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _role WHERE name = ?")
+            .bind(&p.role)
+            .fetch_one(&mut *tx)
+            .await?;
+        if role_exists == 0 {
+            return Err(AppError::BadRequest(format!("invalid role: {}", p.role)).into());
+        }
+        if !matches!(p.scope.as_str(), "all" | "own") {
+            return Err(AppError::BadRequest(format!(
+                "invalid record permission scope: {}",
+                p.scope
+            ))
+            .into());
+        }
+        sqlx::query(
+            "INSERT INTO _record_permission (entity_id, role, scope, owner_field) VALUES (?, ?, ?, ?) \
+             ON CONFLICT(entity_id, role) DO UPDATE SET scope = excluded.scope, owner_field = excluded.owner_field",
+        )
+        .bind(entity_id)
+        .bind(&p.role)
+        .bind(&p.scope)
+        .bind(&p.owner_field)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    get_record_permissions(pool, entity_id).await
 }
 
 pub async fn check_entity_tenant_access(
@@ -1956,19 +2065,24 @@ pub async fn get_entity_permission_for_role(
     role: &str,
 ) -> Result<EntityPermission> {
     require_entity(pool, entity_id).await?;
-    let row: Option<(i64, i64)> = sqlx::query_as(
-        "SELECT can_view, can_edit FROM _entity_permission WHERE entity_id = ? AND role = ?",
+    let row: Option<(i64, i64, i64, i64, i64, i64)> = sqlx::query_as(
+        "SELECT can_view, can_edit, can_export, can_import, can_execute, can_approve FROM _entity_permission WHERE entity_id = ? AND role = ?",
     )
     .bind(entity_id)
     .bind(role)
     .fetch_optional(pool)
     .await?;
     // Missing row = default allow (entities created before the migration).
-    let (can_view, can_edit) = row.unwrap_or((1, 1));
+    let (can_view, can_edit, can_export, can_import, can_execute, can_approve) =
+        row.unwrap_or((1, 1, 1, 1, 1, 1));
     Ok(EntityPermission {
         role: role.to_string(),
         can_view: can_view != 0,
         can_edit: can_edit != 0,
+        can_export: can_export != 0,
+        can_import: can_import != 0,
+        can_execute: can_execute != 0,
+        can_approve: can_approve != 0,
     })
 }
 
@@ -2125,7 +2239,11 @@ pub async fn update_field_permissions(
 ) -> Result<Vec<FieldPermission>> {
     require_entity(pool, entity_id).await?;
     for (field_id, role, _, _) in permissions {
-        if !matches!(role.as_str(), "admin" | "user") {
+        let role_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _role WHERE name = ?")
+            .bind(role)
+            .fetch_one(pool)
+            .await?;
+        if role_exists == 0 {
             return Err(AppError::BadRequest(format!("invalid role: {role}")).into());
         }
         let owner: Option<String> =
@@ -2892,16 +3010,13 @@ pub async fn create_field_with_rules(
     .bind(rules.help_text.as_deref().unwrap_or(""))
     .execute(pool)
     .await?;
-    // Default field permissions: both roles can view and edit.
-    for role in ["admin", "user"] {
-        sqlx::query(
-            "INSERT OR IGNORE INTO _field_permission (field_id, role, can_view, can_edit) VALUES (?, ?, 1, 1)",
-        )
-        .bind(&field_id)
-        .bind(role)
-        .execute(pool)
-        .await?;
-    }
+    // Default field permissions for all registered roles.
+    sqlx::query(
+        "INSERT OR IGNORE INTO _field_permission (field_id, role, can_view, can_edit) SELECT ?, name, 1, 1 FROM _role",
+    )
+    .bind(&field_id)
+    .execute(pool)
+    .await?;
     get_field(pool, &field_id).await
 }
 

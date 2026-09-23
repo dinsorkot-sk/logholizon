@@ -243,9 +243,13 @@ async fn workbook_confirm_is_atomic_across_sheets() {
 #[tokio::test]
 async fn workbook_import_enforces_edit_permission() {
     let pool = seeded_pool().await;
-    repository::update_entity_permissions(&pool, "ticket", &[("user".to_string(), true, false)])
-        .await
-        .unwrap();
+    repository::update_entity_permissions(
+        &pool,
+        "ticket",
+        &[repository::EntityPermission::simple("user", true, false)],
+    )
+    .await
+    .unwrap();
     let bytes = repository::export_workbook_xlsx(&pool, "admin")
         .await
         .unwrap();

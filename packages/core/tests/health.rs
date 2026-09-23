@@ -194,7 +194,9 @@ async fn user_entity_routes_enforce_can_edit() {
     logholizon_core::repository::update_entity_permissions(
         &pool,
         "work_order",
-        &[("user".to_string(), true, false)],
+        &[logholizon_core::repository::EntityPermission::simple(
+            "user", true, false,
+        )],
     )
     .await
     .unwrap();

@@ -72,11 +72,11 @@ async fn field_crud_orders_by_position() {
 async fn permissions_crud_and_check() {
     let pool = setup().await;
 
-    // Default: both roles allowed.
+    // Default: all registered system roles allowed.
     let perms = repository::get_entity_permissions(&pool, "work_order")
         .await
         .unwrap();
-    assert_eq!(perms.len(), 2);
+    assert_eq!(perms.len(), 5);
     repository::check_permission(&pool, "work_order", "user", false)
         .await
         .unwrap();
@@ -89,8 +89,8 @@ async fn permissions_crud_and_check() {
         &pool,
         "work_order",
         &[
-            ("admin".to_string(), true, true),
-            ("user".to_string(), true, false),
+            repository::EntityPermission::simple("admin", true, true),
+            repository::EntityPermission::simple("user", true, false),
         ],
     )
     .await
@@ -108,8 +108,8 @@ async fn permissions_crud_and_check() {
         &pool,
         "work_order",
         &[
-            ("admin".to_string(), true, true),
-            ("user".to_string(), false, false),
+            repository::EntityPermission::simple("admin", true, true),
+            repository::EntityPermission::simple("user", false, false),
         ],
     )
     .await
@@ -123,7 +123,11 @@ async fn permissions_crud_and_check() {
     assert!(repository::update_entity_permissions(
         &pool,
         "work_order",
-        &[("superuser".to_string(), true, true)],
+        &[repository::EntityPermission::simple(
+            "superuser",
+            true,
+            true
+        )],
     )
     .await
     .is_err());

@@ -151,7 +151,22 @@ export type CoreGlobalAuditList = {
   total: number
 }
 
-export type CoreEntityPermission = { role: string; can_view: boolean; can_edit: boolean }
+export type CoreEntityPermission = {
+  role: string
+  can_view: boolean
+  can_edit: boolean
+  can_export?: boolean
+  can_import?: boolean
+  can_execute?: boolean
+  can_approve?: boolean
+}
+
+export type CoreRecordPermission = {
+  entity_id: string
+  role: string
+  scope: string
+  owner_field?: string | null
+}
 export type CoreEntityView = {
   id: string
   entity_id: string
@@ -635,9 +650,19 @@ export function coreClient(event?: Parameters<typeof getCookie>[0]) {
       request<CoreEntityPermission[]>(`/v1/meta/entities/${encodeURIComponent(entityId)}/permissions`),
     updateEntityPermissions: (
       entityId: string,
-      permissions: { role: string; can_view: boolean; can_edit: boolean }[]
+      permissions: CoreEntityPermission[]
     ): Promise<CoreEntityPermission[]> =>
       request<CoreEntityPermission[]>(`/v1/meta/entities/${encodeURIComponent(entityId)}/permissions`, {
+        method: 'PUT',
+        body: { permissions }
+      }),
+    getRecordPermissions: (entityId: string): Promise<CoreRecordPermission[]> =>
+      request<CoreRecordPermission[]>(`/v1/meta/entities/${encodeURIComponent(entityId)}/record-permissions`),
+    updateRecordPermissions: (
+      entityId: string,
+      permissions: CoreRecordPermission[]
+    ): Promise<CoreRecordPermission[]> =>
+      request<CoreRecordPermission[]>(`/v1/meta/entities/${encodeURIComponent(entityId)}/record-permissions`, {
         method: 'PUT',
         body: { permissions }
       }),

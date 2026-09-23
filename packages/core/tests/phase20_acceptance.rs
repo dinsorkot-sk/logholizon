@@ -116,7 +116,10 @@ async fn phase20_vehicle_and_accounting_like_acceptance() {
     repository::update_entity_permissions(
         &pool,
         &rental,
-        &[("user".into(), true, true), ("admin".into(), true, true)],
+        &[
+            repository::EntityPermission::simple("user", true, true),
+            repository::EntityPermission::simple("admin", true, true),
+        ],
     )
     .await
     .unwrap();

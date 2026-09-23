@@ -314,6 +314,10 @@ pub fn router(config: &Config, pool: SqlitePool) -> Router {
             get(get_field_permissions).put(update_field_permissions),
         )
         .route(
+            "/v1/meta/entities/{id}/record-permissions",
+            get(get_record_permissions).put(update_record_permissions),
+        )
+        .route(
             "/v1/meta/entities/{id}/views",
             get(list_entity_views).post(create_entity_view),
         )
@@ -1563,8 +1567,16 @@ pub struct PermissionEntry {
     pub role: String,
     #[serde(default = "default_true")]
     pub can_view: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub can_edit: bool,
+    #[serde(default = "default_true")]
+    pub can_export: bool,
+    #[serde(default = "default_true")]
+    pub can_import: bool,
+    #[serde(default = "default_true")]
+    pub can_execute: bool,
+    #[serde(default = "default_true")]
+    pub can_approve: bool,
 }
 
 fn default_true() -> bool {
@@ -1576,12 +1588,46 @@ async fn update_entity_permissions(
     Path(id): Path<String>,
     Json(input): Json<UpdatePermissionsRequest>,
 ) -> Result<Json<Vec<repository::EntityPermission>>, AppError> {
-    let entries: Vec<(String, bool, bool)> = input
+    let entries: Vec<repository::EntityPermission> = input
         .permissions
         .into_iter()
-        .map(|p| (p.role, p.can_view, p.can_edit))
+        .map(|p| repository::EntityPermission {
+            role: p.role,
+            can_view: p.can_view,
+            can_edit: p.can_edit,
+            can_export: p.can_export,
+            can_import: p.can_import,
+            can_execute: p.can_execute,
+            can_approve: p.can_approve,
+        })
         .collect();
     repository::update_entity_permissions(&state.pool, &id, &entries)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+async fn get_record_permissions(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<repository::RecordPermission>>, AppError> {
+    repository::get_record_permissions(&state.pool, &id)
+        .await
+        .map(Json)
+        .map_err(map_db_error)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateRecordPermissionsRequest {
+    pub permissions: Vec<repository::RecordPermission>,
+}
+
+async fn update_record_permissions(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<UpdateRecordPermissionsRequest>,
+) -> Result<Json<Vec<repository::RecordPermission>>, AppError> {
+    repository::update_record_permissions(&state.pool, &id, &input.permissions)
         .await
         .map(Json)
         .map_err(map_db_error)
