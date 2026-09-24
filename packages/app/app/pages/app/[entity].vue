@@ -182,7 +182,7 @@ function isFieldEditable(name: string) {
 }
 // Form layout (Visual Builder Phase 2): sections group formFields by field
 // id. Unknown ids are skipped (tolerant); unassigned fields fall to "Other".
-const { data: formLayout } = await useFetch<{ entity_id: string; config: { sections?: FormLayoutSection[] } }>(
+const { data: formLayout, refresh: refreshFormLayout } = await useFetch<{ entity_id: string; config: { sections?: FormLayoutSection[] } }>(
   () => `/api/entities/${encodeURIComponent(entityId.value)}/form-layout`,
   { watch: [entityId] }
 )
@@ -202,6 +202,9 @@ const layoutSections = computed(() => {
   if (other.length) grouped.push({ id: 'other', label: 'Other', fields: other })
   if (!grouped.length) return null
   return grouped
+})
+watch(panelOpen, (open) => {
+  if (open && !formLayout.value) refreshFormLayout()
 })
 const activeViewId = computed(() => {
   const view = route.query.view

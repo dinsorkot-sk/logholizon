@@ -52,12 +52,14 @@ test('generic entity UI renders and edits records from metadata', async ({ page 
   await expect(page.getByText(entity.label, { exact: true }).first()).toBeVisible({ timeout: 15_000 })
 
   await page.getByRole('button', { name: 'New record' }).click()
+  // USlideover may teleport content outside the role="dialog" element, so
+  // look for the section header on the page rather than scoping to the dialog.
+  await expect(page.getByText('Primary details', { exact: true })).toBeVisible({ timeout: 15_000 })
   const layoutDialog = page.getByRole('dialog')
-  await expect(layoutDialog.getByText('Primary details', { exact: true })).toBeVisible({ timeout: 15_000 })
   const firstLabel = firstField.name
   const secondLabel = secondField.name
-  const firstText = layoutDialog.getByText(firstLabel, { exact: true }).first()
-  const secondText = layoutDialog.getByText(secondLabel, { exact: true }).first()
+  const firstText = page.getByText(firstLabel, { exact: true }).first()
+  const secondText = page.getByText(secondLabel, { exact: true }).first()
   await expect(firstText).toBeVisible()
   await expect(secondText).toBeVisible()
   const order = await layoutDialog.locator('label').evaluateAll((labels) => labels.map(label => label.textContent?.trim()).filter(Boolean))
