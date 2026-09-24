@@ -72,7 +72,7 @@ async fn field_crud_orders_by_position() {
 async fn permissions_crud_and_check() {
     let pool = setup().await;
 
-    // Default: all registered system roles allowed.
+    // Default: all registered system roles allowed (admin, manager, operator, user, viewer).
     let perms = repository::get_entity_permissions(&pool, "work_order")
         .await
         .unwrap();

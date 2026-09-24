@@ -964,12 +964,20 @@ async fn materialize_module_definition(
         .bind(&module.owner)
         .execute(&mut **tx)
         .await?;
-        for role in ["admin", "user"] {
+        for &(role, view, edit) in &[
+            ("admin", true, true),
+            ("manager", true, true),
+            ("operator", true, true),
+            ("user", true, true),
+            ("viewer", true, false),
+        ] {
             sqlx::query(
-                "INSERT OR IGNORE INTO _entity_permission (entity_id, role, can_view, can_edit) VALUES (?, ?, 1, 1)",
+                "INSERT OR IGNORE INTO _entity_permission (entity_id, role, can_view, can_edit) VALUES (?, ?, ?, ?)",
             )
             .bind(&entity_id)
             .bind(role)
+            .bind(view as i64)
+            .bind(edit as i64)
             .execute(&mut **tx)
             .await?;
         }
@@ -1007,7 +1015,7 @@ async fn materialize_module_definition(
                 let rules = field_rules_from_definition(field);
                 let field_id = format!("{entity_id}_{field_name}");
                 sqlx::query(
-                    "INSERT INTO _meta_field (id, entity_id, name, label, description, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width, readonly, hidden, searchable, sortable, filterable, indexed, precision, help_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                    "INSERT INTO _meta_field (id, entity_id, name, label, description, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width, readonly, hidden, searchable, sortable, filterable, indexed, precision, help_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
                      ON CONFLICT(id) DO UPDATE SET label = excluded.label, description = excluded.description, type = excluded.type, required = excluded.required, is_status = excluded.is_status, position = excluded.position, ref_entity = excluded.ref_entity, computed_expr = excluded.computed_expr, is_unique = excluded.is_unique, min_value = excluded.min_value, max_value = excluded.max_value, pattern = excluded.pattern, min_length = excluded.min_length, max_length = excluded.max_length, default_value = excluded.default_value, auto_number_prefix = excluded.auto_number_prefix, auto_number_width = excluded.auto_number_width, readonly = excluded.readonly, hidden = excluded.hidden, searchable = excluded.searchable, sortable = excluded.sortable, filterable = excluded.filterable, indexed = excluded.indexed, precision = excluded.precision, help_text = excluded.help_text",
                 )
                 .bind(&field_id)
@@ -1040,12 +1048,20 @@ async fn materialize_module_definition(
                 .bind(field.get("help_text").and_then(Value::as_str).unwrap_or(""))
                 .execute(&mut **tx)
                 .await?;
-                for role in ["admin", "user"] {
+                for &(role, view, edit) in &[
+                    ("admin", true, true),
+                    ("manager", true, true),
+                    ("operator", true, true),
+                    ("user", true, true),
+                    ("viewer", true, false),
+                ] {
                     sqlx::query(
-                        "INSERT OR IGNORE INTO _field_permission (field_id, role, can_view, can_edit) VALUES (?, ?, 1, 1)",
+                        "INSERT OR IGNORE INTO _field_permission (field_id, role, can_view, can_edit) VALUES (?, ?, ?, ?)",
                     )
                     .bind(&field_id)
                     .bind(role)
+                    .bind(view as i64)
+                    .bind(edit as i64)
                     .execute(&mut **tx)
                     .await?;
                 }
@@ -1765,10 +1781,30 @@ pub async fn create_entity(pool: &SqlitePool, id: &str, name: &str, label: &str)
         .bind(label)
         .execute(pool)
         .await?;
-    // Default permissions: both roles can view and edit.
-    for role in ["admin", "user"] {
+    // Default permissions: all system roles get entity-level access.
+    // admin/manager/operator: view+edit; user: view+edit; viewer: view only.
+    let default_entity_perms: &[(&str, bool, bool)] = &[
+        ("admin", true, true),
+        ("manager", true, true),
+        ("operator", true, true),
+        ("user", true, true),
+        ("viewer", true, false),
+    ];
+    for &(role, view, edit) in default_entity_perms {
         sqlx::query(
-            "INSERT OR IGNORE INTO _entity_permission (entity_id, role, can_view, can_edit) VALUES (?, ?, 1, 1)",
+            "INSERT OR IGNORE INTO _entity_permission (entity_id, role, can_view, can_edit) VALUES (?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(role)
+        .bind(view as i64)
+        .bind(edit as i64)
+        .execute(pool)
+        .await?;
+    }
+    // Default record permissions: all system roles get 'all' scope.
+    for &(role, _, _) in default_entity_perms {
+        sqlx::query(
+            "INSERT OR IGNORE INTO _record_permission (entity_id, role, scope) VALUES (?, ?, 'all')",
         )
         .bind(id)
         .bind(role)
@@ -2228,8 +2264,13 @@ pub async fn update_field_permissions(
     permissions: &[(String, String, bool, bool)],
 ) -> Result<Vec<FieldPermission>> {
     require_entity(pool, entity_id).await?;
+    let valid_roles: std::collections::HashSet<_> = crate::rbac::list_roles(pool)
+        .await?
+        .into_iter()
+        .map(|r| r.name)
+        .collect();
     for (field_id, role, _, _) in permissions {
-        if !matches!(role.as_str(), "admin" | "user") {
+        if !valid_roles.contains(role.as_str()) {
             return Err(AppError::BadRequest(format!("invalid role: {role}")).into());
         }
         let owner: Option<String> =
@@ -2964,7 +3005,7 @@ pub async fn create_field_with_rules(
     .await?;
     let field_id = format!("{entity_id}_{name}");
     sqlx::query(
-        "INSERT INTO _meta_field (id, entity_id, name, label, description, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width, readonly, hidden, searchable, sortable, filterable, indexed, precision, help_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO _meta_field (id, entity_id, name, label, description, type, required, is_status, position, ref_entity, computed_expr, is_unique, min_value, max_value, pattern, min_length, max_length, default_value, auto_number_prefix, auto_number_width, readonly, hidden, searchable, sortable, filterable, indexed, precision, help_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&field_id)
     .bind(entity_id)
@@ -2996,13 +3037,22 @@ pub async fn create_field_with_rules(
     .bind(rules.help_text.as_deref().unwrap_or(""))
     .execute(pool)
     .await?;
-    // Default field permissions: both roles can view and edit.
-    for role in ["admin", "user"] {
+    // Default field permissions: all system roles get field-level access.
+    // admin/manager/operator/user: view+edit; viewer: view only.
+    for &(role, view, edit) in &[
+        ("admin", true, true),
+        ("manager", true, true),
+        ("operator", true, true),
+        ("user", true, true),
+        ("viewer", true, false),
+    ] {
         sqlx::query(
-            "INSERT OR IGNORE INTO _field_permission (field_id, role, can_view, can_edit) VALUES (?, ?, 1, 1)",
+            "INSERT OR IGNORE INTO _field_permission (field_id, role, can_view, can_edit) VALUES (?, ?, ?, ?)",
         )
         .bind(&field_id)
         .bind(role)
+        .bind(view as i64)
+        .bind(edit as i64)
         .execute(pool)
         .await?;
     }
