@@ -1,5 +1,6 @@
 {
   "name": "nexa",
+  "version": "1.0.0",
   "type": "module",
   "private": true,
   "packageManager": "pnpm@11.9.0",
