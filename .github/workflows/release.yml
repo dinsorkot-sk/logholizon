@@ -47,18 +47,20 @@ jobs:
       - run: pnpm --dir packages/app run test
       - run: pnpm --dir packages/app run check
       - run: pnpm --dir packages/app run build
+      - name: Preserve SSR build output
+        run: mv packages/app/.output packages/app/.output-ssr
       - run: pnpm --dir packages/app run build:desktop
       - run: pnpm --dir packages/desktop run test
       - run: pnpm --dir packages/desktop run check
       - name: Stage release metadata
         run: |
           mkdir -p dist
-          cp -R packages/app/.output dist/nuxt-output
+          cp -R packages/app/.output-ssr dist/nuxt-output
           cp -R packages/app/.output/public dist/desktop-frontend
           cp target/release/logholizon-core dist/logholizon-core
           cp target/release/logholizon-cli dist/logholizon-cli
           tar -czf "dist/logholizon-${GITHUB_REF_NAME}.tar.gz" -C dist nuxt-output desktop-frontend logholizon-core logholizon-cli
-          sha256sum dist/* > dist/SHA256SUMS
+          find dist -maxdepth 1 -type f -exec sha256sum {} \; > dist/SHA256SUMS
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
