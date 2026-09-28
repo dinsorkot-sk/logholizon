@@ -94,11 +94,19 @@ test('search filters the work order list', async ({ page }) => {
   await expect(page.getByText('Fix water pump')).toBeVisible({ timeout: 15_000 })
 
   const searchInput = page.getByPlaceholder('Search…')
-  await searchInput.fill('conveyor')
+  // Use click() and then type() instead of fill() because fill() may not trigger
+  // input events correctly in dev mode when SSR hydration has been compromised
+  // (even though the hydration mismatch on UDashboardGroup has been fixed in
+  // app.config.ts, the Vue tree can still have latent reactivity issues that
+  // persist across reloads). type() with keydown/keyup events is more reliable
+  // than fill() for driving Vue's input handling.
+  await searchInput.click()
+  await page.keyboard.type('conveyor', { delay: 50 })
   
-  // Wait for the search request to be initiated and network to settle
-  const responsePromise = page.waitForResponse(resp => resp.url().includes('/api/documents') && resp.url().includes('search'))
+  // Wait for the search request to be initiated (on Enter keypress)
+  const responsePromise = page.waitForResponse(resp => resp.url().includes('/api/documents') && resp.url().includes('search=conveyor'))
   await searchInput.press('Enter')
+  // Wait for the server response and DOM to update
   await responsePromise
   await page.waitForLoadState('networkidle')
 
