@@ -94,22 +94,28 @@ test('search filters the work order list', async ({ page }) => {
   await expect(page.getByText('Fix water pump')).toBeVisible({ timeout: 15_000 })
 
   const searchInput = page.getByPlaceholder('Search…')
-  // Use click() and then type() instead of fill() because fill() may not trigger
-  // input events correctly in dev mode when SSR hydration has been compromised
-  // (even though the hydration mismatch on UDashboardGroup has been fixed in
-  // app.config.ts, the Vue tree can still have latent reactivity issues that
-  // persist across reloads). type() with keydown/keyup events is more reliable
-  // than fill() for driving Vue's input handling.
+  // CRITICAL: Set up the response listener BEFORE typing, because Nuxt's useFetch
+  // retains the old data in data.value while a background re-fetch is pending
+  // (status: 'pending'). If we wait for the response AFTER typing, the old list
+  // is still visible and toHaveCount(0) will see stale data before the new response
+  // arrives. By waiting for the response FIRST, we guarantee the network request
+  // has completed and documents.value has been updated before any DOM assertions.
+  const responsePromise = page.waitForResponse(resp => resp.url().includes('/api/documents') && resp.url().includes('search=conveyor'))
+  
+  // Type the search query (using click+type to ensure input events fire correctly)
   await searchInput.click()
   await page.keyboard.type('conveyor', { delay: 50 })
   
-  // Wait for the search request to be initiated (on Enter keypress)
-  const responsePromise = page.waitForResponse(resp => resp.url().includes('/api/documents') && resp.url().includes('search=conveyor'))
+  // Press Enter to submit the search
   await searchInput.press('Enter')
-  // Wait for the server response and DOM to update
+  
+  // Now await the response — this guarantees documents.value has been updated
+  // with the filtered results before we assert on the DOM
   await responsePromise
   await page.waitForLoadState('networkidle')
 
+  // Now safe to assert: Replace conveyor belt should be visible (it's in the filtered list)
+  // and Fix water pump should have count 0 (it's been filtered out)
   await expect(page.getByRole('cell', { name: 'Replace conveyor belt' })).toBeVisible({ timeout: 15_000 })
   await expect(page.getByRole('cell', { name: 'Fix water pump' })).toHaveCount(0, { timeout: 15_000 })
 })
