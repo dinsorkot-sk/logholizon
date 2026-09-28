@@ -319,9 +319,26 @@ function clearView() {
   router.push({ path: route.path, query: {} })
 }
 const { data: documents, status: documentsStatus, error: documentsError, refresh } = await useFetch<DocumentList>(
-  documentsUrl,
-  { watch: [documentsUrl] }
+  () => documentsUrl.value,
+  // Live filtering (e.g. search) re-fires this fetch on every keystroke with
+  // no debounce. Nuxt derives the dedupe key from the request URL by
+  // default, so each keystroke's distinct URL would get its OWN dedupe
+  // scope and `dedupe: 'cancel'` alone would never cancel a prior
+  // keystroke's still in-flight request — a slower response for an
+  // earlier, less-specific query (e.g. "conv") can then resolve after a
+  // faster response for the final query ("conveyor") and overwrite the
+  // correctly-filtered list with stale data. Using a stable `key` (scoped
+  // per entity, not per URL) puts every fetch for this list into the same
+  // dedupe scope, so `dedupe: 'cancel'` aborts superseded requests and the
+  // last-applied filter always wins.
+  { key: `documents-list-${entityId.value}`, watch: [documentsUrl], dedupe: 'cancel' }
 )
+// Note: an unrelated bug (fixed separately in layouts/default.vue) previously
+// caused an SSR/client hydration mismatch on UDashboardGroup (its `as` prop
+// defaulted to `undefined`, which rendered a fragment on the server vs a div
+// on the client). That mismatch aborted hydration of the whole page subtree,
+// leaving inputs visually interactive but disconnected from Vue's reactivity
+// — `search` never updated no matter what UI binding pattern was used here.
 const { data: workflow, status: workflowStatus, error: workflowError, refresh: refreshWorkflow } = await useFetch<{ states: { id: string; name: string; label: string }[]; transitions: { id: string; action: string; from_state: string; to_state: string }[] }>(
   () => `/api/entities/${encodeURIComponent(entityId.value)}/workflow`,
   { watch: [entityId] }

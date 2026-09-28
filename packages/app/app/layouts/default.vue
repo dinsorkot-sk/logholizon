@@ -131,7 +131,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
-  <UDashboardGroup unit="rem">
+  <UDashboardGroup as="div" unit="rem">
     <UDashboardSidebar
       id="default"
       v-model:open="open"

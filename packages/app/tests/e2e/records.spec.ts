@@ -93,21 +93,15 @@ test('search filters the work order list', async ({ page }) => {
   await page.goto('/app/work_order')
   await expect(page.getByText('Fix water pump')).toBeVisible({ timeout: 15_000 })
 
-  // Search only applies on Enter (applyFilters); fill alone must not filter.
-  // Use keyboard typing so UInput's v-model picks up the value (fill()
-  // sets the DOM value without input events, leaving the model empty).
-  await page.getByPlaceholder('Search…').click()
-  await page.keyboard.type('conveyor', { delay: 10 })
-  await expect(page.getByRole('cell', { name: 'Fix water pump' })).toHaveCount(1)
-  // Per-keystroke typing already narrows the list (documentsUrl watcher);
-  // Enter re-applies via applyFilters. Query the API directly for the final
-  // assertion: the table refetches on window focus, making row-count
-  // assertions racy when the runner window regains focus.
-  await page.getByPlaceholder('Search…').press('Enter')
-  const filtered = await page.evaluate(async () => {
-    const response = await fetch('/api/documents?entity_id=work_order&limit=50&offset=0&search=conveyor')
-    return response.json()
-  })
-  expect(filtered.total).toBe(1)
-  expect(filtered.items[0].payload.title).toBe('Replace conveyor belt')
+  const searchInput = page.getByPlaceholder('Search…')
+  await searchInput.fill('conveyor')
+  
+  // Wait for the search request to be initiated and network to settle
+  const responsePromise = page.waitForResponse(resp => resp.url().includes('/api/documents') && resp.url().includes('search'))
+  await searchInput.press('Enter')
+  await responsePromise
+  await page.waitForLoadState('networkidle')
+
+  await expect(page.getByRole('cell', { name: 'Replace conveyor belt' })).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByRole('cell', { name: 'Fix water pump' })).toHaveCount(0, { timeout: 15_000 })
 })
