@@ -4,16 +4,20 @@ async function login(page: Page, username: string, password: string) {
   // Log in through the API: UAuthForm's vee-validate state does not pick up
   // Playwright-filled values (submit sees empty fields), so driving the UI
   // form is flaky. The cookie set here exercises the real auth flow.
-  await page.goto('/login')
-  await page.evaluate(async ([user, pass]) => {
-    await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: user, password: pass })
-    })
-  }, [username, password])
-  await page.goto('/dashboard')
-  await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible({ timeout: 15_000 })
+  // On a cold dev server the first navigations can abort (ERR_ABORTED) while
+  // Vite optimizes deps and reloads, so retry the whole login flow.
+  await expect(async () => {
+    await page.goto('/login')
+    await page.evaluate(async ([user, pass]) => {
+      await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: user, password: pass })
+      })
+    }, [username, password])
+    await page.goto('/dashboard')
+    await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible({ timeout: 15_000 })
+  }).toPass({ timeout: 90_000 })
 }
 
 test('demo user can create, edit, transition, and delete a work order', async ({ page }) => {
@@ -100,18 +104,21 @@ test('search filters the work order list', async ({ page }) => {
   // is still visible and toHaveCount(0) will see stale data before the new response
   // arrives. By waiting for the response FIRST, we guarantee the network request
   // has completed and documents.value has been updated before any DOM assertions.
-  const responsePromise = page.waitForResponse(resp => resp.url().includes('/api/documents') && resp.url().includes('search=conveyor'))
-  
-  // Type the search query (using click+type to ensure input events fire correctly)
-  await searchInput.click()
-  await page.keyboard.type('conveyor', { delay: 50 })
-  
-  // Press Enter to submit the search
-  await searchInput.press('Enter')
-  
-  // Now await the response — this guarantees documents.value has been updated
-  // with the filtered results before we assert on the DOM
-  await responsePromise
+  // On a cold dev server the page may still be hydrating when we start typing,
+  // so keystrokes can be dropped (input stays empty, no request fires). Retry
+  // the type+submit until the filtered request is actually observed.
+  await expect(async () => {
+    const responsePromise = page.waitForResponse(
+      resp => resp.url().includes('/api/documents') && resp.url().includes('search=conveyor'),
+      { timeout: 10_000 }
+    )
+    await searchInput.click()
+    await page.keyboard.press('ControlOrMeta+a')
+    await page.keyboard.press('Backspace')
+    await page.keyboard.type('conveyor', { delay: 50 })
+    await searchInput.press('Enter')
+    await responsePromise
+  }).toPass({ timeout: 90_000 })
   await page.waitForLoadState('networkidle')
 
   // Now safe to assert: Replace conveyor belt should be visible (it's in the filtered list)

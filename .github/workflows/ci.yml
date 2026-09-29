@@ -5,6 +5,10 @@ on:
     branches: ['**']
   pull_request:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   rust:
     name: Rust (fmt, clippy, test)
@@ -48,6 +52,11 @@ jobs:
     name: E2E (playwright)
     runs-on: ubuntu-latest
     needs: [rust, app]
+    timeout-minutes: 30
+    env:
+      # Run against the production Nuxt server built by the `app` job instead
+      # of a cold `nuxt dev` server: faster and no Vite dep-optimizer reloads.
+      E2E_APP_MODE: preview
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -59,9 +68,23 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - run: cargo build -p logholizon-core -p logholizon-cli
-      - run: pnpm --dir packages/app exec playwright install --with-deps chromium
-      - run: pnpm --dir packages/app run e2e
+      - name: Download Nuxt build
+        uses: actions/download-artifact@v4
+        with:
+          name: nuxt-build-${{ github.sha }}
+          path: packages/app/.output
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: pnpm --dir packages/app exec playwright install --with-deps chromium
+      - if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm --dir packages/app exec playwright install-deps chromium
+      # Builds core + cli, then runs the Playwright suite (see root package.json).
+      - run: pnpm test:e2e
       - name: Upload Playwright diagnostics
         if: always()
         uses: actions/upload-artifact@v4

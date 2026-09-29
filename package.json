@@ -6,6 +6,7 @@
     "build": "turbo run build",
     "dev": "turbo run dev --parallel",
     "test": "turbo run test",
+    "test:e2e": "cargo build -p logholizon-core -p logholizon-cli && pnpm --dir packages/app run test:e2e",
     "check": "turbo run check",
     "setup": "pnpm install && cargo run -p logholizon-cli -- migrate && cargo run -p logholizon-cli -- seed --demo",
     "setup:db": "cargo run -p logholizon-cli -- migrate && cargo run -p logholizon-cli -- seed --demo",

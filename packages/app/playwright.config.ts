@@ -5,6 +5,7 @@ const appPort = 3100
 export default defineConfig({
   testDir: './tests/e2e',
   testIgnore: '**/run.cjs',
+  globalSetup: './tests/e2e/global-setup.ts',
   fullyParallel: false,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? 'github' : 'list',
