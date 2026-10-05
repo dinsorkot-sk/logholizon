@@ -1,0 +1,605 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LOGHOLIZON — Redesign moodboard</title>
+<style>
+:root{
+  color-scheme: light;
+  --canvas:#F2F3EF;      /* ledger grey-green, not cream */
+  --surface:#FFFFFF;
+  --ink:#18202B;
+  --ink-2:#4A5361;
+  --ink-3:#7C8592;
+  --line:#DCDFD8;
+  --line-2:#C9CDC4;
+  --horizon:#1F5F8B;     /* primary: horizon blue */
+  --horizon-soft:#E3EDF5;
+  --stamp:#C2410C;       /* required / destructive accent */
+  --ok:#2F7D4F; --warn:#B7791F; --idle:#6B7280;
+  --sans:"IBM Plex Sans Thai","IBM Plex Sans","Noto Sans Thai","Segoe UI",system-ui,sans-serif;
+  --mono:"IBM Plex Mono","JetBrains Mono",ui-monospace,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html{background:var(--canvas)}
+body{margin:0;font-family:var(--sans);color:var(--ink);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased}
+a{color:var(--horizon)}
+a:focus-visible,button:focus-visible{outline:2px solid var(--horizon);outline-offset:2px}
+.wrap{max-width:1180px;margin:0 auto;padding:0 28px}
+h1,h2,h3{line-height:1.25;margin:0;font-weight:600;letter-spacing:-.01em}
+p{margin:0}
+.measure{max-width:68ch}
+
+/* hero: the horizon track itself */
+header.hero{padding:56px 0 40px;border-bottom:1px solid var(--line);background:var(--surface)}
+.hero h1{font-size:40px;font-weight:600;max-width:20ch}
+.hero p.lede{margin-top:14px;color:var(--ink-2);font-size:17px}
+.track{display:flex;align-items:center;margin-top:36px;gap:0;max-width:760px}
+.track .st{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--ink-3);white-space:nowrap}
+.track .dot{width:12px;height:12px;border-radius:50%;border:2px solid var(--line-2);background:var(--surface)}
+.track .st.done{color:var(--ink-2)} .track .st.done .dot{background:var(--horizon);border-color:var(--horizon)}
+.track .st.now{color:var(--ink);font-weight:600} .track .st.now .dot{border-color:var(--horizon);box-shadow:0 0 0 4px var(--horizon-soft)}
+.track .seg{flex:1;height:2px;background:var(--line-2);margin:0 10px;min-width:24px}
+.track .seg.done{background:var(--horizon)}
+@media (prefers-reduced-motion:no-preference){
+  .track .seg.grow{background:linear-gradient(90deg,var(--horizon) 50%,var(--line-2) 50%);background-size:200% 100%;background-position:100% 0;animation:grow 1.2s .3s ease-out forwards}
+  @keyframes grow{to{background-position:0 0}}
+}
+
+section{padding:56px 0;border-bottom:1px solid var(--line)}
+section > .wrap > h2{font-size:26px}
+section > .wrap > p.intro{margin-top:10px;color:var(--ink-2)}
+
+/* diagnosis */
+.diag{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);margin-top:28px;border-radius:8px;overflow:hidden}
+.diag div{background:var(--surface);padding:18px 20px}
+.diag h3{font-size:15px}
+.diag p{font-size:14px;color:var(--ink-2);margin-top:6px}
+.diag code{font-family:var(--mono);font-size:12.5px;background:var(--canvas);padding:1px 5px;border-radius:4px}
+
+/* directions */
+.dirs{display:grid;grid-template-columns:repeat(auto-fit,minmax(520px,1fr));gap:24px;margin-top:28px}
+@media (max-width:640px){.dirs{grid-template-columns:1fr}}
+.dir{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;display:flex;flex-direction:column}
+.dir .thumb{height:190px;border-bottom:1px solid var(--line);position:relative;overflow:hidden}
+.dir .body{padding:20px 22px 22px;display:flex;flex-direction:column;gap:12px;flex:1}
+.dir h3{font-size:19px}
+.dir .who{font-size:13.5px;color:var(--ink-3)}
+.dir dl{margin:0;display:grid;grid-template-columns:88px 1fr;gap:6px 14px;font-size:14px}
+.dir dt{color:var(--ink-3)}
+.dir dd{margin:0;color:var(--ink-2)}
+.fit{display:flex;gap:18px;font-size:13.5px;color:var(--ink-2)}
+.bar{display:inline-flex;gap:3px;vertical-align:middle;margin-left:6px}
+.bar i{width:14px;height:6px;border-radius:2px;background:var(--line)}
+.bar i.on{background:var(--horizon)}
+.refs{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:13.5px;padding-top:10px;border-top:1px solid var(--line);margin-top:auto}
+.oss{font-size:11.5px;color:var(--ok);border:1px solid #BFDCC9;border-radius:4px;padding:0 4px;margin-left:3px;text-decoration:none}
+
+/* thumbnails drawn in CSS */
+.t-a{background:#fff;padding:14px}
+.t-a .tabs{display:flex;gap:6px;margin-bottom:10px}
+.t-a .tabs span{font-size:11px;padding:3px 9px;border-radius:5px;background:#F1F3F6;color:#555}
+.t-a .tabs span.on{background:#E8F0FE;color:#1A56DB}
+.t-a .grid{display:grid;grid-template-columns:28px 1.2fr 1fr 1fr .8fr;border:1px solid #E3E5E8;font-size:11px}
+.t-a .grid span{border-right:1px solid #E3E5E8;border-bottom:1px solid #E3E5E8;padding:5px 7px;white-space:nowrap;overflow:hidden}
+.t-a .grid .h{background:#F8F9FA;color:#666}
+.pill{display:inline-block;border-radius:10px;padding:0 7px;font-size:10px}
+.t-b{background:#FBFBFB;display:grid;grid-template-columns:120px 1fr}
+.t-b .side{background:#F4F4F5;border-right:1px solid #E7E7E9;padding:12px 10px;font-size:11px;color:#71717A;display:flex;flex-direction:column;gap:7px}
+.t-b .side b{color:#18181B;font-weight:500}
+.t-b .main{padding:12px 14px;font-size:11.5px}
+.t-b .row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #EFEFF1;color:#3F3F46}
+.t-b .row em{font-style:normal;color:#A1A1AA;width:48px;font-family:var(--mono);font-size:10px}
+.t-b .ring{width:10px;height:10px;border-radius:50%;border:2px solid #A1A1AA}
+.t-c{background:#F5F6F7}
+.t-c .top{background:#714B67;height:26px}
+.t-c .sheet{background:#fff;margin:12px 16px;border:1px solid #DEE2E6;padding:10px 12px;font-size:11px}
+.t-c .sb{display:flex;justify-content:flex-end;gap:0;margin-bottom:10px}
+.t-c .sb span{padding:3px 12px;background:#F1F3F5;border:1px solid #DEE2E6;margin-left:-1px;font-size:10px;color:#666}
+.t-c .sb span.on{background:#714B67;color:#fff;border-color:#714B67}
+.t-c .f{display:grid;grid-template-columns:80px 1fr 80px 1fr;gap:6px 10px;color:#555}
+.t-c .f b{font-weight:500;color:#222}
+.t-d{background:#1C1C1C;display:grid;grid-template-columns:44px 1fr}
+.t-d .side{background:#171717;border-right:1px solid #2E2E2E}
+.t-d .main{padding:12px 14px;font-family:var(--mono);font-size:11px;color:#A0A0A0}
+.t-d .row{display:grid;grid-template-columns:1fr 1fr 1fr;border-bottom:1px solid #2E2E2E;padding:5px 0}
+.t-d .row.h{color:#EDEDED}
+.t-d .g{color:#3ECF8E}
+
+/* recommendation */
+.rec{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:28px}
+@media (max-width:820px){.rec{grid-template-columns:1fr}}
+.mode{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:22px}
+.mode h3{font-size:19px}
+.mode p{margin-top:8px;color:var(--ink-2);font-size:14.5px}
+.mode ul{margin:12px 0 0;padding-left:18px;font-size:14px;color:var(--ink-2)}
+.mode li{margin:4px 0}
+.mode.studio{background:#F7F8FB}
+
+/* tokens */
+.tok{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:24px}
+.sw{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface);font-size:13px}
+.sw .c{height:64px}
+.sw div.l{padding:8px 10px}
+.sw code{font-family:var(--mono);font-size:12px;color:var(--ink-3)}
+.type{margin-top:28px;display:grid;grid-template-columns:1fr 1fr;gap:24px}
+@media (max-width:820px){.type{grid-template-columns:1fr}}
+.spec{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:20px}
+.spec .s1{font-size:28px;font-weight:600}
+.spec .s2{font-size:18px;font-weight:600;margin-top:6px}
+.spec .s3{font-size:14px;color:var(--ink-2);margin-top:6px}
+.spec .s4{font-family:var(--mono);font-size:13px;color:var(--ink-2);margin-top:10px}
+.spec table{width:100%;border-collapse:collapse;font-size:13.5px}
+.spec td{padding:6px 0;border-bottom:1px solid var(--line);color:var(--ink-2)}
+.spec td:first-child{color:var(--ink)}
+
+/* mockups */
+.screen{margin-top:28px;background:var(--surface);border:1px solid var(--line-2);border-radius:10px;overflow:hidden}
+.screen .cap{padding:12px 18px;border-bottom:1px solid var(--line);font-size:14px;color:var(--ink-2);background:var(--canvas)}
+.screen .cap b{color:var(--ink);font-weight:600}
+.app{display:grid;grid-template-columns:216px 1fr;min-height:430px;font-size:13.5px}
+@media (max-width:820px){.app{grid-template-columns:1fr}.app .nav{display:none}}
+.nav{background:#F7F8F5;border-right:1px solid var(--line);padding:14px 10px;display:flex;flex-direction:column;gap:2px}
+.nav .ws{display:flex;align-items:center;gap:8px;padding:4px 8px 12px;font-weight:600}
+.nav .logo{width:24px;height:24px;border-radius:6px;background:var(--ink);color:#fff;display:grid;place-items:center;font-size:12px}
+.nav .grp{font-size:12px;color:var(--ink-3);padding:12px 8px 4px}
+.nav a{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;color:var(--ink-2);text-decoration:none}
+.nav a.on{background:var(--surface);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line)}
+.nav .sq{width:8px;height:8px;border-radius:2px}
+.nav .switch{margin-top:auto;border-top:1px solid var(--line);padding-top:10px;display:flex;gap:4px}
+.nav .switch span{flex:1;text-align:center;padding:5px;border-radius:6px;font-size:12.5px;color:var(--ink-3)}
+.nav .switch span.on{background:var(--ink);color:#fff}
+.pane{display:flex;flex-direction:column;min-width:0}
+.bar-top{display:flex;align-items:center;gap:10px;padding:12px 18px;border-bottom:1px solid var(--line)}
+.bar-top .crumb{color:var(--ink-3)} .bar-top .crumb b{color:var(--ink);font-weight:600}
+.bar-top .sp{flex:1}
+.btn{font:inherit;font-size:13px;border:1px solid var(--line-2);background:var(--surface);color:var(--ink);padding:5px 11px;border-radius:6px;cursor:pointer}
+.btn.pri{background:var(--horizon);border-color:var(--horizon);color:#fff}
+.kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--line-2);border-bottom-width:2px;border-radius:4px;padding:0 5px;color:var(--ink-3)}
+.views{display:flex;gap:2px;padding:8px 18px 0;border-bottom:1px solid var(--line)}
+.views span{padding:6px 12px;color:var(--ink-3);border-bottom:2px solid transparent;margin-bottom:-1px}
+.views span.on{color:var(--ink);border-color:var(--ink);font-weight:500}
+.filters{display:flex;gap:8px;padding:10px 18px;flex-wrap:wrap}
+.chip{border:1px dashed var(--line-2);border-radius:6px;padding:2px 9px;color:var(--ink-3);font-size:12.5px}
+.chip.set{border-style:solid;color:var(--ink);background:var(--horizon-soft);border-color:#C3D6E6}
+table.rec-t{width:100%;border-collapse:collapse}
+.rec-t th{text-align:left;font-weight:500;color:var(--ink-3);font-size:12.5px;padding:7px 18px;border-bottom:1px solid var(--line);background:#FAFBF9}
+.rec-t td{padding:8px 18px;border-bottom:1px solid #ECEEE9;white-space:nowrap}
+.rec-t tr.sel td{background:var(--horizon-soft)}
+.rec-t .num{font-variant-numeric:tabular-nums;text-align:right}
+.st-badge{display:inline-flex;align-items:center;gap:6px}
+.st-badge i{width:8px;height:8px;border-radius:50%}
+.id{font-family:var(--mono);font-size:12.5px;color:var(--ink-2)}
+
+/* record page */
+.record{display:grid;grid-template-columns:1fr 300px}
+@media (max-width:980px){.record{grid-template-columns:1fr}}
+.rec-main{padding:20px 24px;border-right:1px solid var(--line)}
+.rec-main h3{font-size:22px}
+.rec-main .sub{color:var(--ink-3);margin-top:2px}
+.rec-track{display:flex;align-items:center;margin:20px 0 6px}
+.rec-track .st{font-size:13px}
+.actions{display:flex;gap:8px;margin:14px 0 22px}
+.fields{display:grid;grid-template-columns:1fr 1fr;gap:14px 20px}
+.fl label{display:block;font-size:12.5px;color:var(--ink-3);margin-bottom:4px}
+.fl label .req{color:var(--stamp)}
+.fl .in{border:1px solid var(--line-2);border-radius:6px;padding:6px 10px;min-height:34px;background:var(--surface)}
+.fl .in.ro{background:#F7F8F5;border-color:var(--line)}
+.fl .err{font-size:12.5px;color:var(--stamp);margin-top:4px}
+.fl .in.bad{border-color:var(--stamp)}
+.sect{font-size:14px;font-weight:600;margin:24px 0 12px;padding-top:16px;border-top:1px solid var(--line)}
+.side-p{padding:18px 18px;background:#FAFBF9}
+.side-p h4{margin:0 0 12px;font-size:13.5px;font-weight:600}
+.tl{list-style:none;margin:0;padding:0;position:relative}
+.tl li{position:relative;padding:0 0 16px 18px;font-size:13px;color:var(--ink-2)}
+.tl li::before{content:"";position:absolute;left:3px;top:7px;width:7px;height:7px;border-radius:50%;background:var(--line-2)}
+.tl li::after{content:"";position:absolute;left:6px;top:16px;bottom:0;width:1px;background:var(--line)}
+.tl li:last-child::after{display:none}
+.tl li.hl::before{background:var(--horizon)}
+.tl time{display:block;font-size:12px;color:var(--ink-3)}
+.related{display:flex;gap:8px;margin-bottom:18px}
+.related span{flex:1;border:1px solid var(--line);border-radius:6px;padding:8px;background:var(--surface);font-size:12.5px;color:var(--ink-3)}
+.related b{display:block;font-size:17px;color:var(--ink);font-weight:600}
+
+/* studio */
+.studio-g{display:grid;grid-template-columns:200px 1fr 280px;min-height:430px}
+@media (max-width:980px){.studio-g{grid-template-columns:1fr}}
+.studio-g .col{padding:14px 16px}
+.studio-g .col + .col{border-left:1px solid var(--line)}
+.studio-g h4{margin:0 0 10px;font-size:12.5px;color:var(--ink-3);font-weight:500}
+.tree a{display:flex;justify-content:space-between;padding:5px 8px;border-radius:6px;color:var(--ink-2);text-decoration:none}
+.tree a.on{background:var(--horizon-soft);color:var(--ink)}
+.fieldrow{display:grid;grid-template-columns:20px 28px 1fr 110px 70px;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:7px;margin-bottom:6px;background:var(--surface)}
+.fieldrow.on{border-color:var(--horizon);box-shadow:0 0 0 3px var(--horizon-soft)}
+.fieldrow .grip{color:var(--line-2);letter-spacing:-2px}
+.fieldrow .ic{font-family:var(--mono);font-size:12px;color:var(--ink-3);text-align:center;border:1px solid var(--line);border-radius:4px}
+.fieldrow .ty{font-size:12.5px;color:var(--ink-3)}
+.addrow{border:1px dashed var(--line-2);border-radius:7px;padding:8px 10px;color:var(--ink-3)}
+.insp .fl{margin-bottom:12px}
+.toggle{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}
+.sw-t{width:28px;height:16px;border-radius:9px;background:var(--line-2);position:relative}
+.sw-t.on{background:var(--horizon)}
+.sw-t::after{content:"";position:absolute;width:12px;height:12px;border-radius:50%;background:#fff;top:2px;left:2px}
+.sw-t.on::after{left:14px}
+.pubbar{display:flex;align-items:center;gap:10px;padding:10px 18px;border-top:1px solid var(--line);background:#FFF8EC;font-size:13px;color:#7A5212}
+
+/* patterns */
+.pat{margin-top:24px;border-top:1px solid var(--line)}
+.pat .r{display:grid;grid-template-columns:200px 1fr 1.1fr;gap:20px;padding:16px 0;border-bottom:1px solid var(--line);font-size:14px}
+@media (max-width:820px){.pat .r{grid-template-columns:1fr;gap:6px}}
+.pat .r b{font-weight:600}
+.pat .r p{color:var(--ink-2)}
+.next{margin-top:24px;counter-reset:n;padding:0;list-style:none}
+.next li{counter-increment:n;display:grid;grid-template-columns:36px 1fr;gap:10px;padding:12px 0;border-bottom:1px solid var(--line);color:var(--ink-2)}
+.next li::before{content:counter(n);font-family:var(--mono);font-size:13px;color:var(--horizon);border:1px solid #C3D6E6;border-radius:50%;width:26px;height:26px;display:grid;place-items:center}
+.next li b{color:var(--ink)}
+footer{padding:32px 0 60px;color:var(--ink-3);font-size:13px}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <h1>LOGHOLIZON redesign: ทุก record มีเส้นขอบฟ้าของมัน</h1>
+    <p class="lede measure">เอกสารนี้รวบรวมแนวทางออกแบบ 4 แนวที่เทียบกันได้ พร้อมข้อเสนอแนวผสมที่แยกโหมด “Workspace” สำหรับคนทำงานประจำวัน กับ “Studio” สำหรับคนสร้าง module ตัวอย่างทั้งหมดใช้ข้อมูลจริงจาก <code>dormitory.module.json</code></p>
+    <div class="track" aria-label="ตัวอย่าง workflow track">
+      <div class="st done"><span class="dot"></span>Draft</div>
+      <div class="seg done"></div>
+      <div class="st done"><span class="dot"></span>Submitted</div>
+      <div class="seg grow"></div>
+      <div class="st now"><span class="dot"></span>Approved</div>
+      <div class="seg"></div>
+      <div class="st"><span class="dot"></span>Checked in</div>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2>สิ่งที่เห็นจาก UI ปัจจุบัน</h2>
+    <p class="intro measure">สำรวจจาก <code>packages/app/design.md</code>, layout หลัก และหน้าต่าง ๆ ใน <code>app/pages</code></p>
+    <div class="diag">
+      <div><h3>หน้าตาเป็น developer console</h3><p>Spec อิง Supabase Dashboard แบบ dark ล้วน และใช้เขียว <code>#3ECF8E</code> เป็นสีหลัก เหมาะกับ dev ที่แก้ schema แต่ staff ที่กรอกข้อมูลทั้งวันจะล้าตาและรู้สึกว่าเป็นเครื่องมือเทคนิค</p></div>
+      <div><h3>ฟอนต์ไม่รองรับภาษาไทย</h3><p><code>--font-sans: 'Public Sans'</code> ไม่มี glyph ไทย ชื่อ field, label และข้อมูลที่เป็นภาษาไทยจึงตกไปใช้ฟอนต์สำรองของระบบ ทำให้น้ำหนักตัวอักษรและ baseline ไม่ตรงกัน</p></div>
+      <div><h3>Builder กับงานประจำวันอยู่ปนกัน</h3><p>Sidebar เดียวรวมทั้ง Apps, Reports และเมนู Admin 8 รายการ staff เห็นเมนูที่ไม่เกี่ยวกับงาน ส่วน admin สลับไปมาระหว่าง “ใช้” กับ “สร้าง” ได้ยาก</p></div>
+      <div><h3>หน้า builder แน่นเกินไป</h3><p><code>admin/meta/entity.vue</code> ยาว 2,316 บรรทัด และ <code>app/[entity].vue</code> ยาว 1,843 บรรทัด แปลว่ามีหลายหน้าที่รวมอยู่ในหน้าเดียว ควรแตกเป็น pane และ inspector</p></div>
+      <div><h3>Workflow ไม่ได้อยู่ในหน้า record</h3><p>สถานะแสดงเป็นแค่ badge ผู้ใช้จึงไม่เห็นว่า record อยู่ขั้นไหนของ flow และขั้นต่อไปคืออะไร ทั้งที่ workflow แบบ linear คือจุดแข็งของระบบ</p></div>
+      <div><h3>Dashboard เป็นแค่ตัวเลขนับ</h3><p><code>dashboard.vue</code> แสดงเพียงยอดนับตาม status ของ entity เดียว ยังไม่มีหน้า “งานของฉัน” ที่บอก staff ว่าวันนี้ต้องทำอะไร</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>4 แนวทางที่เป็นไปได้</h2>
+    <p class="intro measure">ภาพตัวอย่างวาดด้วย CSS เพื่อให้เห็นอารมณ์ของแต่ละแนว ส่วนลิงก์ด้านล่างแต่ละการ์ดคือของจริงที่ควรเปิดดู ป้าย <span class="oss">OSS</span> หมายถึงเปิดดู source code ได้</p>
+    <div class="dirs">
+
+      <article class="dir">
+        <div class="thumb t-a" aria-hidden="true">
+          <div class="tabs"><span class="on">Grid</span><span>Kanban</span><span>Calendar</span><span>Form</span></div>
+          <div class="grid">
+            <span class="h"></span><span class="h">Room Number</span><span class="h">Building</span><span class="h">Status</span><span class="h">Rate</span>
+            <span>1</span><span>A-101</span><span>Tower A</span><span><i class="pill" style="background:#D1FAE5;color:#065F46">Vacant</i></span><span>4,500</span>
+            <span>2</span><span>A-102</span><span>Tower A</span><span><i class="pill" style="background:#DBEAFE;color:#1E40AF">Occupied</i></span><span>4,500</span>
+            <span>3</span><span>B-201</span><span>Tower B</span><span><i class="pill" style="background:#FEF3C7;color:#92400E">Maintenance</i></span><span>5,200</span>
+            <span>4</span><span>B-202</span><span>Tower B</span><span><i class="pill" style="background:#DBEAFE;color:#1E40AF">Occupied</i></span><span>5,200</span>
+          </div>
+        </div>
+        <div class="body">
+          <h3>A. Spreadsheet-database</h3>
+          <p class="who">แบบ Airtable, Teable, Baserow, Notion databases</p>
+          <dl>
+            <dt>ลักษณะ</dt><dd>พื้นขาว ตาราง border บาง select เป็น pill สี และแต่ละประเภท field มี icon ของตัวเอง</dd>
+            <dt>ควรยืม</dt><dd>View tabs (Grid/Kanban/Calendar/Form) ที่จำ filter ได้ และแนวคิด “Interface” ของ Airtable ที่สร้างหน้าเฉพาะ role บนข้อมูลชุดเดียวกัน</dd>
+            <dt>ระวัง</dt><dd>ถ้าให้ staff ทำงานบน grid ดิบ ๆ จะแก้ข้อมูลผิดง่าย และ toolbar มักรก (NocoDB)</dd>
+          </dl>
+          <div class="fit"><span>Admin<span class="bar"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span></span><span>Staff<span class="bar"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span></span></div>
+          <div class="refs">
+            <a href="https://airtable.com">Airtable</a>
+            <a href="https://workmanagementhub.com/airtable-interfaces-designer-guide-2026/">Airtable Interfaces guide</a>
+            <a href="https://github.com/teableio/teable">Teable</a><span class="oss">OSS</span>
+            <a href="https://github.com/baserow/baserow">Baserow</a><span class="oss">OSS</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="dir">
+        <div class="thumb t-b" aria-hidden="true">
+          <div class="side"><b>Dormitory</b><span>Rooms</span><span>Residents</span><span>Bookings</span><span style="margin-top:8px">Views</span><span>My bookings</span></div>
+          <div class="main">
+            <div class="row"><em>BK-0412</em><span class="ring" style="border-color:#2563EB"></span>Somchai J. · A-101</div>
+            <div class="row"><em>BK-0411</em><span class="ring" style="border-color:#D97706"></span>Nattaya P. · B-201</div>
+            <div class="row"><em>BK-0410</em><span class="ring"></span>Kittipong S. · A-104</div>
+            <div class="row"><em>BK-0409</em><span class="ring" style="border-color:#16A34A;background:#16A34A"></span>Ploy R. · C-302</div>
+            <div class="row"><em>BK-0408</em><span class="ring"></span>Arthit W. · A-110</div>
+          </div>
+        </div>
+        <div class="body">
+          <h3>B. Keyboard-first SaaS / CRM</h3>
+          <p class="who">แบบ Linear, Attio, Twenty CRM, Folk</p>
+          <dl>
+            <dt>ลักษณะ</dt><dd>โทน neutral เกือบขาวดำ มีสีเน้นสีเดียว ตัวอักษร 13px หนาแน่นแต่โปร่ง และ ⌘K ใช้ได้ทุกที่</dd>
+            <dt>ควรยืม</dt><dd>หน้าตั้งค่า workflow states ของ Linear (จัดกลุ่ม ลากเรียง มีสี และ default state) และหน้า data model ของ Twenty ซึ่งใกล้กับ metadata model ของเรามากที่สุด</dd>
+            <dt>ระวัง</dt><dd>ถ้า action ซ่อนอยู่หลัง shortcut อย่างเดียว staff ที่ไม่ใช้คีย์บอร์ดจะหาไม่เจอ</dd>
+          </dl>
+          <div class="fit"><span>Admin<span class="bar"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span></span><span>Staff<span class="bar"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span></span></div>
+          <div class="refs">
+            <a href="https://linear.app/now/how-we-redesigned-the-linear-ui">Linear redesign</a>
+            <a href="https://linear.app/docs/configuring-workflows">Linear workflows</a>
+            <a href="https://github.com/twentyhq/twenty">Twenty CRM</a><span class="oss">OSS</span>
+            <a href="https://mobbin.com/explore/flows/0617f474-71c6-4aeb-b1ec-6bf86dd626d1">Attio columns flow</a>
+          </div>
+        </div>
+      </article>
+
+      <article class="dir">
+        <div class="thumb t-c" aria-hidden="true">
+          <div class="top"></div>
+          <div class="sheet">
+            <div class="sb"><span>Draft</span><span class="on">Confirmed</span><span>Checked in</span><span>Closed</span></div>
+            <div class="f"><span>Resident</span><b>Somchai J.</b><span>Room</span><b>A-101</b><span>Start</span><b>01/11/2026</b><span>Rate</span><b>4,500.00</b><span>Deposit</span><b>9,000.00</b><span>Months</span><b>12</b></div>
+          </div>
+        </div>
+        <div class="body">
+          <h3>C. Enterprise ERP / low-code</h3>
+          <p class="who">แบบ Odoo 18, Frappe UI (Espresso), Retool, SAP Fiori, Fluent 2</p>
+          <dl>
+            <dt>ลักษณะ</dt><dd>หน้า record เป็น “แผ่นเอกสาร” มี status bar มุมขวาบน มี chatter และ log การเปลี่ยนแปลงอยู่ข้างเอกสาร</dd>
+            <dt>ควรยืม</dt><dd>รูปแบบหน้า form ของ Odoo, ระบบ token และ component states ของ Espresso (Vue + Tailwind เหมือนเรา) และ builder 3 คอลัมน์ของ Retool</dd>
+            <dt>ระวัง</dt><dd>Form สีเทาแน่น ๆ ที่ลำดับความสำคัญอ่อน และ chrome หนักแบบ Fiori</dd>
+          </dl>
+          <div class="fit"><span>Admin<span class="bar"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span></span><span>Staff<span class="bar"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></span></span></div>
+          <div class="refs">
+            <a href="https://github.com/frappe/frappe-ui">Frappe UI</a><span class="oss">OSS</span>
+            <a href="https://frappe.io/design/espresso">Espresso</a>
+            <a href="https://www.odoo.com/odoo-18-release-notes">Odoo 18</a>
+            <a href="https://www.sap.com/design-system/fiori-design-web/v1-136/discover/sap-design-system/sap-fiori">SAP Fiori</a>
+            <a href="https://fluent2.microsoft.design/">Fluent 2</a>
+          </div>
+        </div>
+      </article>
+
+      <article class="dir">
+        <div class="thumb t-d" aria-hidden="true">
+          <div class="side"></div>
+          <div class="main">
+            <div class="row h"><span>number</span><span>status</span><span>monthly_rate</span></div>
+            <div class="row"><span>A-101</span><span class="g">vacant</span><span>4500.00</span></div>
+            <div class="row"><span>A-102</span><span>occupied</span><span>4500.00</span></div>
+            <div class="row"><span>B-201</span><span>maintenance</span><span>5200.00</span></div>
+            <div class="row"><span>B-202</span><span>occupied</span><span>5200.00</span></div>
+          </div>
+        </div>
+        <div class="body">
+          <h3>D. Developer dashboard (ปัจจุบัน)</h3>
+          <p class="who">แบบ Supabase, Vercel Geist, Neon</p>
+          <dl>
+            <dt>ลักษณะ</dt><dd>พื้นดำ มีสีเน้นสีเดียว ใช้ mono กับ ID และ timestamp และใช้เส้นขอบ 1px แทนเงา</dd>
+            <dt>ควรยืม</dt><dd>หลักใช้ mono เฉพาะ identifier, empty state และ command menu ของ Geist และ table editor สำหรับฝั่ง admin</dd>
+            <dt>ระวัง</dt><dd>dark-only และตัวอักษรเทาบนพื้นเทาที่ contrast ต่ำ ซึ่งไม่เหมาะกับงานกรอกข้อมูลทั้งวัน</dd>
+          </dl>
+          <div class="fit"><span>Admin<span class="bar"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span></span><span>Staff<span class="bar"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span></span></div>
+          <div class="refs">
+            <a href="https://supabase.com/design-system">Supabase design system</a><span class="oss">OSS</span>
+            <a href="https://vercel.com/geist/introduction">Vercel Geist</a>
+            <a href="https://neon.com/docs/changelog/2025-05-16">Neon console</a>
+          </div>
+        </div>
+      </article>
+
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>ข้อเสนอ: Workspace + Studio</h2>
+    <p class="intro measure">ใช้ข้อมูลชุดเดียวกันแต่แยกเป็น 2 โหมด สลับได้ที่มุมล่างของ sidebar โดย staff จะเห็นแค่ Workspace โครงหน้าใช้แบบ B คือเรียบ ไว และมี ⌘K ส่วนหน้า record ยืมรูปแบบจาก C และ admin ยังได้เครื่องมือแม่นยำแบบ D</p>
+    <div class="rec">
+      <div class="mode">
+        <h3>Workspace สำหรับงานประจำวัน</h3>
+        <p>เปิดมาเจอหน้า “งานของฉัน” ก่อน แล้วค่อยเข้าไปที่ app และ entity</p>
+        <ul>
+          <li>List มี view tabs ได้แก่ Table, Board (จัดกลุ่มตาม status), Calendar (ถ้ามี date field) และ saved views</li>
+          <li>หน้า record เปิดเป็น side panel ใช้เส้น workflow track แสดงว่าอยู่ขั้นไหน และปุ่ม transition แสดงเฉพาะที่ role นี้กดได้</li>
+          <li>Timeline การเปลี่ยนแปลงกับ related counts อยู่คอลัมน์ขวา</li>
+          <li>Light mode เป็นค่าเริ่มต้น ส่วนความหนาแน่นเลือกได้ระหว่าง comfortable กับ compact</li>
+        </ul>
+      </div>
+      <div class="mode studio">
+        <h3>Studio สำหรับสร้าง module</h3>
+        <p>Builder ทุกตัวใช้โครง 3 pane เดียวกัน คือ โครงสร้าง ← canvas → inspector</p>
+        <ul>
+          <li>ซ้ายเป็นต้นไม้ของ module (entities, forms, views, workflow, roles, reports)</li>
+          <li>กลางเป็นรายการ field แบบ block ลากเรียงได้ กด “/” เพื่อเพิ่ม field เหมือน Tally</li>
+          <li>ขวาเป็น inspector ของ field ที่เลือก ไม่ใช้ modal</li>
+          <li>แถบ draft/publish ติดอยู่ด้านล่างเสมอ แสดงว่ามีการเปลี่ยนแปลงกี่รายการที่ยังไม่ publish</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="tok" aria-label="Color tokens">
+      <div class="sw"><div class="c" style="background:#F2F3EF"></div><div class="l">Canvas<br><code>#F2F3EF</code></div></div>
+      <div class="sw"><div class="c" style="background:#FFFFFF;border-bottom:1px solid var(--line)"></div><div class="l">Surface<br><code>#FFFFFF</code></div></div>
+      <div class="sw"><div class="c" style="background:#18202B"></div><div class="l">Ink<br><code>#18202B</code></div></div>
+      <div class="sw"><div class="c" style="background:#1F5F8B"></div><div class="l">Horizon (primary)<br><code>#1F5F8B</code></div></div>
+      <div class="sw"><div class="c" style="background:#E3EDF5"></div><div class="l">Horizon soft<br><code>#E3EDF5</code></div></div>
+      <div class="sw"><div class="c" style="background:#C2410C"></div><div class="l">Stamp (required/danger)<br><code>#C2410C</code></div></div>
+    </div>
+
+    <div class="type">
+      <div class="spec">
+        <div class="s1">ห้องพัก A-101</div>
+        <div class="s2">Booking details</div>
+        <div class="s3">IBM Plex Sans Thai ใช้ได้ทั้งไทยและอังกฤษในตระกูลเดียว ตัวอักษรไทยมีหัว อ่านง่ายที่ขนาด 13–14px</div>
+        <div class="s4">booking.monthly_rate · BK-0412</div>
+      </div>
+      <div class="spec">
+        <table>
+          <tr><td>Page title</td><td>Plex Sans Thai 600 / 22px</td></tr>
+          <tr><td>Section</td><td>600 / 15px</td></tr>
+          <tr><td>Body, table</td><td>400 / 14px, line-height 1.55</td></tr>
+          <tr><td>Label, meta</td><td>400 / 12.5px, สี ink-3</td></tr>
+          <tr><td>Identifier</td><td>IBM Plex Mono 400 / 12.5px</td></tr>
+          <tr><td>ตัวเลขในตาราง</td><td>tabular-nums ชิดขวา</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Mockup: Workspace</h2>
+
+    <div class="screen">
+      <div class="cap"><b>Rooms list</b> ที่มี view tabs, filter chips และ status จากสีใน metadata</div>
+      <div class="app">
+        <nav class="nav" aria-label="Workspace">
+          <div class="ws"><span class="logo">L</span>Siam Dorm Co.</div>
+          <a href="#">◷ งานของฉัน</a>
+          <a href="#">⌕ ค้นหา <span class="kbd" style="margin-left:auto">⌘K</span></a>
+          <div class="grp">Dormitory</div>
+          <a href="#"><span class="sq" style="background:#0E7490"></span>Buildings</a>
+          <a href="#" class="on"><span class="sq" style="background:#0E7490"></span>Rooms</a>
+          <a href="#"><span class="sq" style="background:#0E7490"></span>Residents</a>
+          <a href="#"><span class="sq" style="background:#0E7490"></span>Bookings</a>
+          <div class="grp">Inventory</div>
+          <a href="#"><span class="sq" style="background:#7C3AED"></span>Items</a>
+          <a href="#"><span class="sq" style="background:#7C3AED"></span>Stock moves</a>
+          <div class="switch"><span class="on">Workspace</span><span>Studio</span></div>
+        </nav>
+        <div class="pane">
+          <div class="bar-top"><span class="crumb">Dormitory / <b>Rooms</b></span><span class="sp"></span><button class="btn">Export</button><button class="btn pri">New room</button></div>
+          <div class="views"><span class="on">All rooms</span><span>Board by status</span><span>Vacant this month</span><span>+ View</span></div>
+          <div class="filters"><span class="chip set">Building: Tower A</span><span class="chip set">Status ≠ Maintenance</span><span class="chip">+ Filter</span><span class="chip">Sort</span></div>
+          <table class="rec-t">
+            <thead><tr><th>Room</th><th>Building</th><th>Capacity</th><th>Status</th><th style="text-align:right">Monthly rate</th></tr></thead>
+            <tbody>
+              <tr><td>A-101</td><td>Tower A</td><td>2</td><td><span class="st-badge"><i style="background:var(--ok)"></i>Vacant</span></td><td class="num">4,500.00</td></tr>
+              <tr class="sel"><td>A-102</td><td>Tower A</td><td>2</td><td><span class="st-badge"><i style="background:var(--horizon)"></i>Occupied</span></td><td class="num">4,500.00</td></tr>
+              <tr><td>A-103</td><td>Tower A</td><td>1</td><td><span class="st-badge"><i style="background:var(--horizon)"></i>Occupied</span></td><td class="num">3,800.00</td></tr>
+              <tr><td>A-104</td><td>Tower A</td><td>3</td><td><span class="st-badge"><i style="background:var(--ok)"></i>Vacant</span></td><td class="num">5,900.00</td></tr>
+              <tr><td>A-105</td><td>Tower A</td><td>2</td><td><span class="st-badge"><i style="background:var(--horizon)"></i>Occupied</span></td><td class="num">4,500.00</td></tr>
+              <tr><td>A-106</td><td>Tower A</td><td>2</td><td><span class="st-badge"><i style="background:var(--ok)"></i>Vacant</span></td><td class="num">4,500.00</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="screen">
+      <div class="cap"><b>Booking record</b> ที่มี workflow track, ปุ่ม transition เฉพาะที่มีสิทธิ์, validation ใต้ field และ timeline</div>
+      <div class="record">
+        <div class="rec-main">
+          <span class="id">BK-0412</span>
+          <h3>Somchai Jaidee · A-102</h3>
+          <p class="sub">Dormitory / Bookings</p>
+          <div class="track rec-track">
+            <div class="st done"><span class="dot"></span>Draft</div><div class="seg done"></div>
+            <div class="st now"><span class="dot"></span>Submitted</div><div class="seg"></div>
+            <div class="st"><span class="dot"></span>Approved</div><div class="seg"></div>
+            <div class="st"><span class="dot"></span>Checked in</div>
+          </div>
+          <div class="actions"><button class="btn pri">Approve</button><button class="btn">Send back to draft</button><span style="flex:1"></span><span style="color:var(--ink-3);font-size:12.5px;align-self:center">Saved</span></div>
+          <div class="fields">
+            <div class="fl"><label>Resident <span class="req">*</span></label><div class="in">Somchai Jaidee</div></div>
+            <div class="fl"><label>Room <span class="req">*</span></label><div class="in">A-102 · Tower A</div></div>
+            <div class="fl"><label>Start date <span class="req">*</span></label><div class="in">1 Nov 2026</div></div>
+            <div class="fl"><label>End date</label><div class="in bad">31 Oct 2026</div><p class="err">End date ต้องอยู่หลัง start date</p></div>
+          </div>
+          <div class="sect">Billing</div>
+          <div class="fields">
+            <div class="fl"><label>Monthly rate</label><div class="in ro">4,500.00</div></div>
+            <div class="fl"><label>Deposit</label><div class="in">9,000.00</div></div>
+          </div>
+        </div>
+        <aside class="side-p">
+          <div class="related"><span><b>3</b>Invoices</span><span><b>1</b>Maintenance</span></div>
+          <h4>History</h4>
+          <ul class="tl">
+            <li class="hl">Draft → Submitted โดย Nan<time>2 นาทีที่แล้ว</time></li>
+            <li>Deposit 6,000 → 9,000 โดย Nan<time>5 นาทีที่แล้ว</time></li>
+            <li>สร้าง record โดย Nan<time>วันนี้ 09:12</time></li>
+          </ul>
+        </aside>
+      </div>
+    </div>
+
+    <h2 style="margin-top:56px">Mockup: Studio</h2>
+    <div class="screen">
+      <div class="cap"><b>Entity builder</b> แบบ 3 pane คือ โครงสร้าง module, รายการ field และ inspector</div>
+      <div class="bar-top"><span class="crumb">Studio / Dormitory / <b>room</b></span><span class="sp"></span><button class="btn">Preview form</button></div>
+      <div class="studio-g">
+        <div class="col tree">
+          <h4>Dormitory</h4>
+          <a href="#">building <span class="id">3</span></a>
+          <a href="#" class="on">room <span class="id">5</span></a>
+          <a href="#">resident <span class="id">6</span></a>
+          <a href="#">booking <span class="id">8</span></a>
+          <h4 style="margin-top:16px">Module</h4>
+          <a href="#">Workflow</a><a href="#">Roles</a><a href="#">Reports</a><a href="#">Automations</a>
+        </div>
+        <div class="col">
+          <h4>Fields</h4>
+          <div class="fieldrow"><span class="grip">⋮⋮</span><span class="ic">↗</span><span><b style="font-weight:500">Building</b> <span class="id">building</span></span><span class="ty">Reference</span><span class="ty">Required</span></div>
+          <div class="fieldrow"><span class="grip">⋮⋮</span><span class="ic">Aa</span><span><b style="font-weight:500">Room Number</b> <span class="id">number</span></span><span class="ty">Text</span><span class="ty">Required</span></div>
+          <div class="fieldrow"><span class="grip">⋮⋮</span><span class="ic">#</span><span><b style="font-weight:500">Capacity</b> <span class="id">capacity</span></span><span class="ty">Integer</span><span class="ty">Required</span></div>
+          <div class="fieldrow"><span class="grip">⋮⋮</span><span class="ic">฿</span><span><b style="font-weight:500">Monthly Rate</b> <span class="id">monthly_rate</span></span><span class="ty">Currency</span><span class="ty"></span></div>
+          <div class="fieldrow on"><span class="grip">⋮⋮</span><span class="ic">◉</span><span><b style="font-weight:500">Status</b> <span class="id">status</span></span><span class="ty">Select</span><span class="ty">Required</span></div>
+          <div class="addrow">พิมพ์ / เพื่อเพิ่ม field</div>
+        </div>
+        <div class="col insp">
+          <h4>Status · select</h4>
+          <div class="fl"><label>Label</label><div class="in">Status</div></div>
+          <div class="fl"><label>API name</label><div class="in ro id">status</div></div>
+          <div class="fl"><label>Options</label>
+            <div class="in" style="display:flex;flex-direction:column;gap:4px">
+              <span class="st-badge"><i style="background:var(--ok)"></i>Vacant</span>
+              <span class="st-badge"><i style="background:var(--horizon)"></i>Occupied</span>
+              <span class="st-badge"><i style="background:var(--warn)"></i>Maintenance</span>
+            </div>
+          </div>
+          <div class="toggle">Required<span class="sw-t on"></span></div>
+          <div class="toggle">Show in list<span class="sw-t on"></span></div>
+          <div class="toggle">Use as board column<span class="sw-t on"></span></div>
+        </div>
+      </div>
+      <div class="pubbar">มีการเปลี่ยนแปลง 2 รายการใน draft v1.3 ที่ยังไม่ได้ publish<span class="sp" style="flex:1"></span><button class="btn">Review changes</button><button class="btn pri">Publish v1.3</button></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Pattern ที่ควรศึกษาเพิ่ม</h2>
+    <div class="pat">
+      <div class="r"><b>Form builder</b><p>ใช้แบบเอกสาร กด “/” เพื่อแทรก block ร่วมกับ inspector ด้านขวา</p><p><a href="https://tally.so">Tally</a>, <a href="https://www.fillout.com">Fillout</a>, builder 3 pane ของ <a href="https://retool.com">Retool</a></p></div>
+      <div class="r"><b>Workflow editor</b><p>เป็นรายการ state ที่ลากเรียงได้ มีสี มี default state และแสดงผลในหน้า record เป็น track</p><p><a href="https://linear.app/docs/configuring-workflows">Linear workflows</a>, statusbar ของ <a href="https://www.odoo.com/odoo-18-release-notes">Odoo</a></p></div>
+      <div class="r"><b>Permission matrix</b><p>แถวคือ entity (จัดกลุ่มตาม module) คอลัมน์คือ action และเซลล์มี 3 สถานะ: อนุญาต, ไม่อนุญาต และบางส่วน</p><p><a href="https://www.saasui.design/blog/saas-permissions-roles-ux-patterns">saasui.design</a>, <a href="https://www.shadcn.io/blocks/tables-permission-matrix">shadcn permission matrix</a></p></div>
+      <div class="r"><b>Board / Calendar</b><p>ลากการ์ดข้ามคอลัมน์เพื่อเปลี่ยน status โดยต้องผ่านกฎ transition</p><p><a href="https://github.com/schedule-x/schedule-x">Schedule-X</a> <span class="oss">OSS</span>, Airtable view tabs</p></div>
+      <div class="r"><b>Command palette</b><p>จัดกลุ่ม records กับ actions ไว้ด้วยกัน และวาง palette ชิดด้านบนจอแทนกึ่งกลาง</p><p><a href="https://retool.com/blog/designing-the-command-palette">Retool blog</a>, <a href="https://uxpatterns.dev/patterns/advanced/command-palette">uxpatterns.dev</a></p></div>
+      <div class="r"><b>Empty states</b><p>แยกเป็น 3 แบบ คือใช้ครั้งแรก, ไม่พบผลลัพธ์ และ error แต่ละแบบมี action หลักหนึ่งอย่าง</p><p><a href="https://carbondesignsystem.com/patterns/empty-states-pattern/">Carbon empty states</a></p></div>
+      <div class="r"><b>Shell สำหรับ Nuxt UI 4</b><p>เริ่มจาก dashboard template ทางการ แล้ว override token เป็นชุดใหม่</p><p><a href="https://github.com/nuxt-ui-templates/dashboard">nuxt-ui-templates/dashboard</a> <span class="oss">OSS</span>, <a href="https://nuxt.com/blog/nuxt-ui-v4">Nuxt UI v4</a></p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>ลำดับการทำ</h2>
+    <ol class="next">
+      <li><span><b>เปลี่ยน token และฟอนต์</b> ใน <code>main.css</code> กับ <code>app.config.ts</code> ใช้ Plex Sans Thai และสี Horizon ให้ light mode เป็นค่าเริ่มต้น ทุกหน้าจะเปลี่ยนตามทันทีโดยไม่ต้องแก้ทีละหน้า</span></li>
+      <li><span><b>แยก shell เป็น Workspace และ Studio</b> ใน <code>layouts/default.vue</code> และซ่อน Studio จาก role ที่ไม่ใช่ admin</span></li>
+      <li><span><b>ทำ component WorkflowTrack และ RecordTimeline</b> แล้วนำไปใส่ใน side panel ของ <code>app/[entity].vue</code></span></li>
+      <li><span><b>ปรับ Entity Manager เป็น 3 pane</b> โดยแตก <code>entity.vue</code> ออกเป็น FieldList, FieldInspector และ ModuleTree</span></li>
+      <li><span><b>เพิ่มหน้า “งานของฉัน”</b> แทน dashboard แบบนับ status โดยใช้ saved view ที่ filter ตามผู้ใช้</span></li>
+    </ol>
+  </div>
+</section>
+
+<footer><div class="wrap">LOGHOLIZON redesign moodboard · ร่างวันที่ 5 ต.ค. 2026 · spec ฉบับเต็มอยู่ที่ <code>docs/design/design-v2.md</code></div></footer>
+</body>
+</html>
