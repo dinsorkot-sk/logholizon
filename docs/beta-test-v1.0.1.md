@@ -60,22 +60,67 @@ These are public defaults. Do not use `seed --demo` on any instance reachable
 from the internet; reset them with `logholizon-cli reset-password` before
 sharing a desktop build.
 
-## What to Test
+## Core Test Scenarios (8 Key Areas)
 
-1. **Module Builder** — create a new domain (e.g. Vehicle Management):
-   entities, fields, relations, forms, views, actions → publish → enable.
-2. **Runtime CRUD** — create/edit/delete records, search, filter, sort,
-   saved views, CSV/Excel import and export.
-3. **Permissions** — create a custom role, assign it, confirm denied actions
-   and hidden fields for non-admin users.
-4. **Workflow** — run records through linear transitions, approve/reject,
-   check state history.
-5. **Automation / notifications / webhooks** — trigger on record and workflow
-   events; check execution logs.
-6. **Reports and dashboards** — build a report with grouping/aggregation and a
-   dashboard with KPI and chart widgets.
-7. **Ready-made packages** — install an ERP package from `packages/erp/`.
-8. **Admin** — users, audit log, observability, backup/restore.
+Testers should follow this standardized domain (**Clinic & Patient Management**) or a domain of their choice:
+
+### 1. Module Builder (Zero-Code Domain Creation)
+- Log in as `admin`. Go to `/admin/modules` -> **Create Module** (`clinic`, label: `Clinic Management`).
+- Add Entity: `patient` (Label: `Patient`).
+  - Fields: `hn` (Text, Unique, Required), `full_name` (Text, Required), `birth_date` (Date), `phone` (Text), `allergies` (Text).
+- Add Entity: `appointment` (Label: `Appointment`).
+  - Fields: `appointment_no` (Text, Required), `patient_id` (Relation -> `patient`), `schedule_time` (DateTime), `doctor_name` (Text), `status` (Select: `pending`, `confirmed`, `completed`, `cancelled`).
+- Configure Form sections and Table views (sort by `schedule_time` descending).
+- Publish module: Draft -> Review -> Published -> Enabled.
+- **Verification**: `Clinic Management` appears in navigation; entities and views are accessible.
+
+### 2. Runtime CRUD, Search, Filter & Excel/CSV Operations
+- Navigate to the `Patient` list.
+- Create 3 patient records manually; edit one and delete one with confirmation.
+- Test Search (partial match on name or HN) and multi-field Filtering.
+- Export records to `.xlsx`.
+- Import batch records via CSV/Excel upload, verify preview mapping, and confirm import.
+
+### 3. Role-Based Access Control (RBAC) & Field-Level Security
+- Go to `/admin/roles`:
+  - Create Role `Receptionist`: CRUD on `patient` and `appointment`, but no Delete; hide or set read-only on `allergies`.
+  - Create Role `Doctor`: full CRUD including `allergies`.
+- Go to `/admin/users` -> Create `nurse_joy` (`Receptionist`) and `dr_house` (`Doctor`).
+- Log in as `nurse_joy`: confirm delete button is absent, `allergies` field is hidden/masked, and `/admin` routes are denied.
+- Log in as `dr_house`: confirm full access.
+
+### 4. Linear Workflow & Audit Trail
+- Configure linear workflow on `appointment`: `Draft` -> `Scheduled` -> `In Consultation` -> `Completed` (or `Cancelled`).
+- Set role permissions on transitions (only `Doctor` can transition to `In Consultation` and `Completed`).
+- Execute transitions on a record; verify timeline history and `/admin/audit` logs.
+
+### 5. Automations, Notifications & Webhooks
+- Set up an automation rule on `appointment.created` -> trigger in-app notification to `dr_house`.
+- Create a test appointment; check notification bell for `dr_house` and check delivery logs under `/admin/settings` -> Notification Deliveries.
+
+### 6. Reports & Dashboards
+- Create dashboard `Clinic Daily Overview`: add KPI card (Total Appointments) and Status distribution chart.
+- Create tabular report for Patients grouped by registration month; export to CSV/Excel.
+
+### 7. Ready-Made Package Installation (Solution Library)
+- Go to `/admin/solutions` (Solution Library).
+- Install `vehicle.module.json` or `dormitory.module.json`.
+- Verify the package lifecycle completes automatically (Published & Enabled) and coexists with `Clinic Management`.
+
+### 8. Database Backup, Restore & Integrity Check
+- Under `/admin/settings` -> Database & Backups, click **Create Backup**.
+- Create a new landmark record (e.g. Patient `TEST RECOVERY`).
+- Perform Restore from the backup snapshot; verify rollback copy created and the landmark record is safely reverted.
+- Run integrity check: verify `database ok`.
+
+## Feedback & Issue Triage Framework
+
+| Level | Definition | Target Resolution |
+|---|---|---|
+| **P0 - Blocker** | Crash, panic, database corruption/deadlock, login failure, security leak. | Hotfix within 24h (`v1.0.2`). |
+| **P1 - Critical** | Core flow in the 8 scenarios cannot complete, no workaround. | Fix before GA (`v1.0.2`). |
+| **P2 - Normal Bug** | Minor UI glitch, validation message wording, non-blocking edge case. | Backlog (`v1.0.2` or `v1.0.3`). |
+| **P3 - Enhancement** | UX/UI theme revamp, visual workflow canvas, new field types. | Defer to `v1.1.0` (UI v2). |
 
 ## Known Limitations
 
@@ -87,6 +132,9 @@ sharing a desktop build.
 
 ## Reporting Issues
 
-Open a GitHub issue with: version/branch, deployment (Docker, local, or
-desktop), steps to reproduce, expected vs actual result, and the request ID
-from the error response or the admin Observability page.
+Open a GitHub issue with:
+1. Version/branch: `v1.0.1`
+2. Deployment mode: Docker, Local, or Desktop Tauri
+3. Request ID (`X-Request-Id` from error toast or `/admin/observability`)
+4. Steps to reproduce, expected result, and actual result
+5. Server/process logs or screenshot
